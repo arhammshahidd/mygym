@@ -45,6 +45,7 @@ dependencies:
   # Local storage for auth/session
   shared_preferences: ^2.2.3
   go_router: ^16.2.1
+  web_socket_channel: ^3.0.3
 
 dev_dependencies:
   flutter_test:
