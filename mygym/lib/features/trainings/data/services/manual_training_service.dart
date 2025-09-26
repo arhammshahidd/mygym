@@ -57,6 +57,103 @@ class ManualTrainingService {
     throw Exception('Failed to fetch manual plans');
   }
 
+  Future<List<dynamic>> getUserAssignments(int userId) async {
+    final dio = await _authedDio();
+    print('🔍 Making API call to: /api/trainingPlans/assignments/user/$userId');
+    final res = await dio.get('/api/trainingPlans/assignments/user/$userId');
+    print('🔍 User Assignments API Response:');
+    print('Status: ${res.statusCode}');
+    print('Data: ${res.data}');
+    print('Data type: ${res.data.runtimeType}');
+    
+    if (res.statusCode == 200) {
+      final data = res.data;
+      if (data is List) {
+        print('✅ Returning assignments list with ${data.length} items');
+        if (data.isNotEmpty) {
+          print('📋 First assignment keys: ${(data.first as Map).keys}');
+        }
+        return List<dynamic>.from(data);
+      }
+      if (data is Map<String, dynamic>) {
+        print('📦 Data is Map, checking keys: ${data.keys}');
+        if (data['data'] is List) {
+          print('✅ Found data.data with ${(data['data'] as List).length} items');
+          return List<dynamic>.from(data['data']);
+        }
+        if (data['assignments'] is List) {
+          print('✅ Found data.assignments with ${(data['assignments'] as List).length} items');
+          return List<dynamic>.from(data['assignments']);
+        }
+        if (data['result'] is List) {
+          print('✅ Found data.result with ${(data['result'] as List).length} items');
+          return List<dynamic>.from(data['result']);
+        }
+        print('❌ No list found in response data');
+      }
+      print('❌ Returning empty list - unexpected data structure');
+      return [];
+    }
+    print('❌ API call failed with status: ${res.statusCode}');
+    throw Exception('Failed to fetch user assignments: ${res.statusMessage}');
+  }
+
+  Future<Map<String, dynamic>> getAssignment(int assignmentId) async {
+    final dio = await _authedDio();
+    final res = await dio.get('/api/trainingPlans/assignments/$assignmentId');
+    print('🔍 Assignment Details API Response:');
+    print('Status: ${res.statusCode}');
+    print('Data: ${res.data}');
+    print('Data type: ${res.data.runtimeType}');
+    
+    if (res.statusCode == 200) {
+      final data = res.data;
+      Map<String, dynamic> assignment;
+      
+      if (data is Map<String, dynamic>) {
+        // Check for common wrapper patterns
+        if (data['data'] is Map<String, dynamic>) {
+          assignment = Map<String, dynamic>.from(data['data']);
+        } else if (data['assignment'] is Map<String, dynamic>) {
+          assignment = Map<String, dynamic>.from(data['assignment']);
+        } else {
+          assignment = Map<String, dynamic>.from(data);
+        }
+        
+        print('🔍 Assignment keys: ${assignment.keys.toList()}');
+        
+        // Ensure items are properly formatted
+        if (assignment['items'] is List) {
+          print('🔍 Assignment has ${(assignment['items'] as List).length} items');
+        } else {
+          print('⚠️ Assignment missing items or items not a list');
+        }
+        
+        return assignment;
+      }
+      throw Exception('Invalid response format: expected Map, got ${data.runtimeType}');
+    }
+    throw Exception('Failed to fetch assignment details: ${res.statusMessage}');
+  }
+
+  // Test method to verify API connectivity
+  Future<void> testApiConnectivity() async {
+    try {
+      final dio = await _authedDio();
+      print('🔍 Testing API connectivity...');
+      print('🔍 Base URL: ${dio.options.baseUrl}');
+      print('🔍 Auth header: ${dio.options.headers['Authorization']}');
+      
+      // Test with user ID 2 (from database screenshot)
+      final res = await dio.get('/api/trainingPlans/assignments/user/2');
+      print('🔍 Test API Response:');
+      print('Status: ${res.statusCode}');
+      print('Data: ${res.data}');
+    } catch (e) {
+      print('❌ API connectivity test failed: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> getPlan(int id) async {
     final dio = await _authedDio();
     final res = await dio.get('/api/appManualTraining/$id');

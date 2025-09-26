@@ -69,6 +69,9 @@ class _EditPlanPageState extends State<EditPlanPage> {
   Future<void> _loadFullPlan() async {
     final id = int.tryParse(widget.plan['id']?.toString() ?? '');
     print('🔍 _loadFullPlan called with ID: $id');
+    print('🔍 Plan data: ${widget.plan}');
+    print('🔍 isAi flag: ${widget.isAi}');
+    
     if (id == null) {
       print('❌ Invalid plan ID, cannot load full plan');
       return;
@@ -76,10 +79,41 @@ class _EditPlanPageState extends State<EditPlanPage> {
     setState(() => _loading = true);
     try {
       print('🔍 Calling get full plan for ${widget.isAi ? 'AI' : 'manual'} with ID $id');
-      final full = widget.isAi
-          ? await _controller.getAiGeneratedPlan(id)
-          : await _controller.getManualPlan(id);
-      print('🔍 getManualPlan completed successfully');
+      
+      Map<String, dynamic> full;
+      
+      // Check if this is an assignment (has assignment_id)
+      if (widget.plan['assignment_id'] != null) {
+        print('🔍 Plan has assignment_id, fetching assignment details');
+        final assignmentId = widget.plan['assignment_id'];
+        full = await _controller.getAssignmentDetails(assignmentId);
+      } else if (widget.isAi) {
+        print('🔍 Fetching AI generated plan');
+        try {
+          full = await _controller.getAiGeneratedPlan(id);
+        } catch (e) {
+          print('❌ Failed to fetch AI plan: $e');
+          // If AI plan fails, use the plan data we already have
+          full = Map<String, dynamic>.from(widget.plan);
+        }
+      } else {
+        print('🔍 Fetching manual plan');
+        try {
+          full = await _controller.getManualPlan(id);
+        } catch (e) {
+          print('❌ Failed to fetch manual plan: $e');
+          try {
+            // Try AI plan as fallback
+            full = await _controller.getAiGeneratedPlan(id);
+          } catch (aiError) {
+            print('❌ AI plan fallback also failed: $aiError');
+            // If both fail, use the plan data we already have
+            full = Map<String, dynamic>.from(widget.plan);
+          }
+        }
+      }
+      
+      print('🔍 Plan fetch completed successfully');
       
       print('🔍 Edit Plan - Full plan data received:');
       print('Full plan keys: ${full.keys}');
@@ -95,7 +129,15 @@ class _EditPlanPageState extends State<EditPlanPage> {
       _totalExercisesCtrl.text = '';
       
       _trainingMinutesCtrl.text = (full['training_minutes'] ?? full['total_training_minutes'])?.toString() ?? '';
-      _userLevelCtrl.text = full['user_level']?.toString() ?? '';
+      // Prefer plan-level user_level, else derive from first item
+      String derivedUserLevel = '';
+      if ((full['user_level']?.toString().isNotEmpty ?? false)) {
+        derivedUserLevel = full['user_level'].toString();
+      } else if (full['items'] is List && (full['items'] as List).isNotEmpty) {
+        final Map first = Map<String, dynamic>.from((full['items'] as List).first as Map);
+        derivedUserLevel = first['user_level']?.toString() ?? '';
+      }
+      _userLevelCtrl.text = derivedUserLevel;
       
       print('🔍 Edit Plan - Controllers updated:');
       print('_totalExercisesCtrl.text: ${_totalExercisesCtrl.text}');
@@ -122,8 +164,13 @@ class _EditPlanPageState extends State<EditPlanPage> {
       print('❌ Error type: ${e.runtimeType}');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading plan: $e')),
+          SnackBar(
+            content: Text('Failed to load plan details. The plan may not exist or you may not have permission to edit it.'),
+            backgroundColor: Colors.red,
+          ),
         );
+        // Navigate back if we can't load the plan
+        Navigator.pop(context);
       }
     } finally {
       if (mounted) setState(() => _loading = false);

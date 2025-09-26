@@ -21,6 +21,11 @@ class TrainingsController extends GetxController {
   final RxBool hasLoadedOnce = false.obs;
   final RxList<Map<String, dynamic>> plans = <Map<String, dynamic>>[].obs;
   final RxList<Map<String, dynamic>> aiGenerated = <Map<String, dynamic>>[].obs;
+  final RxList<Map<String, dynamic>> _assignments = <Map<String, dynamic>>[].obs;
+  // Selected tab index across pages (0 = Schedules, 1 = Plans)
+  final RxInt selectedTabIndex = 0.obs;
+  // Cache for extra attributes not present in list responses
+  final RxMap<int, String> planUserLevels = <int, String>{}.obs;
 
   Future<void> loadData() async {
     try {
@@ -30,14 +35,60 @@ class TrainingsController extends GetxController {
       await _profileController.loadUserProfileIfNeeded();
       final userId = _profileController.user?.id;
       print('👤 User ID: $userId');
+      print('👤 User object: ${_profileController.user}');
+      print('👤 Profile controller hasUser: ${_profileController.hasUser}');
       
-      print('📋 Fetching manual plans...');
-      final plansRes = await _manualService.listPlans();
-      print('📋 Manual plans result: ${plansRes.length} items');
-      print('📋 Manual plans data: $plansRes');
-      // Assign manual plans immediately so an error in AI fetch doesn't wipe UI
-      plans.assignAll(plansRes.map((e) => Map<String, dynamic>.from(e)));
-      print('✅ Plans list updated: ${plans.length} items');
+      // Test API connectivity first
+      await _manualService.testApiConnectivity();
+      
+      // Fetch assigned training plans from assignments table (for Schedules tab)
+      if (userId != null) {
+        print('📋 Fetching assigned training plans for user ID: $userId...');
+        print('📋 API endpoint: /api/trainingPlans/assignments/user/$userId');
+        try {
+          final assignmentsRes = await _manualService.getUserAssignments(userId);
+          print('📋 Assignments result: ${assignmentsRes.length} items');
+          print('📋 Assignments data: $assignmentsRes');
+          // Store assignments separately for Schedules tab
+          _assignments.assignAll(assignmentsRes.map((e) => Map<String, dynamic>.from(e)));
+          print('✅ Assigned plans list updated: ${_assignments.length} items');
+        } catch (e) {
+          print('❌ Error fetching assignments: $e');
+          // Fallback: try with user ID 2 (from database screenshot)
+          print('🔄 Trying fallback with user ID 2...');
+          try {
+            final fallbackRes = await _manualService.getUserAssignments(2);
+            print('📋 Fallback result: ${fallbackRes.length} items');
+            print('📋 Fallback data: $fallbackRes');
+            _assignments.assignAll(fallbackRes.map((e) => Map<String, dynamic>.from(e)));
+            print('✅ Fallback assigned plans list updated: ${_assignments.length} items');
+          } catch (fallbackError) {
+            print('❌ Fallback also failed: $fallbackError');
+            _assignments.clear();
+          }
+        }
+      } else {
+        _assignments.clear();
+        print('⚠️ No user ID, clearing assigned plans');
+      }
+
+      // Fetch manual training plans (for Plans tab)
+      try {
+        print('📝 Fetching manual training plans from app_manual_training_plans...');
+        print('📝 API endpoint: /api/appManualTraining/');
+        final manualRes = await _manualService.listPlans();
+        print('📝 Manual plans result: ${manualRes.length} items');
+        print('📝 Manual plans data: $manualRes');
+        if (manualRes.isNotEmpty) {
+          print('📝 First manual plan: ${manualRes.first}');
+        }
+        plans.assignAll(manualRes.map((e) => Map<String, dynamic>.from(e)));
+        print('✅ Manual plans list updated: ${plans.length} items');
+      } catch (e) {
+        print('⚠️ Failed to load manual plans from app_manual_training_plans: $e');
+        print('⚠️ Error type: ${e.runtimeType}');
+        plans.clear();
+      }
 
       // Fetch AI generated plans, but isolate errors so they don't affect manual plans
       try {
@@ -60,6 +111,8 @@ class TrainingsController extends GetxController {
           if (event['type'] == 'approval_status') {
             if (_reloadScheduled || isLoading.value) return;
             _reloadScheduled = true;
+            // When new plans are approved or sent from web, focus Schedules tab
+            selectedTabIndex.value = 0;
             Future.delayed(const Duration(milliseconds: 600), () {
               _reloadScheduled = false;
               loadData();
@@ -78,6 +131,12 @@ class TrainingsController extends GetxController {
   }
 
   int? get userId => _profileController.user?.id;
+  
+  // Getter for user object
+  dynamic get user => _profileController.user;
+  
+  // Getter for assignments (for Schedules tab)
+  List<Map<String, dynamic>> get assignments => _assignments;
 
   Future<void> sendForApproval({
     required String source, // 'manual' | 'ai'
@@ -94,6 +153,15 @@ class TrainingsController extends GetxController {
     }
   }
 
+  Future<void> sendPlanForApproval(Map<String, dynamic> payload) async {
+    print('🔍 Controller - sendPlanForApproval called');
+    print('🔍 Controller - Payload: $payload');
+    print('🔍 Controller - Payload keys: ${payload.keys.toList()}');
+    
+    // Use the mobile-specific sendPlanForApproval method
+    await _approvalService.sendPlanForApproval(payload);
+  }
+
   Future<Map<String, dynamic>> createManualPlan(Map<String, dynamic> payload) async {
     print('🔍 Controller - createManualPlan called');
     print('🔍 Controller - Payload: $payload');
@@ -103,8 +171,8 @@ class TrainingsController extends GetxController {
     print('🔍 Controller - Service returned: $created');
     print('🔍 Controller - total_exercises in response: ${created['total_exercises']}');
     
-    // Optimistically insert into list for immediate UI feedback
-    plans.insert(0, created);
+    // Do not show in schedules until approved by web portal
+    // Keep only in Plans tab list (aiGenerated list is separate)
     return Map<String, dynamic>.from(created);
   }
 
@@ -127,8 +195,109 @@ class TrainingsController extends GetxController {
   }
 
   Future<Map<String, dynamic>> getManualPlan(int id) async {
-    final full = await _manualService.getPlan(id);
+    print('🔍 Controller - getManualPlan called with ID: $id');
+    print('🔍 Controller - API endpoint: /api/appManualTraining/$id');
+    try {
+      final full = await _manualService.getPlan(id);
+      print('🔍 Controller - getManualPlan success: ${full.keys}');
+      return Map<String, dynamic>.from(full);
+    } catch (e) {
+      print('❌ Controller - getManualPlan failed: $e');
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> getAssignmentDetails(int assignmentId) async {
+    final full = await _manualService.getAssignment(assignmentId);
+    print('🔍 Controller - Assignment details: $full');
+    
+    // If assignment doesn't have items, try to fetch from the original plan
+    if ((full['items'] == null || (full['items'] as List).isEmpty) && 
+        (full['exercises_details'] == null || (full['exercises_details'] as List).isEmpty)) {
+      final webPlanId = full['web_plan_id'];
+      if (webPlanId != null) {
+        print('🔍 Controller - Assignment missing items, fetching from web_plan_id: $webPlanId');
+        try {
+          final planDetails = await _manualService.getPlan(webPlanId);
+          print('🔍 Controller - Plan details: $planDetails');
+          // Merge plan details with assignment data
+          full['items'] = planDetails['items'];
+          full['exercise_plan_category'] = planDetails['exercise_plan_category'] ?? planDetails['exercise_plan'];
+          full['total_workouts'] = planDetails['total_workouts'];
+          full['training_minutes'] = planDetails['training_minutes'] ?? planDetails['total_training_minutes'];
+        } catch (e) {
+          print('❌ Controller - Failed to fetch plan details: $e');
+        }
+      }
+    }
+    
+    // Map exercises_details to items if needed
+    if (full['exercises_details'] != null && (full['exercises_details'] as List).isNotEmpty) {
+      full['items'] = full['exercises_details'];
+      print('🔍 Controller - Mapped exercises_details to items: ${full['items']}');
+    }
+    
     return Map<String, dynamic>.from(full);
+  }
+
+  /// Ensure user_level is available for a plan card. If missing, fetch full
+  /// plan once and cache the discovered level in [planUserLevels] and the
+  /// plan map itself, then refresh observers.
+  Future<void> ensureUserLevelForPlan(Map<String, dynamic> plan) async {
+    try {
+      final int? id = int.tryParse(plan['id']?.toString() ?? '');
+      if (id == null) return;
+      // If already present in plan or cache, skip
+      final existing = plan['user_level']?.toString();
+      if (existing != null && existing.isNotEmpty) return;
+      if (planUserLevels.containsKey(id)) {
+        plan['user_level'] = planUserLevels[id];
+        plans.refresh();
+        return;
+      }
+      // For assignments, try to get assignment details first
+      final assignmentId = plan['assignment_id'] ?? plan['id'];
+      final full = await getAssignmentDetails(assignmentId);
+      String? level = full['user_level']?.toString();
+      if ((level == null || level.isEmpty) && full['items'] is List && (full['items'] as List).isNotEmpty) {
+        final Map first = Map<String, dynamic>.from((full['items'] as List).first as Map);
+        level = first['user_level']?.toString();
+      }
+      if (level != null && level.isNotEmpty) {
+        planUserLevels[id] = level;
+        plan['user_level'] = level;
+        plans.refresh();
+      }
+    } catch (_) {
+      // ignore quietly
+    }
+  }
+
+  /// Ensure `items` are present for a plan (list endpoints often omit them).
+  /// Mutates the provided plan map to include fetched `items` and refreshes
+  /// observers. Safe to call repeatedly; it will no-op if items already exist.
+  Future<void> ensureItemsForPlan(Map<String, dynamic> plan) async {
+    try {
+      if (plan['items'] is List && (plan['items'] as List).isNotEmpty) return;
+      final int? id = int.tryParse(plan['id']?.toString() ?? '');
+      if (id == null) return;
+      // For assignments, fetch assignment details
+      final assignmentId = plan['assignment_id'] ?? plan['id'];
+      final full = await getAssignmentDetails(assignmentId);
+      if (full['items'] is List) {
+        plan['items'] = (full['items'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        plans.refresh();
+      }
+      // Also capture user_level if present now
+      final String? lvl = full['user_level']?.toString();
+      if (lvl != null && lvl.isNotEmpty) {
+        planUserLevels[id] = lvl;
+        plan['user_level'] = lvl;
+        plans.refresh();
+      }
+    } catch (_) {
+      // ignore
+    }
   }
 
   Future<Map<String, dynamic>> createAiRequest(Map<String, dynamic> payload) async {
@@ -181,7 +350,7 @@ class TrainingsController extends GetxController {
 
   Future<Map<String, dynamic>> createAiGeneratedPlan(Map<String, dynamic> payload) async {
     final created = await _aiService.createGenerated(payload);
-    aiGenerated.insert(0, Map<String, dynamic>.from(created));
+    // Do not show in schedules until approved by web portal
     return Map<String, dynamic>.from(created);
   }
 
