@@ -26,6 +26,99 @@ class TrainingsController extends GetxController {
   final RxInt selectedTabIndex = 0.obs;
   // Cache for extra attributes not present in list responses
   final RxMap<int, String> planUserLevels = <int, String>{}.obs;
+  // Track approval status for each plan (planId -> status: 'none', 'pending', 'approved')
+  final RxMap<int, String> planApprovalStatus = <int, String>{}.obs;
+  // Map each local plan id -> approval id returned by backend when sending
+  final RxMap<int, int> planToApprovalId = <int, int>{}.obs;
+
+  // Reconcile planApprovalStatus by matching ACTIVE assignments to local plans
+  void _reconcileFromAssignmentsToPlans() {
+    try {
+      if (_assignments.isEmpty || plans.isEmpty) return;
+
+      // Build a set of web_plan_ids that are ACTIVE for the current user
+      final Set<String> activeWebPlanIds = _assignments
+          .where((a) {
+            final String status = (a['status'] ?? a['state'] ?? '').toString().toUpperCase();
+            final bool isActive = status == 'ACTIVE' || status == 'APPROVED' || status == '1' || status == 'TRUE';
+            if (!isActive) {
+              print('🔎 Assignment not active -> status: $status, web_plan_id: ${a['web_plan_id']}');
+            }
+            return isActive;
+          })
+          .map((a) => (a['web_plan_id'] ?? a['plan_id'] ?? a['training_plan_id'] ?? '').toString())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+
+      if (activeWebPlanIds.isEmpty) return;
+
+      for (final plan in plans) {
+        final int? planId = int.tryParse(plan['id']?.toString() ?? '');
+        if (planId == null) continue;
+        final String planWebId = (plan['web_plan_id'] ?? '').toString();
+        if (planWebId.isNotEmpty && activeWebPlanIds.contains(planWebId)) {
+          planApprovalStatus[planId] = 'approved';
+          print('✅ Reconciled plan $planId APPROVED via assignment match on web_plan_id=$planWebId');
+        }
+      }
+    } catch (_) {
+      // ignore reconciliation errors
+    }
+  }
+
+  // REST fallback: if a plan has an approval id on its map (approval_id or
+  // training_approval_id), verify its status and set approved.
+  Future<void> _reconcileFromApprovalRecords() async {
+    try {
+      for (final plan in plans) {
+        final int? planId = int.tryParse(plan['id']?.toString() ?? '');
+        final int? approvalId = int.tryParse(
+          (plan['approval_id'] ?? plan['training_approval_id'] ?? plan['web_plan_id'] ?? '')
+              .toString(),
+        );
+        if (planId == null || approvalId == null) continue;
+        try {
+          final approval = await _approvalService.getApproval(approvalId);
+          final String s = (approval['approval_status'] ?? approval['status'] ?? '').toString().toUpperCase();
+          print('🔎 Approval $approvalId for plan $planId -> $s');
+          if (s == 'APPROVED') {
+            planApprovalStatus[planId] = 'approved';
+          } else if (s == 'PENDING') {
+            planApprovalStatus[planId] = 'pending';
+          }
+        } catch (_) {
+          // ignore one-off failures
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// On-demand check for a plan's approval using `web_plan_id` or stored
+  /// approval id. Safe to call multiple times; it will no-op once approved.
+  Future<void> ensureApprovalCheckedForPlan(Map<String, dynamic> plan) async {
+    try {
+      final int? planId = int.tryParse(plan['id']?.toString() ?? '');
+      if (planId == null) return;
+      // If already approved, skip
+      if (planApprovalStatus[planId] == 'approved') return;
+
+      final int? approvalId = planToApprovalId[planId] ?? int.tryParse(
+        (plan['approval_id'] ?? plan['training_approval_id'] ?? plan['web_plan_id'] ?? '').toString(),
+      );
+      if (approvalId == null) return;
+
+      final approval = await _approvalService.getApproval(approvalId);
+      final String s = (approval['approval_status'] ?? approval['status'] ?? '').toString().toUpperCase();
+      print('🔎 ensureApprovalCheckedForPlan: approval $approvalId for plan $planId -> $s');
+      if (s == 'APPROVED') {
+        planApprovalStatus[planId] = 'approved';
+      } else if (s == 'PENDING') {
+        planApprovalStatus[planId] = 'pending';
+      }
+    } catch (e) {
+      print('⚠️ ensureApprovalCheckedForPlan failed: $e');
+    }
+  }
 
   Future<void> loadData() async {
     try {
@@ -100,6 +193,10 @@ class TrainingsController extends GetxController {
       } catch (e) {
         print('⚠️ Failed to load AI generated plans: $e');
       }
+      // After fetching assignments and plans, reconcile approval statuses so
+      // Plans tab shows "Start Plan" when an ACTIVE assignment exists.
+      _reconcileFromAssignmentsToPlans();
+      await _reconcileFromApprovalRecords();
       // Connect realtime approvals once
       if (!_realtime.isConnected) {
         final token = await _authService.getToken();
@@ -107,16 +204,55 @@ class TrainingsController extends GetxController {
       }
       if (!_socketSubscribed) {
         _socketSubscribed = true;
-        _realtime.events.listen((event) {
-          if (event['type'] == 'approval_status') {
+        _realtime.events.listen((event) async {
+          try {
+            // Normalize event name across backends
+            final String? type = (event['type'] ?? event['event'] ?? event['name'])?.toString();
+            final Map<String, dynamic> data = Map<String, dynamic>.from(
+              (event['data'] is Map)
+                  ? event['data'] as Map
+                  : event,
+            );
+
+            // Compatible with both JSON {type: '...'} and socket namespaces
+            final bool isStatusEvent = type == 'approval_status' || type == 'trainingApproval:status';
+            final bool isUpdateEvent = type == 'trainingApproval:updated' || type == 'trainingApproval:created';
+            if (!(isStatusEvent || isUpdateEvent)) return;
+
             if (_reloadScheduled || isLoading.value) return;
             _reloadScheduled = true;
-            // When new plans are approved or sent from web, focus Schedules tab
+
+            // Extract plan and status
+            final dynamic planIdAny = data['plan_id'] ?? data['web_plan_id'] ?? data['id'];
+            final int? planId = int.tryParse(planIdAny?.toString() ?? '');
+            final String rawStatus = (data['status'] ?? data['approval_status'] ?? '').toString();
+            final String normalized = rawStatus.toUpperCase();
+
+            if (planId != null) {
+              if (normalized == 'APPROVED' || normalized == 'ACTIVE' || normalized == 'APPROVED ✅') {
+                setPlanApprovalStatus(planId, 'approved');
+              } else if (normalized == 'PENDING') {
+                setPlanApprovalStatus(planId, 'pending');
+              }
+            }
+
+            // Always refresh assignments so UI shows the newly assigned plan
+            try {
+              final uid = _profileController.user?.id;
+              if (uid != null) {
+                final assignmentsRes = await _manualService.getUserAssignments(uid);
+                _assignments.assignAll(assignmentsRes.map((e) => Map<String, dynamic>.from(e)));
+              }
+            } catch (_) {}
+
+            // Focus Schedules and reload lists for consistency
             selectedTabIndex.value = 0;
             Future.delayed(const Duration(milliseconds: 600), () {
               _reloadScheduled = false;
               loadData();
             });
+          } catch (_) {
+            _reloadScheduled = false;
           }
         });
       }
@@ -137,6 +273,40 @@ class TrainingsController extends GetxController {
   
   // Getter for assignments (for Schedules tab)
   List<Map<String, dynamic>> get assignments => _assignments;
+  
+  // Get approval status for a plan
+  String getPlanApprovalStatus(int planId) {
+    return planApprovalStatus[planId] ?? 'none';
+  }
+  
+  // Set approval status for a plan
+  void setPlanApprovalStatus(int planId, String status) {
+    planApprovalStatus[planId] = status;
+  }
+  
+  // Check if plan is pending approval
+  bool isPlanPending(int planId) {
+    return getPlanApprovalStatus(planId) == 'pending';
+  }
+  
+  // Check if plan is approved
+  bool isPlanApproved(int planId) {
+    return getPlanApprovalStatus(planId) == 'approved';
+  }
+  
+  // Method to refresh plans list specifically
+  Future<void> refreshPlans() async {
+    try {
+      print('🔄 Refreshing manual plans list...');
+      final manualRes = await _manualService.listPlans();
+      print('🔄 Manual plans refresh result: ${manualRes.length} items');
+      print('🔄 Manual plans refresh data: $manualRes');
+      plans.assignAll(manualRes.map((e) => Map<String, dynamic>.from(e)));
+      print('✅ Manual plans list refreshed: ${plans.length} items');
+    } catch (e) {
+      print('❌ Failed to refresh manual plans: $e');
+    }
+  }
 
   Future<void> sendForApproval({
     required String source, // 'manual' | 'ai'
@@ -158,8 +328,34 @@ class TrainingsController extends GetxController {
     print('🔍 Controller - Payload: $payload');
     print('🔍 Controller - Payload keys: ${payload.keys.toList()}');
     
-    // Use the mobile-specific sendPlanForApproval method
-    await _approvalService.sendPlanForApproval(payload);
+    // Use the mobile-specific sendPlanForApproval method and capture approval id
+    final Map<String, dynamic> response = await _approvalService.sendPlanForApproval(payload);
+    final Map<String, dynamic> respData = Map<String, dynamic>.from(
+      (response['data'] is Map) ? response['data'] as Map : response,
+    );
+
+    // Immediately notify the realtime channel so the web portal can update
+    // without requiring a manual refresh.
+    if (_realtime.isConnected) {
+      _realtime.send({
+        'type': 'send_for_approval',
+        'source': 'manual',
+        'data': payload,
+      });
+    }
+    
+    // Set the plan status to pending (we'll need to get the plan ID from the payload)
+    // For now, we'll set it based on the workout_name or other identifier
+    final planId = payload['plan_id'] ?? payload['id'] ?? DateTime.now().millisecondsSinceEpoch;
+    final int? approvalId = int.tryParse((respData['id'] ?? respData['approval_id'] ?? '').toString());
+    if (approvalId != null) {
+      planToApprovalId[planId] = approvalId;
+      print('🔗 Linked plan $planId to approval $approvalId');
+    } else {
+      print('⚠️ No approval id in response, response data: $respData');
+    }
+    setPlanApprovalStatus(planId, 'pending');
+    print('🔍 Controller - Set plan $planId status to pending');
   }
 
   Future<Map<String, dynamic>> createManualPlan(Map<String, dynamic> payload) async {
@@ -171,9 +367,15 @@ class TrainingsController extends GetxController {
     print('🔍 Controller - Service returned: $created');
     print('🔍 Controller - total_exercises in response: ${created['total_exercises']}');
     
+    // Add the created plan to the plans list so it shows up in Plans tab
+    final createdPlan = Map<String, dynamic>.from(created);
+    plans.add(createdPlan);
+    plans.refresh();
+    print('🔍 Controller - Added created plan to plans list. Total plans: ${plans.length}');
+    
     // Do not show in schedules until approved by web portal
     // Keep only in Plans tab list (aiGenerated list is separate)
-    return Map<String, dynamic>.from(created);
+    return createdPlan;
   }
 
   Future<Map<String, dynamic>> updateManualPlan(int id, Map<String, dynamic> payload) async {

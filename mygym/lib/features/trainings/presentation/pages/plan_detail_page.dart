@@ -24,7 +24,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
   void initState() {
     super.initState();
     try {
-      _controller = Get.find<TrainingsController>();
+    _controller = Get.find<TrainingsController>();
       print('✅ PlanDetailPage - TrainingsController found');
     } catch (e) {
       print('❌ PlanDetailPage - TrainingsController not found: $e');
@@ -66,11 +66,11 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
           print('❌ Plan Detail - Init failed to parse exercises_details: $parseError');
         }
       }
-      
-      if (items.isNotEmpty) {
-        _rebuildDays(items);
-        _loading = false;
-      } else {
+
+    if (items.isNotEmpty) {
+      _rebuildDays(items);
+      _loading = false;
+    } else {
         _days = List.generate(1, (_) => []);
         _loading = false;
       }
@@ -183,7 +183,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       if (fallbackItems.isNotEmpty) {
         _rebuildDays(fallbackItems);
       } else {
-        _days = List.generate(1, (_) => []);
+      _days = List.generate(1, (_) => []);
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -306,7 +306,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
   void _distributeStandard(List<Map<String, dynamic>> items, int totalDays) {
     print('🔍 Plan Detail - _distributeStandard called');
     print('🔍 Plan Detail - Items: ${items.length}, Total days: $totalDays');
-    
+
     final totalItems = items.length;
     // Don't shuffle - keep original order for consistency
     final itemsList = List<Map<String, dynamic>>.from(items);
@@ -335,7 +335,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
         if (itemsList.isNotEmpty) {
           final src = itemsList[cursor % totalItems];
           print('🔍 Plan Detail - Day $day, Exercise $i: Adding item at cursor ${cursor % totalItems}');
-          _days[day].add(Map<String, dynamic>.from(src));
+        _days[day].add(Map<String, dynamic>.from(src));
           cursor++;
         }
       }

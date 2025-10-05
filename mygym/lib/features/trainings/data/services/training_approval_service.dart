@@ -54,6 +54,27 @@ class TrainingApprovalService {
     }
     throw Exception('Failed to send plan for approval: ${res.statusMessage}');
   }
+
+  // REST: GET /api/trainingApprovals/:id → { approval_status: 'APPROVED' | 'PENDING' | ... }
+  Future<Map<String, dynamic>> getApproval(int id) async {
+    final token = await _authService.getToken();
+    if (token == null || token.isEmpty) throw Exception('No authentication token');
+    final dio = ApiClient(authToken: token).dio;
+
+    final Response res = await dio.get('/api/trainingApprovals/$id');
+    if (res.statusCode == 200) {
+      final data = res.data;
+      if (data is Map<String, dynamic>) {
+        // Common wrappers: { success, data } or raw object
+        if (data['data'] is Map<String, dynamic>) {
+          return Map<String, dynamic>.from(data['data'] as Map);
+        }
+        return Map<String, dynamic>.from(data);
+      }
+      throw Exception('Unexpected approval response type: ${data.runtimeType}');
+    }
+    throw Exception('Failed to fetch approval: HTTP ${res.statusCode}');
+  }
 }
 
 

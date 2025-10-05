@@ -18,6 +18,9 @@ class AppConfig {
   // Users endpoint not used (profile covers all)
   // Training approvals
   static const String trainingApprovalsPath = '/api/trainingApprovals';
+  // Nutrition (Food Menu)
+  static const String foodMenuAssignmentsPath = '/api/foodMenu/assignments';
+  static const String foodMenuAssignPath = '/api/foodMenu/assign';
 
   // Realtime (WebSocket) configuration
   // For Flutter web, prefer ws:// or wss:// reachable from the browser

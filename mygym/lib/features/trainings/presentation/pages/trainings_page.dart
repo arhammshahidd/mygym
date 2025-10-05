@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import '../controllers/trainings_controller.dart';
 import 'create_plan_page.dart';
@@ -29,6 +30,12 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(() {
       setState(() {}); // Rebuild when tab changes
+      
+      // Refresh plans when switching to Plans tab (index 1)
+      if (_tabController.index == 1) {
+        print('🔄 Switched to Plans tab, refreshing plans...');
+        _controller.refreshPlans();
+      }
     });
       _controller.loadData();
   }
@@ -81,32 +88,126 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
       
       print('🔍 User info - ID: $userId, Name: $userName, Phone: $userPhone');
       
+      // Determine plan type
+      final aiPlans = _controller.aiGenerated;
+      final isAiPlan = aiPlans.any((aiPlan) => aiPlan['id'] == plan['id']);
+      final planType = isAiPlan ? 'ai_generated' : 'manual';
+      
+      print('🔍 Plan type determined: $planType (isAiPlan: $isAiPlan)');
+      
+      // Ensure we have the full plan data with exercises
+      Map<String, dynamic> fullPlan = Map<String, dynamic>.from(plan);
+      if (plan['items'] == null || (plan['items'] as List).isEmpty) {
+        print('🔍 Plan missing items, fetching full plan data...');
+        try {
+          if (isAiPlan) {
+            fullPlan = await _controller.getAiGeneratedPlan(plan['id']);
+          } else {
+            fullPlan = await _controller.getManualPlan(plan['id']);
+          }
+          print('🔍 Full plan fetched: ${fullPlan.keys}');
+          print('🔍 Full plan items: ${fullPlan['items']}');
+        } catch (e) {
+          print('❌ Failed to fetch full plan: $e');
+          // Continue with original plan data
+        }
+      }
+      
+      // Handle exercises_details if items is still empty
+      if ((fullPlan['items'] == null || (fullPlan['items'] as List).isEmpty) && 
+          fullPlan['exercises_details'] != null) {
+        print('🔍 Plan has exercises_details, parsing...');
+        try {
+          if (fullPlan['exercises_details'] is String) {
+            final String exercisesJson = fullPlan['exercises_details'] as String;
+            print('🔍 Parsing exercises_details JSON: $exercisesJson');
+            final List<dynamic> parsedList = jsonDecode(exercisesJson);
+            fullPlan['items'] = parsedList.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            print('🔍 Parsed exercises_details into items: ${fullPlan['items']}');
+          } else if (fullPlan['exercises_details'] is List) {
+            fullPlan['items'] = List<Map<String, dynamic>>.from(fullPlan['exercises_details'] as List);
+            print('🔍 Converted exercises_details to items: ${fullPlan['items']}');
+          }
+        } catch (e) {
+          print('❌ Failed to parse exercises_details: $e');
+        }
+      }
+      
       // Prepare the payload according to the API specification
+      // Use the same structure as manual plan creation but keep functionality separate
       final payload = {
         // User information
         "user_id": userId,
         "user_name": userName,
         "user_phone": userPhone,
         
-        // Plan information
-        "start_date": plan['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T')[0],
-        "end_date": plan['end_date']?.toString() ?? DateTime.now().add(const Duration(days: 7)).toIso8601String().split('T')[0],
-        "workout_name": plan['name'] ?? plan['exercise_plan'] ?? plan['exercise_plan_category'] ?? 'Workout Plan',
-        "category": plan['exercise_plan_category'] ?? plan['exercise_plan'] ?? plan['category'] ?? 'General',
-        "sets": plan['sets'] ?? 3,
-        "reps": plan['reps'] ?? 12,
-        "weight_kg": plan['weight_kg'] ?? plan['weight'] ?? 25.5,
-        "total_training_minutes": plan['total_training_minutes'] ?? plan['training_minutes'] ?? 60,
-        "total_workouts": plan['total_workouts'] ?? (plan['items'] is List ? (plan['items'] as List).length : 4),
-        "minutes": plan['minutes'] ?? 45,
-        "exercise_types": plan['exercise_types'] ?? "8, 6, 5",
-        "user_level": plan['user_level'] ?? 'Intermediate',
-        "notes": plan['notes'] ?? 'Focus on progressive overload this week'
+        // Plan information - same structure as manual plan creation
+        "plan_id": fullPlan['id'], // Add plan ID for tracking
+        "plan_type": planType, // Add plan type (manual or ai_generated)
+        "exercise_plan_category": fullPlan['exercise_plan_category'] ?? fullPlan['exercise_plan'] ?? fullPlan['category'] ?? 'General',
+        "start_date": fullPlan['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T')[0],
+        "end_date": fullPlan['end_date']?.toString() ?? DateTime.now().add(const Duration(days: 7)).toIso8601String().split('T')[0],
+        "total_workouts": fullPlan['total_workouts'] ?? (fullPlan['items'] is List ? (fullPlan['items'] as List).length : 0),
+        "training_minutes": fullPlan['total_training_minutes'] ?? fullPlan['training_minutes'] ?? 60,
+        "items": fullPlan['items'] ?? [],
+        
+        // Day-by-day plan distribution
+        "daily_plans": _createDailyPlans(fullPlan),
+        
+        // Additional fields for approval tracking - use actual plan data, not dummy data
+        "workout_name": fullPlan['name'] ?? fullPlan['exercise_plan'] ?? fullPlan['exercise_plan_category'] ?? 'Custom Workout Plan',
+        "category": fullPlan['exercise_plan_category'] ?? fullPlan['exercise_plan'] ?? fullPlan['category'] ?? 'Custom',
+        "sets": fullPlan['sets'] ?? (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty ? (fullPlan['items'] as List).first['sets'] : null),
+        "reps": fullPlan['reps'] ?? (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty ? (fullPlan['items'] as List).first['reps'] : null),
+        "weight_kg": fullPlan['weight_kg'] ?? fullPlan['weight'] ?? (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty ? (fullPlan['items'] as List).first['weight_kg'] : null),
+        "total_training_minutes": fullPlan['total_training_minutes'] ?? fullPlan['training_minutes'] ?? 60,
+        "minutes": fullPlan['minutes'] ?? (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty ? (fullPlan['items'] as List).first['minutes'] : null),
+        "exercise_types": fullPlan['exercise_types'] ?? (fullPlan['items'] is List ? (fullPlan['items'] as List).map((item) => item['exercise_types'] ?? item['workout_name'] ?? item['exercise_name']).join(', ') : null),
+        "user_level": fullPlan['user_level'] ?? 'Intermediate',
+        "notes": fullPlan['notes'] ?? 'Custom workout plan created by user',
+        
+        // AI-specific fields (if available)
+        if (isAiPlan) ...{
+          "goal": fullPlan['goal'] ?? fullPlan['future_goal'] ?? '',
+          "age": fullPlan['age'],
+          "height_cm": fullPlan['height_cm'],
+          "weight_kg": fullPlan['weight_kg'] ?? fullPlan['weight'],
+          "gender": fullPlan['gender'],
+        }
       };
 
       print('🔍 Sending plan for approval with payload: $payload');
       print('🔍 Payload keys: ${payload.keys.toList()}');
       print('🔍 Payload values: ${payload.values.toList()}');
+      print('🔍 Original plan data: $plan');
+      print('🔍 Full plan data: $fullPlan');
+      print('🔍 Plan name: ${fullPlan['name']}');
+      print('🔍 Plan exercise_plan: ${fullPlan['exercise_plan']}');
+      print('🔍 Plan exercise_plan_category: ${fullPlan['exercise_plan_category']}');
+      print('🔍 Plan items: ${fullPlan['items']}');
+      print('🔍 Plan items count: ${(fullPlan['items'] as List?)?.length ?? 0}');
+      
+      // Debug individual items
+      if (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty) {
+        final items = fullPlan['items'] as List;
+        for (int i = 0; i < items.length; i++) {
+          print('🔍 Item $i: ${items[i]}');
+          print('🔍 Item $i keys: ${(items[i] as Map).keys.toList()}');
+          print('🔍 Item $i exercise_types: ${(items[i] as Map)['exercise_types']}');
+          print('🔍 Item $i workout_name: ${(items[i] as Map)['workout_name']}');
+          print('🔍 Item $i exercise_name: ${(items[i] as Map)['exercise_name']}');
+        }
+      }
+      
+      print('🔍 Final workout_name: ${payload['workout_name']}');
+      print('🔍 Final category: ${payload['category']}');
+      print('🔍 Final items count: ${(payload['items'] as List?)?.length ?? 0}');
+      print('🔍 Final exercise_types: ${payload['exercise_types']}');
+      
+      // Print complete payload for backend reference
+      print('🔍 ===== COMPLETE PAYLOAD FOR BACKEND =====');
+      print('🔍 Payload JSON: ${jsonEncode(payload)}');
+      print('🔍 ===== END PAYLOAD =====');
 
       // Call the approval API
       await _controller.sendPlanForApproval(payload);
@@ -142,6 +243,279 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
           ),
         );
       }
+    }
+  }
+
+  Widget _buildApprovalButton(Map<String, dynamic> plan) {
+    final planId = plan['id'] ?? DateTime.now().millisecondsSinceEpoch;
+    
+    return Obx(() {
+      // Proactively verify approval via REST using web_plan_id/approval_id
+      _controller.ensureApprovalCheckedForPlan(plan);
+      final approvalStatus = _controller.getPlanApprovalStatus(planId);
+      
+      print('🔍 Building approval button for plan $planId with status: $approvalStatus');
+      
+      switch (approvalStatus) {
+        case 'pending':
+          return ElevatedButton(
+            onPressed: null, // Disabled
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.grey[400],
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text('Pending'),
+          );
+        case 'approved':
+          return ElevatedButton(
+            onPressed: () {
+              // Start the plan - move it to schedules
+              _startPlan(plan);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2E7D32),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text('Start Plan'),
+          );
+        default: // 'none'
+          return ElevatedButton(
+            onPressed: () async {
+              await _sendPlanForApproval(plan);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2E7D32),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text('Send Plan'),
+          );
+      }
+    });
+  }
+
+  void _startPlan(Map<String, dynamic> plan) {
+    // Move the plan to schedules by adding it to assignments
+    // This is a simplified approach - in a real app, you might want to call an API
+    print('🔍 Starting plan: ${plan['name']}');
+    
+    // For now, just show a success message
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Plan "${plan['name']}" started successfully!'),
+        backgroundColor: const Color(0xFF2E7D32),
+      ),
+    );
+    
+    // You could also switch to the Schedules tab to show the started plan
+    _controller.selectedTabIndex.value = 0;
+  }
+
+  // Method to create daily plans distribution
+  List<Map<String, dynamic>> _createDailyPlans(Map<String, dynamic> fullPlan) {
+    final items = fullPlan['items'] as List? ?? [];
+    if (items.isEmpty) return [];
+    
+    // Calculate total days from start and end date
+    final startDate = DateTime.tryParse(fullPlan['start_date']?.toString() ?? '') ?? DateTime.now();
+    final endDate = DateTime.tryParse(fullPlan['end_date']?.toString() ?? '') ?? DateTime.now().add(const Duration(days: 7));
+    final totalDays = endDate.difference(startDate).inDays + 1;
+    
+    print('🔍 Creating daily plans for $totalDays days with ${items.length} exercises');
+    
+    // Calculate workouts per day
+    final totalMinutes = items.fold<int>(0, (sum, item) => sum + (item['minutes'] as int? ?? 0));
+    final workoutsPerDay = totalMinutes < 80 ? 2 : 1;
+    
+    print('🔍 Workouts per day: $workoutsPerDay (total minutes: $totalMinutes)');
+    
+    List<Map<String, dynamic>> dailyPlans = [];
+    
+    for (int day = 0; day < totalDays; day++) {
+      final dayDate = startDate.add(Duration(days: day));
+      final dayItems = <Map<String, dynamic>>[];
+      
+      // Distribute exercises for this day
+      for (int workout = 0; workout < workoutsPerDay; workout++) {
+        final exerciseIndex = (day * workoutsPerDay + workout) % items.length;
+        if (exerciseIndex < items.length) {
+          dayItems.add(Map<String, dynamic>.from(items[exerciseIndex]));
+        }
+      }
+      
+      if (dayItems.isNotEmpty) {
+        dailyPlans.add({
+          'day': day + 1,
+          'date': dayDate.toIso8601String().split('T')[0],
+          'workouts': dayItems,
+          'total_workouts': dayItems.length,
+          'total_minutes': dayItems.fold<int>(0, (sum, item) => sum + (item['minutes'] as int? ?? 0)),
+        });
+      }
+    }
+    
+    print('🔍 Created ${dailyPlans.length} daily plans');
+    return dailyPlans;
+  }
+
+  // Helper method to show the exact payload that would be sent
+  Future<void> _showPayloadForPlan(Map<String, dynamic> plan) async {
+    try {
+      // Get user information from the controller
+      final userId = _controller.userId;
+      final user = _controller.user;
+      final userName = user?.name ?? user?.username ?? 'User $userId';
+      final userPhone = user?.phone ?? user?.phoneNumber ?? '';
+      
+      // Determine plan type
+      final aiPlans = _controller.aiGenerated;
+      final isAiPlan = aiPlans.any((aiPlan) => aiPlan['id'] == plan['id']);
+      final planType = isAiPlan ? 'ai_generated' : 'manual';
+      
+      // Ensure we have the full plan data with exercises
+      Map<String, dynamic> fullPlan = Map<String, dynamic>.from(plan);
+      if (plan['items'] == null || (plan['items'] as List).isEmpty) {
+        try {
+          if (isAiPlan) {
+            fullPlan = await _controller.getAiGeneratedPlan(plan['id']);
+          } else {
+            fullPlan = await _controller.getManualPlan(plan['id']);
+          }
+        } catch (e) {
+          print('❌ Failed to fetch full plan: $e');
+        }
+      }
+      
+      // Handle exercises_details if items is still empty
+      if ((fullPlan['items'] == null || (fullPlan['items'] as List).isEmpty) && 
+          fullPlan['exercises_details'] != null) {
+        try {
+          if (fullPlan['exercises_details'] is String) {
+            final String exercisesJson = fullPlan['exercises_details'] as String;
+            final List<dynamic> parsedList = jsonDecode(exercisesJson);
+            fullPlan['items'] = parsedList.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          } else if (fullPlan['exercises_details'] is List) {
+            fullPlan['items'] = List<Map<String, dynamic>>.from(fullPlan['exercises_details'] as List);
+          }
+        } catch (e) {
+          print('❌ Failed to parse exercises_details: $e');
+        }
+      }
+      
+      // Create the exact payload that would be sent
+      final payload = {
+        // User information
+        "user_id": userId,
+        "user_name": userName,
+        "user_phone": userPhone,
+        
+        // Plan information - same structure as manual plan creation
+        "plan_id": fullPlan['id'],
+        "plan_type": planType,
+        "exercise_plan_category": fullPlan['exercise_plan_category'] ?? fullPlan['exercise_plan'] ?? fullPlan['category'] ?? 'General',
+        "start_date": fullPlan['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T')[0],
+        "end_date": fullPlan['end_date']?.toString() ?? DateTime.now().add(const Duration(days: 7)).toIso8601String().split('T')[0],
+        "total_workouts": fullPlan['total_workouts'] ?? (fullPlan['items'] is List ? (fullPlan['items'] as List).length : 0),
+        "training_minutes": fullPlan['total_training_minutes'] ?? fullPlan['training_minutes'] ?? 60,
+        "items": fullPlan['items'] ?? [],
+        
+        // Day-by-day plan distribution
+        "daily_plans": _createDailyPlans(fullPlan),
+        
+        // Additional fields for approval tracking
+        "workout_name": fullPlan['name'] ?? fullPlan['exercise_plan'] ?? fullPlan['exercise_plan_category'] ?? 'Custom Workout Plan',
+        "category": fullPlan['exercise_plan_category'] ?? fullPlan['exercise_plan'] ?? fullPlan['category'] ?? 'Custom',
+        "sets": fullPlan['sets'] ?? (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty ? (fullPlan['items'] as List).first['sets'] : null),
+        "reps": fullPlan['reps'] ?? (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty ? (fullPlan['items'] as List).first['reps'] : null),
+        "weight_kg": fullPlan['weight_kg'] ?? fullPlan['weight'] ?? (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty ? (fullPlan['items'] as List).first['weight_kg'] : null),
+        "total_training_minutes": fullPlan['total_training_minutes'] ?? fullPlan['training_minutes'] ?? 60,
+        "minutes": fullPlan['minutes'] ?? (fullPlan['items'] is List && (fullPlan['items'] as List).isNotEmpty ? (fullPlan['items'] as List).first['minutes'] : null),
+        "exercise_types": fullPlan['exercise_types'] ?? (fullPlan['items'] is List ? (fullPlan['items'] as List).map((item) => item['exercise_types'] ?? item['workout_name'] ?? item['exercise_name']).join(', ') : null),
+        "user_level": fullPlan['user_level'] ?? 'Intermediate',
+        "notes": fullPlan['notes'] ?? 'Custom workout plan created by user',
+        
+        // AI-specific fields (if available)
+        if (isAiPlan) ...{
+          "goal": fullPlan['goal'] ?? fullPlan['future_goal'] ?? '',
+          "age": fullPlan['age'],
+          "height_cm": fullPlan['height_cm'],
+          "weight_kg": fullPlan['weight_kg'] ?? fullPlan['weight'],
+          "gender": fullPlan['gender'],
+        }
+      };
+      
+      // Show the payload in a dialog
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Muscle Building Plan Payload'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Complete JSON Payload:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    jsonEncode(payload),
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text('Key Fields:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text('Plan ID: ${payload['plan_id']}'),
+                Text('Plan Type: ${payload['plan_type']}'),
+                Text('Workout Name: ${payload['workout_name']}'),
+                Text('Category: ${payload['category']}'),
+                Text('Total Workouts: ${payload['total_workouts']}'),
+                Text('Training Minutes: ${payload['training_minutes']}'),
+                Text('Items Count: ${(payload['items'] as List).length}'),
+                Text('Exercise Types: ${payload['exercise_types']}'),
+                Text('User Level: ${payload['user_level']}'),
+                Text('Daily Plans Count: ${(payload['daily_plans'] as List).length}'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+            TextButton(
+              onPressed: () {
+                // Copy to clipboard
+                Clipboard.setData(ClipboardData(text: jsonEncode(payload)));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Payload copied to clipboard!')),
+                );
+                Navigator.pop(context);
+              },
+              child: const Text('Copy'),
+            ),
+          ],
+        ),
+      );
+      
+    } catch (e) {
+      print('❌ Error showing payload: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
     }
   }
 
@@ -181,7 +555,110 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
         level = deepFind(plan, 'user_level') ?? deepFind(plan, 'userLevel') ?? deepFind(plan, 'level');
       }
     }
-    return level ?? '';
+    // If no level found, provide a default
+    final finalLevel = level ?? 'Intermediate';
+    print('🔍 Final user level: $finalLevel');
+    return finalLevel;
+  }
+
+  int _calculateTotalDays(Map<String, dynamic> plan) {
+    try {
+      // Try to get total days from various possible fields
+      final totalDays = plan['total_days'] ?? plan['days'] ?? plan['duration_days'] ?? plan['plan_duration'];
+      if (totalDays != null) {
+        return int.tryParse(totalDays.toString()) ?? 0;
+      }
+      
+      // If no direct days field, try to calculate from start/end dates
+      final startDate = plan['start_date']?.toString();
+      final endDate = plan['end_date']?.toString();
+      if (startDate != null && endDate != null && startDate.isNotEmpty && endDate.isNotEmpty) {
+        try {
+          final start = DateTime.parse(startDate);
+          final end = DateTime.parse(endDate);
+          final days = end.difference(start).inDays + 1;
+          return days > 0 ? days : 0;
+        } catch (e) {
+          // Date parsing failed
+        }
+      }
+      
+      // If no dates, try to count from exercises_details/items
+      final exercisesData = plan['exercises_details'] ?? plan['items'];
+      if (exercisesData != null) {
+        List<dynamic> exercises = [];
+        if (exercisesData is String) {
+          try {
+            exercises = jsonDecode(exercisesData);
+          } catch (e) {
+            // JSON parsing failed
+          }
+        } else if (exercisesData is List) {
+          exercises = exercisesData;
+        }
+        
+        if (exercises.isNotEmpty) {
+          // Count unique days from exercises
+          final uniqueDays = <int>{};
+          for (final exercise in exercises) {
+            if (exercise is Map) {
+              final day = exercise['day'] ?? exercise['day_number'] ?? exercise['dayNumber'];
+              if (day != null) {
+                final dayNum = int.tryParse(day.toString());
+                if (dayNum != null) uniqueDays.add(dayNum);
+              }
+            }
+          }
+          return uniqueDays.length;
+        }
+      }
+      
+      return 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  List<String> _getExerciseTypes(Map<String, dynamic> plan) {
+    try {
+      final exercisesData = plan['exercises_details'] ?? plan['items'];
+      if (exercisesData == null) return [];
+      
+      List<dynamic> exercises = [];
+      if (exercisesData is String) {
+        try {
+          exercises = jsonDecode(exercisesData);
+        } catch (e) {
+          return [];
+        }
+      } else if (exercisesData is List) {
+        exercises = exercisesData;
+      }
+      
+      if (exercises.isEmpty) return [];
+      
+      // Extract unique exercise types
+      final Set<String> types = {};
+      for (final exercise in exercises) {
+        if (exercise is Map) {
+          // Try different possible field names for exercise type
+          final type = exercise['exercise_type'] ?? 
+                      exercise['type'] ?? 
+                      exercise['category'] ?? 
+                      exercise['muscle_group'] ?? 
+                      exercise['body_part'] ??
+                      exercise['exercise_category'];
+          
+          if (type != null && type.toString().trim().isNotEmpty) {
+            types.add(type.toString().trim());
+          }
+        }
+      }
+      
+      return types.toList()..sort();
+    } catch (e) {
+      return [];
+    }
   }
 
   List<Map<String, dynamic>> _getDayItems(Map<String, dynamic> plan, int dayIndex) {
@@ -507,9 +984,9 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     onTap: () {
                       _tabController.animateTo(0);
                     },
-                    child: Container(
-                      height: 36,
-                      decoration: BoxDecoration(
+            child: Container(
+              height: 36,
+              decoration: BoxDecoration(
                         color: _tabController.index == 0 ? const Color(0xFF2E7D32) : Colors.white,
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
@@ -542,7 +1019,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                         color: _tabController.index == 1 ? const Color(0xFF2E7D32) : Colors.white,
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
-                          color: const Color(0xFF2E7D32),
+                  color: const Color(0xFF2E7D32),
                           width: 1.5,
                         ),
                       ),
@@ -553,10 +1030,10 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                             color: _tabController.index == 1 ? Colors.white : const Color(0xFF2E7D32),
                             fontWeight: FontWeight.w600,
                             fontSize: 14,
-                          ),
-                        ),
-                      ),
-                    ),
+            ),
+          ),
+        ),
+      ),
                   ),
                 ),
               ],
@@ -742,7 +1219,13 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
   }
 
   Widget _buildPlansTab() {
-    return SingleChildScrollView(
+    return RefreshIndicator(
+      onRefresh: () async {
+        print('🔄 Refreshing Plans tab...');
+        await _controller.refreshPlans();
+      },
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -769,8 +1252,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
-                  ),
                 ),
+              ),
                 child: const Text('Create Plan'),
               ),
             ],
@@ -830,17 +1313,69 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             ),
             const SizedBox(height: 16),
 
-          // Manual Plans List
+          // Manual Plans Section
             Obx(() {
             final manualPlans = _controller.plans;
-            final aiPlans = _controller.aiGenerated;
-            final allPlans = [...manualPlans, ...aiPlans];
               
               if (_controller.isLoading.value && !_controller.hasLoadedOnce.value) {
               return const Center(child: CircularProgressIndicator());
             }
             
-            if (allPlans.isEmpty && _controller.hasLoadedOnce.value) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                // Manual Plans Header
+                if (manualPlans.isNotEmpty) ...[
+                  const Text(
+                    'Manual Plans',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2E7D32),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Manual Plans List
+                  ...manualPlans.map((plan) => _buildPlanCard(source: 'manual', data: plan)).toList(),
+                  const SizedBox(height: 24),
+                ],
+                ],
+              );
+            }),
+
+          // AI Generated Plans Section
+            Obx(() {
+            final aiPlans = _controller.aiGenerated;
+            
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                // AI Plans Header
+                if (aiPlans.isNotEmpty) ...[
+                  const Text(
+                    'AI Generated Plans',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2E7D32),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // AI Plans List
+                  ...aiPlans.map((plan) => _buildPlanCard(source: 'ai', data: plan)).toList(),
+                  const SizedBox(height: 24),
+                ],
+                ],
+              );
+            }),
+          
+          // No Plans Message
+          Obx(() {
+            final manualPlans = _controller.plans;
+            final aiPlans = _controller.aiGenerated;
+            final hasAnyPlans = manualPlans.isNotEmpty || aiPlans.isNotEmpty;
+            
+            if (!hasAnyPlans && _controller.hasLoadedOnce.value) {
               return const Center(
                 child: Text(
                   'No plans created yet',
@@ -848,12 +1383,10 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 ),
               );
             }
-            
-              return Column(
-              children: allPlans.map((plan) => _buildPlanCard(source: 'plans', data: plan)).toList(),
-              );
+            return const SizedBox.shrink();
             }),
           ],
+        ),
         ),
       );
   }
@@ -864,13 +1397,338 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
       return _buildScheduleCard(data);
     }
     
-    // For plans tab, show the exact design from image
-    if (source == 'plans') {
-      return _buildPlansTabCard(data);
+    // For manual plans, show manual plan card design
+    if (source == 'manual') {
+      return _buildManualPlanCard(data);
+    }
+    
+    // For AI plans, show AI plan card design
+    if (source == 'ai') {
+      return _buildAiPlanCard(data);
     }
     
     // Fallback for other sources
     return _buildPlansTabCard(data);
+  }
+
+  Widget _buildManualPlanCard(Map<String, dynamic> data) {
+    final planName = (data['name'] ?? data['exercise_plan'] ?? data['exercise_plan_category'] ?? data['title'] ?? 'Manual Plan').toString();
+    
+    // Calculate total days
+    String totalDaysStr;
+    final sd = data['start_date']?.toString();
+    final ed = data['end_date']?.toString();
+    if (sd != null && ed != null) {
+      try {
+        final start = DateTime.parse(sd);
+        final end = DateTime.parse(ed);
+        totalDaysStr = '${end.difference(start).inDays} Days';
+      } catch (e) {
+        totalDaysStr = '${data['total_days'] ?? 0} Days';
+      }
+    } else {
+      totalDaysStr = '${data['total_days'] ?? 0} Days';
+    }
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2E7D32)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 3,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Plan Header
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2E7D32),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'MANUAL',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                totalDaysStr,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // Plan Name
+          Text(
+            planName,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          
+          // Plan Details
+          Row(
+            children: [
+              _buildInfoChip('Level', _extractUserLevel(data)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          // Action buttons
+          Row(
+            children: [
+              Expanded(
+                child: _buildApprovalButton(data),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    print('🔍 Manual Plan - Edit button clicked');
+                    print('🔍 Manual Plan - Plan data: $data');
+                    
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => EditPlanPage(plan: data, isAi: false),
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF2E7D32)),
+                    foregroundColor: const Color(0xFF2E7D32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Edit'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                onPressed: () async {
+                    print('🔍 Manual Plan - View button clicked');
+                    print('🔍 Manual Plan - Plan data: $data');
+                    
+                    try {
+                      await Get.to(() => PlanDetailPage(plan: data, isAi: false));
+                  } catch (e) {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => PlanDetailPage(plan: data, isAi: false),
+                        ),
+                      );
+                    }
+                  },
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF2E7D32)),
+                    foregroundColor: const Color(0xFF2E7D32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('View'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Payload button
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+                onPressed: () {
+                _showPayloadForPlan(data);
+              },
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.orange),
+                foregroundColor: Colors.orange,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text('Show Payload for Backend'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAiPlanCard(Map<String, dynamic> data) {
+    final planName = (data['name'] ?? data['exercise_plan'] ?? data['exercise_plan_category'] ?? data['title'] ?? 'AI Plan').toString();
+    
+    // Calculate total days
+    String totalDaysStr;
+    final sd = data['start_date']?.toString();
+    final ed = data['end_date']?.toString();
+    if (sd != null && ed != null) {
+      try {
+        final start = DateTime.parse(sd);
+        final end = DateTime.parse(ed);
+        totalDaysStr = '${end.difference(start).inDays} Days';
+      } catch (e) {
+        totalDaysStr = '${data['total_days'] ?? 0} Days';
+      }
+    } else {
+      totalDaysStr = '${data['total_days'] ?? 0} Days';
+    }
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF4CAF50)), // Different color for AI plans
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 3,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Plan Header
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4CAF50), // Different color for AI
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'AI GENERATED',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                totalDaysStr,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // Plan Name
+          Text(
+            planName,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          
+          // Plan Details
+          Row(
+            children: [
+              _buildInfoChip('Level', _extractUserLevel(data)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          // Action buttons
+          Row(
+            children: [
+              Expanded(
+                child: _buildApprovalButton(data),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                onPressed: () {
+                    print('🔍 AI Plan - Edit button clicked');
+                    print('🔍 AI Plan - Plan data: $data');
+                    
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => EditPlanPage(plan: data, isAi: true),
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF4CAF50)),
+                    foregroundColor: const Color(0xFF4CAF50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Edit'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () async {
+                    print('🔍 AI Plan - View button clicked');
+                    print('🔍 AI Plan - Plan data: $data');
+                    
+                    try {
+                      await Get.to(() => PlanDetailPage(plan: data, isAi: true));
+                  } catch (e) {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => PlanDetailPage(plan: data, isAi: true),
+                        ),
+                      );
+                    }
+                  },
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Color(0xFF4CAF50)),
+                    foregroundColor: const Color(0xFF4CAF50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('View'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildPlansTabCard(Map<String, dynamic> data) {
@@ -946,24 +1804,12 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
           Row(
             children: [
               Expanded(
-                child: ElevatedButton(
-                  onPressed: () async {
-                    await _sendPlanForApproval(data);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Text('Send Plan for Approval'),
-                ),
+                child: _buildApprovalButton(data),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () {
+                onPressed: () {
                     // Determine if this is an AI plan or manual plan
                     // Check if this plan exists in the AI generated list
                     final aiPlans = _controller.aiGenerated;
@@ -973,13 +1819,13 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     print('🔍 Plan ID: ${data['id']}, AI Plans count: ${aiPlans.length}');
                     print('🔍 Plan data: $data');
                     
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
                         builder: (context) => EditPlanPage(plan: data, isAi: isAi),
-                      ),
-                    );
-                  },
+                    ),
+                  );
+                },
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: Color(0xFF2E7D32)),
                     foregroundColor: const Color(0xFF2E7D32),
@@ -1035,9 +1881,9 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
+                decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFF2E7D32)),
       ),
       child: Column(
@@ -1054,18 +1900,60 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (level.isNotEmpty) Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2E7D32).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF2E7D32)),
-                ),
-                child: Text(level, style: const TextStyle(color: Color(0xFF2E7D32), fontSize: 12)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (level.isNotEmpty) Container(
+                    margin: const EdgeInsets.only(bottom: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2E7D32).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFF2E7D32)),
+                    ),
+                    child: Text(level, style: const TextStyle(color: Color(0xFF2E7D32), fontSize: 12)),
+                  ),
+                  // Add total days display
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2E7D32),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_calculateTotalDays(plan)} DAYS',
+                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
           const SizedBox(height: 8),
+          // Show exercise types if available
+          if (_getExerciseTypes(plan).isNotEmpty) ...[
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: _getExerciseTypes(plan).map((type) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2E7D32).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFF2E7D32).withOpacity(0.3)),
+                ),
+                child: Text(
+                  type,
+                  style: const TextStyle(
+                    color: Color(0xFF2E7D32),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              )).toList(),
+            ),
+            const SizedBox(height: 8),
+          ],
           Row(
             mainAxisSize: MainAxisSize.min,
             children: const [
@@ -1172,7 +2060,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   ),
                   child: const Text('View Plan'),
                 ),
-              ),
+                ),
             ],
           ),
         ],

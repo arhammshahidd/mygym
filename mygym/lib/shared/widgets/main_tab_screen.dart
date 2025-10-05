@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
 import '../../features/trainings/presentation/pages/trainings_page.dart';
 import '../../features/stats/presentation/pages/stats_page.dart';
-import '../../features/food/presentation/pages/food_menu_page.dart';
+import '../../features/food/presentation/pages/nutrition_page.dart';
 import '../../features/profile/presentation/pages/profile_page.dart';
 
 class MainTabScreen extends StatefulWidget {
@@ -19,7 +19,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
     const DashboardPage(),
     const TrainingsPage(),
     const StatsPage(),
-    const FoodMenuPage(),
+    const NutritionPage(),
     const ProfilePage(),
   ];
 
@@ -55,7 +55,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.restaurant),
-            label: 'Food Menu',
+            label: 'Nutrition',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person),
