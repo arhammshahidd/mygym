@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../controllers/trainings_controller.dart';
+import '../controllers/plans_controller.dart';
 
 class EditPlanPage extends StatefulWidget {
   final Map<String, dynamic> plan;
@@ -12,7 +12,7 @@ class EditPlanPage extends StatefulWidget {
 }
 
 class _EditPlanPageState extends State<EditPlanPage> {
-  late final TrainingsController _controller;
+  late final PlansController _controller;
   late final TextEditingController _categoryCtrl;
   late final TextEditingController _nameCtrl;
   late final TextEditingController _totalWorkoutsCtrl;
@@ -32,10 +32,10 @@ class _EditPlanPageState extends State<EditPlanPage> {
     print('🔍 Plan ID: ${widget.plan['id']}');
     
     try {
-      _controller = Get.find<TrainingsController>();
-      print('🔍 TrainingsController found successfully');
+      _controller = Get.find<PlansController>();
+      print('🔍 PlansController found successfully');
     } catch (e) {
-      print('❌ Error finding TrainingsController: $e');
+      print('❌ Error finding PlansController: $e');
       rethrow;
     }
     

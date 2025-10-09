@@ -2,6 +2,7 @@ import 'package:get/get.dart';
 import 'package:flutter/material.dart';
 import '../../../../shared/models/user_model.dart';
 import '../../data/services/profile_service.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
 
 class ProfileController extends GetxController {
   final ProfileService _profileService = ProfileService();
@@ -17,17 +18,41 @@ class ProfileController extends GetxController {
   String get errorMessage => _errorMessage.value;
   bool get hasUser => _user.value != null;
 
-  // Don't load profile immediately - wait for user to be authenticated
+  @override
+  void onInit() {
+    super.onInit();
+    // Check if user is authenticated and load profile
+    _checkAndLoadProfile();
+  }
+
+  Future<void> _checkAndLoadProfile() async {
+    try {
+      final authController = Get.find<AuthController>();
+      if (authController.isLoggedIn && !hasUser) {
+        await loadUserProfile();
+      }
+    } catch (e) {
+      print('Profile controller: Could not check auth status: $e');
+    }
+  }
 
   Future<void> loadUserProfile() async {
     try {
       _isLoading.value = true;
       _errorMessage.value = '';
       
+      print('🔐 Loading user profile...');
       final user = await _profileService.getCurrentUserProfile();
       _user.value = user;
+      
+      if (user.id == 1 && user.name == 'User') {
+        print('🔐 Using fallback user profile - backend profile endpoint may be unavailable');
+      } else {
+        print('🔐 Successfully loaded real user profile: ${user.name} (ID: ${user.id})');
+      }
     } catch (e) {
       _errorMessage.value = e.toString();
+      print('🔐 Profile loading failed: $e');
       Get.snackbar(
         'Error',
         'Failed to load profile: ${e.toString()}',
@@ -91,6 +116,10 @@ class ProfileController extends GetxController {
 
   void clearError() {
     _errorMessage.value = '';
+  }
+
+  void clearUser() {
+    _user.value = null;
   }
 
   @override

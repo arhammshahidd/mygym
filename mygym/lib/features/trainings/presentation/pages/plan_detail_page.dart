@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../controllers/trainings_controller.dart';
+import '../controllers/schedules_controller.dart';
+import '../controllers/plans_controller.dart';
 
 class PlanDetailPage extends StatefulWidget {
   final Map<String, dynamic> plan;
@@ -14,7 +16,8 @@ class PlanDetailPage extends StatefulWidget {
 }
 
 class _PlanDetailPageState extends State<PlanDetailPage> {
-  late final TrainingsController _controller;
+  late final SchedulesController _schedulesController;
+  late final PlansController _plansController;
   late List<List<Map<String, dynamic>>> _days; // list of days -> list of exercises
   bool _loading = true;
   String? _startStr;
@@ -24,13 +27,15 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
   void initState() {
     super.initState();
     try {
-    _controller = Get.find<TrainingsController>();
-      print('✅ PlanDetailPage - TrainingsController found');
+      _schedulesController = Get.find<SchedulesController>();
+      _plansController = Get.find<PlansController>();
+      print('✅ PlanDetailPage - Controllers found');
     } catch (e) {
-      print('❌ PlanDetailPage - TrainingsController not found: $e');
-      // Try to create a new instance
-      _controller = TrainingsController();
-      print('✅ PlanDetailPage - Created new TrainingsController');
+      print('❌ PlanDetailPage - Controllers not found: $e');
+      // Try to create new instances
+      _schedulesController = SchedulesController();
+      _plansController = PlansController();
+      print('✅ PlanDetailPage - Created new controllers');
     }
     
     _startStr = widget.plan['start_date']?.toString();
@@ -82,24 +87,59 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       Map<String, dynamic> full;
       
       if (widget.isAi) {
-        full = await _controller.getAiGeneratedPlan(id);
+        full = await _plansController.getAiGeneratedPlan(id);
       } else {
-        // For manual plans, check if this is an assignment or a regular manual plan
+        // Check if this plan is from assignments (Schedules tab) or manual plans (Plans tab)
         if (widget.plan['assignment_id'] != null) {
           print('🔍 Plan Detail - This is an assignment, fetching assignment details');
           final assignmentId = widget.plan['assignment_id'];
-          full = await _controller.getAssignmentDetails(assignmentId);
-        } else {
-          print('🔍 Plan Detail - This is a manual plan, fetching manual plan details');
-          print('🔍 Plan Detail - Manual plan ID: $id');
+          full = await _schedulesController.getAssignmentDetails(assignmentId);
+        } else if (widget.plan['web_plan_id'] != null) {
+          // This might be a plan from assignments that's being viewed from Plans tab
+          print('🔍 Plan Detail - Plan has web_plan_id, checking if it exists in assignments');
           try {
-            full = await _controller.getManualPlan(id);
-            print('🔍 Plan Detail - Manual plan fetch successful');
+            // Try to find this plan in assignments first
+            final assignments = _schedulesController.assignments;
+            final matchingAssignment = assignments.firstWhereOrNull(
+              (assignment) => assignment['web_plan_id']?.toString() == widget.plan['web_plan_id']?.toString()
+            );
+            
+            if (matchingAssignment != null) {
+              print('🔍 Plan Detail - Found matching assignment, using assignment data');
+              full = Map<String, dynamic>.from(matchingAssignment);
+            } else {
+              print('🔍 Plan Detail - No matching assignment found, using original plan data');
+              full = Map<String, dynamic>.from(widget.plan);
+            }
           } catch (e) {
-            print('❌ Plan Detail - Manual plan fetch failed: $e');
-            // If manual plan fetch fails, use the original plan data
+            print('❌ Plan Detail - Error checking assignments: $e');
             full = Map<String, dynamic>.from(widget.plan);
-            print('🔍 Plan Detail - Using original plan data as fallback');
+          }
+        } else {
+          print('🔍 Plan Detail - This is a manual plan, checking if we need to fetch details');
+          print('🔍 Plan Detail - Manual plan ID: $id');
+          
+          // Check if the original plan already has complete data
+          final hasItems = widget.plan['items'] != null && (widget.plan['items'] as List).isNotEmpty;
+          final hasExercisesDetails = widget.plan['exercises_details'] != null && 
+              ((widget.plan['exercises_details'] is List && (widget.plan['exercises_details'] as List).isNotEmpty) ||
+               (widget.plan['exercises_details'] is String && (widget.plan['exercises_details'] as String).trim().isNotEmpty));
+          
+          if (hasItems || hasExercisesDetails) {
+            print('🔍 Plan Detail - Original plan has complete data, using it directly');
+            full = Map<String, dynamic>.from(widget.plan);
+          } else {
+            print('🔍 Plan Detail - Original plan lacks data, fetching from backend');
+            try {
+              full = await _plansController.getManualPlan(id);
+              print('🔍 Plan Detail - Manual plan fetch successful');
+            } catch (e) {
+              print('❌ Plan Detail - Manual plan fetch failed: $e');
+              // If manual plan fetch fails, use the original plan data
+              full = Map<String, dynamic>.from(widget.plan);
+              print('🔍 Plan Detail - Using original plan data as fallback');
+              print('🔍 Plan Detail - Original plan exercises_details: ${widget.plan['exercises_details']}');
+            }
           }
         }
       }
@@ -145,10 +185,24 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
         print('🔍 Plan Detail - First item: ${items.first}');
       } else {
         print('⚠️ Plan Detail - No items found, checking if plan has items directly');
-        // Fallback: check if the original plan has items
+        // Fallback: check if the original plan has items or exercises_details
         if (widget.plan['items'] is List && (widget.plan['items'] as List).isNotEmpty) {
           items = List<Map<String, dynamic>>.from(widget.plan['items'] as List);
           print('🔍 Plan Detail - Using original plan items: ${items.length} items');
+        } else if (widget.plan['exercises_details'] != null) {
+          print('🔍 Plan Detail - Fallback: Using original plan exercises_details');
+          try {
+            if (widget.plan['exercises_details'] is List) {
+              items = List<Map<String, dynamic>>.from(widget.plan['exercises_details'] as List);
+              print('🔍 Plan Detail - Using original exercises_details as List: ${items.length} items');
+            } else if (widget.plan['exercises_details'] is String) {
+              final List<dynamic> parsedList = jsonDecode(widget.plan['exercises_details'] as String);
+              items = parsedList.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+              print('🔍 Plan Detail - Using original exercises_details as String: ${items.length} items');
+            }
+          } catch (e) {
+            print('❌ Plan Detail - Failed to parse original exercises_details: $e');
+          }
         }
       }
       
@@ -268,6 +322,45 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     if (mounted) setState(() {});
   }
 
+  int _applyWorkoutDistributionLogicForPlanDetail(List<Map<String, dynamic>> workouts) {
+    if (workouts.isEmpty) return 2;
+    
+    print('🔍 PLAN DETAIL DISTRIBUTION LOGIC - Input workouts: ${workouts.length}');
+    for (int i = 0; i < workouts.length; i++) {
+      final workout = workouts[i];
+      print('🔍 Plan Detail Workout $i: ${workout['name']} - ${workout['minutes']} minutes');
+    }
+    
+    // Calculate total minutes for all workouts
+    int totalMinutes = 0;
+    for (var workout in workouts) {
+      final minutes = int.tryParse(workout['minutes']?.toString() ?? workout['training_minutes']?.toString() ?? '0') ?? 0;
+      totalMinutes += minutes;
+      print('🔍 Plan Detail Adding ${workout['name']}: $minutes minutes (total: $totalMinutes)');
+    }
+    
+    print('🔍 PLAN DETAIL FINAL Total workout minutes: $totalMinutes');
+    print('🔍 PLAN DETAIL FINAL Number of workouts: ${workouts.length}');
+    
+    // FORCE TEST: Always apply filtering if we have more than 2 workouts
+    if (workouts.length > 2) {
+      print('🔍 🚨 PLAN DETAIL FORCE TEST: More than 2 workouts detected, applying filtering regardless of minutes');
+      print('🔍 🚨 PLAN DETAIL FORCE FILTERED: Showing 2 workouts per day');
+      return 2;
+    }
+    
+    // Apply distribution logic
+    if (totalMinutes > 80 && workouts.length > 2) {
+      // If total minutes > 80 and we have more than 2 workouts, show only 2 workouts
+      print('🔍 PLAN DETAIL ✅ APPLYING LOGIC: Total minutes ($totalMinutes) > 80, showing only 2 workouts');
+      return 2;
+    } else {
+      // If total minutes <= 80 or we have 2 or fewer workouts, show all workouts
+      print('🔍 PLAN DETAIL ✅ APPLYING LOGIC: Total minutes ($totalMinutes) <= 80 or <= 2 workouts, showing all ${workouts.length} workouts');
+      return workouts.length;
+    }
+  }
+
   void _distributeMultipleWorkoutsPerDay(List<Map<String, dynamic>> items, int totalDays, double avgMinutes) {
     print('🔍 Plan Detail - _distributeMultipleWorkoutsPerDay called');
     print('🔍 Plan Detail - Items: ${items.length}, Total days: $totalDays, Avg minutes: $avgMinutes');
@@ -275,12 +368,8 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     // Don't shuffle - keep original order for consistency
     final itemsList = List<Map<String, dynamic>>.from(items);
 
-    // Choose 2 or 3 per day based on average minutes density
-    final totalPlanMinutes = itemsList.fold<int>(0, (sum, it) =>
-        sum + (int.tryParse(it['minutes']?.toString() ?? it['training_minutes']?.toString() ?? '0') ?? 0));
-    final int avg = itemsList.isEmpty ? 0 : (totalPlanMinutes / itemsList.length).floor();
-    final bool canShowThree = avg < 50 && itemsList.length >= 3;
-    final int workoutsPerDay = canShowThree ? 3 : 2;
+    // Apply the same distribution logic as the main training page
+    final int workoutsPerDay = _applyWorkoutDistributionLogicForPlanDetail(itemsList);
     
     print('🔍 Plan Detail - Workouts per day: $workoutsPerDay');
 

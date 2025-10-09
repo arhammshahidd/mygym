@@ -4,6 +4,7 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../shared/services/api_client.dart';
 import '../../../auth/data/services/auth_service.dart';
 import '../../../../shared/services/openai_service.dart';
+import '../../../../shared/services/local_ai_service.dart';
 
 class AiNutritionService {
   final AuthService _auth = AuthService();
@@ -14,118 +15,210 @@ class AiNutritionService {
     return ApiClient(authToken: token).dio;
   }
 
-  // Create an AI plan REQUEST for backend processing/approval
+  // Create an AI plan REQUEST for backend processing/approval (legacy)
   Future<Map<String, dynamic>> createRequest(Map<String, dynamic> payload) async {
     final dio = await _authedDio();
-    final res = await dio.post('/api/appAIPlans/requests', data: payload);
+    // Prefer meals-specific requests endpoint to satisfy FK in generated table
+    final endpoints = ['/api/appAIMeals/requests', '/api/appAIPlans/requests'];
+    DioException? lastError;
+    for (final ep in endpoints) {
+      try {
+        final res = await dio.post(ep, data: payload);
     if (res.statusCode == 200 || res.statusCode == 201) {
-      return Map<String, dynamic>.from(res.data);
+          return Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+        }
+      } on DioException catch (e) {
+        lastError = e;
+        continue; // try next endpoint
+      }
     }
-    throw Exception('Failed to create AI meal request');
+    final data = lastError?.response?.data;
+    throw Exception('AI request failed: ${data ?? lastError?.message ?? 'unknown error'}');
   }
 
-  // Generate meal plan via backend AI service
-  Future<Map<String, dynamic>> createGenerated(Map<String, dynamic> payload) async {
+  // Create generated meal plan (store plan + items)
+  Future<Map<String, dynamic>> createGeneratedPlan(Map<String, dynamic> payload) async {
     final dio = await _authedDio();
-    
-    // Use the existing requests endpoint to create AI plan
-    final requestData = {
-      'type': 'nutrition',
-      'menu_plan': payload['menu_plan'] ?? payload['meal_category'],
-      'meal_category': payload['menu_plan'] ?? payload['meal_category'],
-      'age': payload['age'],
-      'height_cm': payload['height_cm'],
-      'weight_kg': payload['weight_kg'],
-      'illness': payload['illness'] ?? '',
-      'gender': payload['gender'],
-      'country': payload['country'] ?? '',
-      'goal': payload['goal'],
-      'user_id': payload['user_id'],
-      'start_date': payload['start_date'],
-      'end_date': payload['end_date'],
-      'user': {
-        'id': payload['user_id'],
-        'name': payload['user_name'] ?? 'User',
-        'phone': payload['user_phone'] ?? '',
-      },
-    };
-    
-    final res = await dio.post('/api/appAIPlans/requests', data: requestData);
+    try {
+      // If no items provided, generate via OpenAI first to create a full plan
+      Map<String, dynamic> toSend = payload;
+      final items = (payload['items'] is List) ? payload['items'] as List : const [];
+      if (items.isEmpty) {
+        // Extract training data from preferences
+        final preferences = payload['preferences'] as Map<String, dynamic>? ?? {};
+        final trainingData = preferences['training_data'] as Map<String, dynamic>? ?? {};
+        
+        // Use Local AI Service as primary (FREE) method, with OpenAI as optional enhancement
+        try {
+          if (AppConfig.openAIApiKey.isNotEmpty) {
+            print('🤖 Using OpenAI for enhanced meal plan generation');
+            final openAI = OpenAIService();
+            final gen = await openAI.generateMealPlanJson(
+              userId: payload['user_id'] ?? 0,
+              mealPlan: payload['meal_plan_category']?.toString() ?? payload['meal_category']?.toString() ?? 'Weight Loss',
+              startDate: payload['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T').first,
+              endDate: payload['end_date']?.toString() ?? DateTime.now().add(const Duration(days: 30)).toIso8601String().split('T').first,
+              age: payload['age'] ?? 25,
+              heightCm: payload['height_cm'] ?? 170,
+              weightKg: payload['weight_kg'] ?? 70,
+              gender: payload['gender']?.toString() ?? 'male',
+              futureGoal: payload['future_goal']?.toString() ?? payload['goal']?.toString() ?? 'lose weight',
+              country: payload['country']?.toString() ?? 'Pakistan',
+              totalDays: payload['total_days'] ?? 30,
+              targetDailyCalories: (payload['total_calories'] ?? 1800) / (payload['total_days'] ?? 30),
+              dailyProteins: (payload['total_proteins'] ?? 150) / (payload['total_days'] ?? 30),
+              dailyCarbs: (payload['total_carbs'] ?? 200) / (payload['total_days'] ?? 30),
+              dailyFats: (payload['total_fats'] ?? 60) / (payload['total_days'] ?? 30),
+              trainingData: trainingData,
+            );
+            toSend = gen;
+          } else {
+            throw Exception('OpenAI API key not configured - using free Local AI');
+          }
+        } catch (e) {
+          print('🤖 Using FREE Local AI Service for meal plan generation: $e');
+          // Primary method: Local AI Service (completely FREE)
+          final localAI = LocalAIService();
+          final gen = await localAI.generateMealPlanJson(
+            userId: payload['user_id'] ?? 0,
+            mealPlan: payload['meal_plan_category']?.toString() ?? payload['meal_category']?.toString() ?? 'Weight Loss',
+            startDate: payload['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T').first,
+            endDate: payload['end_date']?.toString() ?? DateTime.now().add(const Duration(days: 30)).toIso8601String().split('T').first,
+            age: payload['age'] ?? 25,
+            heightCm: payload['height_cm'] ?? 170,
+            weightKg: payload['weight_kg'] ?? 70,
+            gender: payload['gender']?.toString() ?? 'male',
+            futureGoal: payload['future_goal']?.toString() ?? payload['goal']?.toString() ?? 'lose weight',
+            country: payload['country']?.toString() ?? 'Pakistan',
+            totalDays: payload['total_days'] ?? 30,
+            targetDailyCalories: (payload['total_calories'] ?? 1800) / (payload['total_days'] ?? 30),
+            dailyProteins: (payload['total_proteins'] ?? 150) / (payload['total_days'] ?? 30),
+            dailyCarbs: (payload['total_carbs'] ?? 200) / (payload['total_days'] ?? 30),
+            dailyFats: (payload['total_fats'] ?? 60) / (payload['total_days'] ?? 30),
+            trainingData: trainingData,
+          );
+          toSend = gen;
+        }
+      }
+      
+      final res = await dio.post('/api/appAIMeals/generated', data: toSend);
     if (res.statusCode == 200 || res.statusCode == 201) {
-      final responseData = Map<String, dynamic>.from(res.data);
-      
-      // Generate a mock meal plan structure for the UI
-      final mockPlanJson = _generateMockMealPlan(payload);
-      
-      return {
-        'id': responseData['id'] ?? 'ai_request_${DateTime.now().millisecondsSinceEpoch}',
-        'data': mockPlanJson,
-        'request_data': requestData,
-      };
+        return Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+      }
+      throw Exception('Failed to create generated meal plan: HTTP ${res.statusCode}');
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      final data = e.response?.data;
+      if (status == 413) {
+        throw Exception('Generated plan 413: request entity too large');
+      }
+      throw Exception('Generated plan 400: ${data is String ? data : (data is Map ? data['message'] ?? data['error'] ?? data.toString() : e.message)}');
     }
-    throw Exception('Failed to create AI meal plan request');
+  }
+
+
+  Future<Map<String, dynamic>> getGeneratedPlan(dynamic id) async {
+    final dio = await _authedDio();
+    final res = await dio.get('/api/appAIMeals/generated/$id');
+    if (res.statusCode == 200) {
+      return Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+    }
+    throw Exception('Failed to fetch generated meal plan');
+  }
+
+  Future<List<dynamic>> listGeneratedPlans({int? userId}) async {
+    final dio = await _authedDio();
+    final res = await dio.get('/api/appAIMeals/generated', queryParameters: {
+      if (userId != null) 'user_id': userId,
+    });
+    if (res.statusCode == 200) {
+      final data = res.data;
+      if (data is List) return data;
+      if (data is Map && data['data'] is List) return List<dynamic>.from(data['data']);
+      if (data is Map && data['items'] is List) return List<dynamic>.from(data['items']);
+      return [];
+    }
+    throw Exception('Failed to list generated meal plans');
+  }
+
+  Future<void> deleteGeneratedPlan(dynamic id) async {
+    final dio = await _authedDio();
+    final res = await dio.delete('/api/appAIMeals/generated/$id');
+    if (res.statusCode != 200) {
+      throw Exception('Failed to delete generated meal plan: HTTP ${res.statusCode}');
+    }
+  }
+
+  Future<void> uploadGeneratedItems({required dynamic planId, required List<Map<String, dynamic>> items, int chunkSize = 200}) async {
+    if (items.isEmpty) return;
+    final dio = await _authedDio();
+    // Ensure each item has plan_id
+    final normalized = items.map((it) {
+      final m = Map<String, dynamic>.from(it);
+      m['plan_id'] = planId;
+      return m;
+    }).toList();
+
+    // Try multiple possible endpoints to avoid 404s in different backends
+    final endpoints = <String>[
+      // Prefer the dedicated bulk endpoint the backend just added
+      '/api/appAIMeals/items/bulk',
+      // Fallbacks for older deployments
+      '/api/appAIGeneratedMealPlanItems',
+      '/api/appAIMeals/items',
+      '/api/appAIMeals/generated/items',
+    ];
+
+    for (int i = 0; i < normalized.length; i += chunkSize) {
+      final chunk = normalized.sublist(i, i + chunkSize > normalized.length ? normalized.length : i + chunkSize);
+      DioException? lastErr;
+      bool uploaded = false;
+      for (final ep in endpoints) {
+        try {
+          final res = await dio.post(ep, data: {'items': chunk});
+          if (res.statusCode == 200 || res.statusCode == 201) {
+            uploaded = true;
+            break;
+          }
+        } on DioException catch (e) {
+          // If 404, try next endpoint
+          if (e.response?.statusCode == 404) {
+            lastErr = e;
+            continue;
+          }
+          rethrow;
+        }
+      }
+      if (!uploaded) {
+        final msg = lastErr?.response?.data ?? lastErr?.message ?? 'unknown error';
+        throw Exception('Failed to upload items chunk: $msg');
+      }
+    }
+  }
+
+  // Send to approval_food_menu
+  Future<Map<String, dynamic>> sendApprovalFoodMenu(Map<String, dynamic> payload) async {
+    final dio = await _authedDio();
+    try {
+      final res = await dio.post('/api/approvalFoodMenu', data: payload);
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+      }
+      throw Exception('Failed to submit approval food menu: HTTP ${res.statusCode}');
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      throw Exception('Approval submit 400: ${data is String ? data : (data is Map ? data['message'] ?? data['error'] ?? data.toString() : e.message)}');
+    }
   }
 
   Map<String, dynamic> _generateMockMealPlan(Map<String, dynamic> payload) {
-    // Generate a simple 7-day meal plan structure for UI display
-    final days = <Map<String, dynamic>>[];
-    final mealCategory = payload['menu_plan'] ?? payload['meal_category'] ?? 'weightLoss';
-    
-    for (int day = 1; day <= 7; day++) {
-      days.add({
-        'day': day,
-        'breakfast': _getMealItems('breakfast', mealCategory),
-        'lunch': _getMealItems('lunch', mealCategory),
-        'dinner': _getMealItems('dinner', mealCategory),
-      });
-    }
-    
-    return {
-      'title': mealCategory == 'muscleGain' ? 'Mass Gain Plan' : 'Weight Loss Plan',
-      'note': mealCategory == 'muscleGain' 
-          ? 'Perfect for Muscle Building and recovery'
-          : 'Balanced nutrition for healthy weight loss',
-      'days': days,
-    };
+    // This method should not be used anymore - all meal plans should be AI-generated
+    throw Exception('Mock meal plans are disabled. Please use AI generation for personalized meal plans.');
   }
 
+  // This method is no longer needed - Local AI Service handles meal generation
   List<Map<String, dynamic>> _getMealItems(String mealType, String category) {
-    final isMuscleGain = category == 'muscleGain';
-    
-    switch (mealType) {
-      case 'breakfast':
-        return isMuscleGain 
-            ? [
-                {'name': '6 Eggs', 'grams': 300, 'calories': 930, 'protein': 78, 'fats': 60, 'carbs': 7},
-                {'name': 'Oatmeal', 'grams': 100, 'calories': 389, 'protein': 17, 'fats': 7, 'carbs': 66},
-              ]
-            : [
-                {'name': 'Oatmeal with berries', 'grams': 150, 'calories': 250, 'protein': 8, 'fats': 4, 'carbs': 45},
-                {'name': 'Greek Yogurt', 'grams': 200, 'calories': 170, 'protein': 15, 'fats': 5, 'carbs': 12},
-              ];
-      case 'lunch':
-        return isMuscleGain
-            ? [
-                {'name': 'Chicken Breast', 'grams': 200, 'calories': 825, 'protein': 125, 'fats': 18, 'carbs': 0},
-                {'name': 'Brown Rice', 'grams': 150, 'calories': 220, 'protein': 5, 'fats': 2, 'carbs': 45},
-              ]
-            : [
-                {'name': 'Grilled Chicken', 'grams': 150, 'calories': 300, 'protein': 35, 'fats': 12, 'carbs': 0},
-                {'name': 'Brown Rice', 'grams': 100, 'calories': 220, 'protein': 5, 'fats': 2, 'carbs': 45},
-              ];
-      case 'dinner':
-        return isMuscleGain
-            ? [
-                {'name': 'Chicken Thighs', 'grams': 200, 'calories': 990, 'protein': 150, 'fats': 50, 'carbs': 0},
-                {'name': 'Sweet Potato', 'grams': 200, 'calories': 180, 'protein': 4, 'fats': 0, 'carbs': 41},
-              ]
-            : [
-                {'name': 'Salmon', 'grams': 150, 'calories': 320, 'protein': 30, 'fats': 20, 'carbs': 0},
-                {'name': 'Mixed Salad', 'grams': 100, 'calories': 120, 'protein': 3, 'fats': 7, 'carbs': 12},
-              ];
-      default:
-        return [];
-    }
+    throw Exception('This method is deprecated. Use Local AI Service for meal generation.');
   }
 
   Future<void> _saveMealItems(Dio dio, dynamic planId, Map<String, dynamic> planJson) async {

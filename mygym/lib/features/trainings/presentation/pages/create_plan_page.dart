@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../presentation/controllers/trainings_controller.dart';
+import '../../presentation/controllers/plans_controller.dart';
 import '../../../profile/presentation/controllers/profile_controller.dart';
 
 class CreatePlanPage extends StatefulWidget {
@@ -26,13 +26,13 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
 
   final List<Map<String, dynamic>> _exercises = [];
 
-  TrainingsController? _controller;
+  PlansController? _controller;
   ProfileController? _profileController;
 
   @override
   void initState() {
     super.initState();
-    try { _controller = Get.find<TrainingsController>(); } catch (_) {}
+    try { _controller = Get.find<PlansController>(); } catch (_) {}
     try { _profileController = Get.find<ProfileController>(); } catch (_) {}
   }
 

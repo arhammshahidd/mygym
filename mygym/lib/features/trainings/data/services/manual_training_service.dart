@@ -12,6 +12,11 @@ class ManualTrainingService {
     return ApiClient(authToken: token).dio;
   }
 
+  // Public method for accessing authenticated Dio instance
+  Future<Dio> getAuthedDio() async {
+    return await _authedDio();
+  }
+
   Future<List<dynamic>> listPlans({int? userId}) async {
     final dio = await _authedDio();
     // Backend returns plans for the authenticated user; no params needed
@@ -156,8 +161,9 @@ class ManualTrainingService {
 
   Future<Map<String, dynamic>> getPlan(int id) async {
     final dio = await _authedDio();
-    final res = await dio.get('/api/appManualTraining/$id');
-    if (res.statusCode == 200) {
+    try {
+      final res = await dio.get('/api/appManualTraining/$id');
+      if (res.statusCode == 200) {
       final raw = res.data;
       print('🔍 Get Plan API Response for ID $id:');
       print('Raw data: $raw');
@@ -201,6 +207,19 @@ class ManualTrainingService {
       }
     }
     throw Exception('Failed to fetch plan');
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        print('⚠️ Plan $id not found - returning empty plan structure');
+        return {
+          'id': id,
+          'name': 'Plan Not Found',
+          'exercises_details': [],
+          'daily_plans': [],
+          'items': [],
+        };
+      }
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> createPlan(Map<String, dynamic> payload) async {
@@ -282,6 +301,47 @@ class ManualTrainingService {
         msg = e.message!;
       }
       throw Exception(msg);
+    }
+  }
+
+  Future<Map<String, dynamic>> getAssignmentDetails(int assignmentId) async {
+    final dio = await _authedDio();
+    try {
+      // Try the correct endpoint first
+      final res = await dio.get('/api/trainingPlans/assignments/$assignmentId');
+      print('🔍 Assignment Details API Response:');
+      print('Status: ${res.statusCode}');
+      print('Data: ${res.data}');
+      
+      if (res.statusCode == 200) {
+        return Map<String, dynamic>.from(res.data);
+      } else {
+        throw Exception('Failed to fetch assignment details: ${res.statusMessage}');
+      }
+    } on DioException catch (e) {
+      print('❌ Error fetching assignment details: $e');
+      if (e.response?.statusCode == 404) {
+        print('🔍 Assignment not found, trying to get plan details instead...');
+        // Try to get the plan details using the plan ID
+        try {
+          final planRes = await dio.get('/api/appManualTraining/$assignmentId');
+          if (planRes.statusCode == 200) {
+            print('🔍 Found plan details for ID $assignmentId');
+            return Map<String, dynamic>.from(planRes.data);
+          }
+        } catch (planError) {
+          print('❌ Error fetching plan details: $planError');
+        }
+        
+        // Return empty structure if nothing found
+        return {
+          'id': assignmentId,
+          'assignment_id': assignmentId,
+          'exercises_details': [],
+          'items': [],
+        };
+      }
+      throw Exception('Failed to fetch assignment details: ${e.message}');
     }
   }
 }

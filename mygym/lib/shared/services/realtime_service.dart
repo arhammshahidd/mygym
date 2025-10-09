@@ -18,6 +18,8 @@ class RealtimeService {
     final uri = _computeWsUri(path: AppConfig.wsApprovalsPath, token: token);
     try {
       if (kIsWeb) {
+        // Some servers require explicit upgrade; if handshake returns 200,
+        // this will throw and we silently disable realtime.
         _channel = html_ws.HtmlWebSocketChannel.connect(uri.toString());
       } else {
         _channel = WebSocketChannel.connect(uri);

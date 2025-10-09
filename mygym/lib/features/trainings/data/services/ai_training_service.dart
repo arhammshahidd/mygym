@@ -3,6 +3,7 @@ import '../../../../shared/services/api_client.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../auth/data/services/auth_service.dart';
 import '../../../../shared/services/openai_service.dart';
+import '../../../../shared/services/local_training_ai_service.dart';
 
 class AiTrainingService {
   final AuthService _authService = AuthService();
@@ -33,21 +34,53 @@ class AiTrainingService {
   // Generated
   Future<List<dynamic>> listGenerated({int? userId}) async {
     final dio = await _authedDio();
+    print('🤖 AI Training Service - Fetching AI generated plans...');
+    print('🤖 User ID: $userId');
+    print('🤖 Endpoint: /api/appAIPlans/generated');
+    
     final res = await dio.get('/api/appAIPlans/generated', queryParameters: {
       if (userId != null) 'user_id': userId,
     });
+    
+    print('🤖 AI Training Service - Response status: ${res.statusCode}');
+    print('🤖 AI Training Service - Response data: ${res.data}');
+    print('🤖 AI Training Service - Response data type: ${res.data.runtimeType}');
+    
     if (res.statusCode == 200) {
       final data = res.data;
       if (data is List) {
+        print('🤖 AI Training Service - Data is List with ${data.length} items');
+        if (data.isEmpty) {
+          print('🤖 AI Training Service - List is empty, returning empty list');
+          return [];
+        }
+        print('🤖 AI Training Service - First item: ${data.first}');
         return List<dynamic>.from(data.map((e) => _normalizeGenerated(e)));
       }
       if (data is Map<String, dynamic>) {
-        if (data['data'] is List) return List<dynamic>.from((data['data'] as List).map((e) => _normalizeGenerated(e)));
-        if (data['items'] is List) return List<dynamic>.from((data['items'] as List).map((e) => _normalizeGenerated(e)));
-        if (data['result'] is List) return List<dynamic>.from((data['result'] as List).map((e) => _normalizeGenerated(e)));
+        print('🤖 AI Training Service - Data is Map with keys: ${data.keys.toList()}');
+        if (data['data'] is List) {
+          final list = data['data'] as List;
+          print('🤖 AI Training Service - Found data.data with ${list.length} items');
+          return List<dynamic>.from(list.map((e) => _normalizeGenerated(e)));
+        }
+        if (data['items'] is List) {
+          final list = data['items'] as List;
+          print('🤖 AI Training Service - Found data.items with ${list.length} items');
+          return List<dynamic>.from(list.map((e) => _normalizeGenerated(e)));
+        }
+        if (data['result'] is List) {
+          final list = data['result'] as List;
+          print('🤖 AI Training Service - Found data.result with ${list.length} items');
+          return List<dynamic>.from(list.map((e) => _normalizeGenerated(e)));
+        }
+        print('🤖 AI Training Service - No list found in Map, returning empty list');
+        return [];
       }
+      print('🤖 AI Training Service - Data is neither List nor Map, returning empty list');
       return [];
     }
+    print('🤖 AI Training Service - Non-200 status code: ${res.statusCode}');
     throw Exception('Failed to fetch AI generated plans');
   }
 
@@ -65,30 +98,30 @@ class AiTrainingService {
       Map<String, dynamic> toSend = payload;
       final items = (payload['items'] is List) ? payload['items'] as List : const [];
       if (items.isEmpty) {
-        if (AppConfig.openAIApiKey.isEmpty) {
-          // Build minimal acceptable payload without calling external APIs
-          final plan = payload;
-          final exPlan = plan['exercise_plan']?.toString() ?? plan['exercise_plan_category']?.toString() ?? 'Strength';
-          toSend = {
-            'user_id': plan['user_id'] ?? 0,
-            'start_date': plan['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T').first,
-            'end_date': plan['end_date']?.toString() ?? DateTime.now().add(const Duration(days: 7)).toIso8601String().split('T').first,
-            'exercise_plan': exPlan,
-            'total_workouts': 1,
-            'total_training_minutes': 20,
-            'items': [
-              {
-                'name': '$exPlan Workout',
-                'sets': 3,
-                'reps': 10,
-                'weight': 0,
-                'training_minutes': 20,
-                'exercise_types': 'general',
-              }
-            ],
-          };
-        } else {
-          final gen = await OpenAIService().generatePlanJson(
+        // Use Local AI Service as primary (FREE) method, with OpenAI as optional enhancement
+        try {
+          if (AppConfig.openAIApiKey.isNotEmpty) {
+            print('🤖 Using OpenAI for enhanced training plan generation');
+            final gen = await OpenAIService().generatePlanJson(
+              userId: payload['user_id'] ?? 0,
+              exercisePlan: payload['exercise_plan']?.toString() ?? payload['exercise_plan_category']?.toString() ?? 'Strength',
+              startDate: payload['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T').first,
+              endDate: payload['end_date']?.toString() ?? DateTime.now().add(const Duration(days: 7)).toIso8601String().split('T').first,
+              age: payload['age'] ?? 25,
+              heightCm: payload['height_cm'] ?? 170,
+              weightKg: payload['weight_kg'] ?? 70,
+              gender: payload['gender']?.toString() ?? 'Male',
+              futureGoal: payload['future_goal']?.toString() ?? payload['goal']?.toString() ?? 'build muscle',
+            );
+            toSend = gen;
+          } else {
+            throw Exception('OpenAI API key not configured - using free Local AI');
+          }
+        } catch (e) {
+          print('🤖 Using FREE Local AI Service for training plan generation: $e');
+          // Primary method: Local AI Service (completely FREE)
+          final localAI = LocalTrainingAIService();
+          final gen = await localAI.generateTrainingPlanJson(
             userId: payload['user_id'] ?? 0,
             exercisePlan: payload['exercise_plan']?.toString() ?? payload['exercise_plan_category']?.toString() ?? 'Strength',
             startDate: payload['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T').first,

@@ -13,17 +13,19 @@ class NutritionPage extends StatefulWidget {
 
 class _NutritionPageState extends State<NutritionPage> with TickerProviderStateMixin {
   late final TabController _tabController;
-  final NutritionController _c = Get.put(NutritionController(), permanent: true);
+  late final NutritionController _c;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _c = Get.put(NutritionController(), permanent: true);
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    // Don't dispose the controller since it's permanent
     super.dispose();
   }
 
@@ -41,12 +43,23 @@ class _NutritionPageState extends State<NutritionPage> with TickerProviderStateM
           ],
         ),
       ),
-      body: TabBarView(
+      body: Builder(
+        builder: (context) {
+          try {
+            return TabBarView(
         controller: _tabController,
         children: [
           _SchedulesTab(green: green),
           _AiTab(green: green),
         ],
+            );
+          } catch (e) {
+            // Fallback UI if there's a rendering error
+            return const Center(
+              child: Text('Loading...'),
+            );
+          }
+        },
       ),
     );
   }
@@ -63,7 +76,11 @@ class _SchedulesTab extends StatelessWidget {
       final assigned = c.assignedPlan.value;
       return RefreshIndicator(
         onRefresh: () async {
+          try {
           await c.loadAssignedFromBackend();
+          } catch (e) {
+            print('Error refreshing: $e');
+          }
         },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -214,7 +231,11 @@ class _SchedulesTab extends StatelessWidget {
   }
 
   Widget _todayMealCard({required String dayLabel, required String title, required List<MealItem> items, required Color color}) {
-    final total = items.fold(0, (a, b) => a + b.calories);
+    final totalCalories = items.fold(0, (a, b) => a + b.calories);
+    final totalProteins = items.fold(0.0, (a, b) => a + b.proteinGrams);
+    final totalCarbs = items.fold(0.0, (a, b) => a + b.carbsGrams);
+    final totalFats = items.fold(0.0, (a, b) => a + b.fatGrams);
+    
     return Container(
       decoration: BoxDecoration(border: Border.all(color: color.withOpacity(0.4)), borderRadius: BorderRadius.circular(12)),
       child: Padding(
@@ -242,14 +263,41 @@ class _SchedulesTab extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Text(e.name, style: const TextStyle(color: Colors.black87)),
               )),
+          const SizedBox(height: 8),
+          // Nutritional information row
           Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              Text('$total Cal', style: const TextStyle(fontWeight: FontWeight.bold)),
+              _buildNutritionInfo('Calories', '$totalCalories', Colors.orange),
+              _buildNutritionInfo('Proteins', '${totalProteins.toInt()}g', Colors.blue),
+              _buildNutritionInfo('Carbs', '${totalCarbs.toInt()}g', Colors.green),
+              _buildNutritionInfo('Fats', '${totalFats.toInt()}g', Colors.red),
             ],
           ),
         ]),
       ),
+    );
+  }
+
+  Widget _buildNutritionInfo(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: Colors.black54,
+          ),
+        ),
+      ],
     );
   }
 
@@ -593,7 +641,7 @@ class _SchedulesTab extends StatelessWidget {
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(items[i].name, style: const TextStyle(fontWeight: FontWeight.w700)),
                     Text(
-                      '${items[i].calories} cal   ${items[i].proteinGrams}g protein   ${items[i].carbsGrams}g carbs',
+                      '${items[i].calories} cal   ${items[i].proteinGrams}g protein   ${items[i].carbsGrams}g carbs   ${items[i].fatGrams}g fats',
                     ),
                   ]),
                 ),
@@ -843,6 +891,278 @@ class _AiTabState extends State<_AiTab> {
   final NutritionController c = Get.find<NutritionController>();
   PlanCategory? _category;
 
+  MealPlan _convertToMealPlan(Map<String, dynamic> planDetails, Map<String, dynamic> planData) {
+    // Normalize helpers
+    String _toDateOnly(dynamic v) {
+      final s = v?.toString() ?? '';
+      if (s.isEmpty) return DateTime.now().toIso8601String().split('T').first;
+      try {
+        return DateTime.parse(s).toIso8601String().split('T').first;
+      } catch (_) {
+        return s.split('T').first;
+      }
+    }
+
+    // Extract items from nested data if present, else root
+    final data = (planDetails['data'] is Map) ? Map<String, dynamic>.from(planDetails['data']) : planDetails;
+    final items = (data['items'] is List)
+        ? List<Map<String, dynamic>>.from(data['items'].map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)))
+        : (planDetails['items'] is List)
+            ? List<Map<String, dynamic>>.from((planDetails['items'] as List).map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)))
+            : <Map<String, dynamic>>[];
+
+    // Group items by date and meal type (Breakfast/Lunch/Dinner)
+    final Map<String, Map<String, List<MealItem>>> groupedItems = {};
+    for (final item in items) {
+      final date = _toDateOnly(item['date']);
+      final mealType = (item['meal_type']?.toString() ?? 'Breakfast');
+      final foodName = item['food_item_name']?.toString() ?? 'Food';
+      final calories = (item['calories'] is num) ? (item['calories'] as num).toInt() : int.tryParse('${item['calories']}') ?? 0;
+      final protein = (item['proteins'] is num) ? (item['proteins'] as num).toInt() : int.tryParse('${item['proteins'] ?? item['protein']}') ?? 0;
+      final carbs = (item['carbs'] is num) ? (item['carbs'] as num).toInt() : int.tryParse('${item['carbs']}') ?? 0;
+      final fats = (item['fats'] is num) ? (item['fats'] as num).toInt() : int.tryParse('${item['fats'] ?? item['fat']}') ?? 0;
+      final grams = (item['grams'] is num) ? (item['grams'] as num).toInt() : int.tryParse('${item['grams']}') ?? 0;
+
+      groupedItems.putIfAbsent(date, () => {'Breakfast': [], 'Lunch': [], 'Dinner': []});
+      groupedItems[date]![mealType]!.add(MealItem(
+        name: foodName,
+        calories: calories,
+        proteinGrams: protein,
+        carbsGrams: carbs,
+        fatGrams: fats,
+        grams: grams,
+      ));
+    }
+
+    // Determine full expected date range
+    List<String> expectedDates = [];
+    try {
+      final sd = data['start_date'] ?? planData['start_date'];
+      final ed = data['end_date'] ?? planData['end_date'];
+      if (sd != null && ed != null) {
+        final start = DateTime.parse(sd.toString());
+        final end = DateTime.parse(ed.toString());
+        int days = end.difference(start).inDays;
+        if (days <= 0) days = (data['total_days'] is num) ? (data['total_days'] as num).toInt() : 1;
+        for (int i = 0; i < days; i++) {
+          expectedDates.add(_toDateOnly(start.add(Duration(days: i)).toIso8601String()));
+        }
+      }
+    } catch (_) {}
+
+    // Build DayMeals in chronological order, filling missing dates with empty meals
+    final List<String> sortedDates = expectedDates.isNotEmpty
+        ? expectedDates
+        : (groupedItems.keys.toList()..sort());
+
+    final days = <DayMeals>[];
+    int dayNumber = 1;
+    for (final date in sortedDates) {
+      final dayData = groupedItems[date] ?? {'Breakfast': <MealItem>[], 'Lunch': <MealItem>[], 'Dinner': <MealItem>[]};
+      days.add(DayMeals(
+        dayNumber: dayNumber++,
+        breakfast: List<MealItem>.from(dayData['Breakfast'] ?? <MealItem>[]),
+        lunch: List<MealItem>.from(dayData['Lunch'] ?? <MealItem>[]),
+        dinner: List<MealItem>.from(dayData['Dinner'] ?? <MealItem>[]),
+      ));
+    }
+
+    if (days.isEmpty) {
+      days.add(DayMeals(
+        dayNumber: 1,
+        breakfast: [],
+        lunch: [],
+        dinner: [],
+      ));
+    }
+
+    return MealPlan(
+      id: planData['id']?.toString() ?? (data['id']?.toString() ?? 'generated'),
+      title: planData['meal_category']?.toString() ?? (data['meal_category']?.toString() ?? 'AI Generated Plan'),
+      category: (planData['meal_category'] ?? data['meal_category'] ?? '').toString().toLowerCase().contains('weight')
+          ? PlanCategory.weightLoss
+          : PlanCategory.muscleGain,
+      note: 'AI Generated Meal Plan',
+      days: days,
+    );
+  }
+
+  Widget _buildGeneratedPlanCard(Map<String, dynamic> planData, Color color) {
+    final planId = planData['id']?.toString() ?? '';
+    final mealCategory = planData['meal_category']?.toString() ?? 'Meal Plan';
+    final totalCalories = planData['total_calories']?.toString() ?? '0';
+    final totalProteins = planData['total_proteins']?.toString() ?? '0';
+    final totalFats = planData['total_fats']?.toString() ?? '0';
+    final totalCarbs = planData['total_carbs']?.toString() ?? '0';
+    final approvalStatus = planData['approval_status']?.toString() ?? 'PENDING';
+    final startDate = planData['start_date']?.toString() ?? '';
+    final endDate = planData['end_date']?.toString() ?? '';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    mealCategory,
+                    style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Delete plan',
+                  onPressed: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Delete Plan'),
+                        content: const Text('Are you sure you want to delete this plan?'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      try {
+                        await c.deleteGeneratedPlan(planId);
+                        if (mounted && context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plan deleted')));
+                        }
+                      } catch (e) {
+                        if (mounted && context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
+                        }
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: approvalStatus == 'APPROVED' ? Colors.green : 
+                           approvalStatus == 'PENDING' ? Colors.orange : Colors.red,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    approvalStatus,
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('Plan ID: $planId', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Text('Total Days: ${planData['total_days']?.toString() ?? 'N/A'}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 8),
+            // Calculate per-day values
+            Builder(builder: (context) {
+              final totalDays = int.tryParse(planData['total_days']?.toString() ?? '1') ?? 1;
+              final dailyCalories = (double.tryParse(totalCalories) ?? 0) / totalDays;
+              final dailyProteins = (double.tryParse(totalProteins) ?? 0) / totalDays;
+              final dailyFats = (double.tryParse(totalFats) ?? 0) / totalDays;
+              final dailyCarbs = (double.tryParse(totalCarbs) ?? 0) / totalDays;
+              
+              return Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(child: Text('Calories: ${dailyCalories.toStringAsFixed(0)}/day', style: const TextStyle(fontSize: 14))),
+                      Expanded(child: Text('Protein: ${dailyProteins.toStringAsFixed(1)}g/day', style: const TextStyle(fontSize: 14))),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(child: Text('Fats: ${dailyFats.toStringAsFixed(1)}g/day', style: const TextStyle(fontSize: 14))),
+                      Expanded(child: Text('Carbs: ${dailyCarbs.toStringAsFixed(1)}g/day', style: const TextStyle(fontSize: 14))),
+                    ],
+                  ),
+                ],
+              );
+            }),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () async {
+                      // Load plan details and show them
+                      try {
+                        final planDetails = await c.getGeneratedPlanDetails(planId);
+                        if (mounted && context.mounted) {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => AiPlanDetailsPage(
+                                plan: _convertToMealPlan(planDetails, planData),
+                                color: color,
+                              ),
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        if (mounted && context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Error loading plan: $e')),
+                          );
+                        }
+                      }
+                    },
+                    child: const Text('View'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      // TODO: Implement edit plan
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Edit plan $planId')),
+                      );
+                    },
+                    child: const Text('Edit'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (approvalStatus == 'PENDING')
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        // TODO: Implement send for approval
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Send plan $planId for approval')),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: Colors.white),
+                      child: const Text('Send Plan'),
+                    ),
+                  )
+                else if (approvalStatus == 'APPROVED')
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        // TODO: Implement start plan
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Start plan $planId')),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                      child: const Text('Start Plan'),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
@@ -869,94 +1189,41 @@ class _AiTabState extends State<_AiTab> {
           ]),
         ),
         const SizedBox(height: 12),
-        const SizedBox(height: 12),
+        // Show generated plans from backend
         Obx(() {
-          final plan = c.aiGeneratedPlan.value;
-          if (plan == null) return const SizedBox.shrink();
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(border: Border.all(color: widget.green), borderRadius: BorderRadius.circular(12)),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          final backendPlans = c.generatedPlans;
+          return Column(
+            children: [
               Row(
                 children: [
-                  Expanded(child: Text(plan.title, style: TextStyle(color: widget.green, fontSize: 16, fontWeight: FontWeight.w800))),
+                  Text('Generated Plans (${backendPlans.length})', 
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: widget.green)),
+                  const Spacer(),
                   IconButton(
-                    onPressed: () => _showDeleteDialog(context, plan),
-                    icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                    onPressed: () async {
+                      await c.loadGeneratedPlansFromBackend();
+                    },
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Refresh plans',
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(plan.note),
-              const SizedBox(height: 4),
-              Text('${plan.totalCaloriesPerDay} cal/day', style: const TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Obx(() {
-                final status = c.aiStatus.value;
-                final loading = c.aiLoading.value;
-                final List<Widget> actions = [];
-                if (status == AIPlanStatus.draft) {
-                  actions.add(OutlinedButton(
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(builder: (_) => GenerateAiPlanPage(green: widget.green)));
-                    },
-                    child: const Text('Edit'),
-                  ));
-                  actions.add(const SizedBox(width: 8));
-                  actions.add(ElevatedButton(
-                    onPressed: loading
-                        ? null
-                        : () {
-                            // Open edit to confirm/send or directly send last payload if available
-                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => GenerateAiPlanPage(green: widget.green)));
-                          },
-                    style: ElevatedButton.styleFrom(backgroundColor: widget.green, foregroundColor: Colors.white),
-                    child: Text(loading ? 'Sending…' : 'Send for Approval'),
-                  ));
-                } else if (status == AIPlanStatus.pendingApproval) {
-                  actions.add(OutlinedButton(onPressed: null, child: const Text('Pending Approval')));
-                } else {
-                  actions.add(ElevatedButton(
-                    onPressed: () => c.setApprovedByPortal(),
-                    style: ElevatedButton.styleFrom(backgroundColor: widget.green, foregroundColor: Colors.white),
-                    child: const Text('Start Meal Plan'),
-                  ));
-                }
-                actions.add(OutlinedButton(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => AiPlanDetailsPage(plan: plan, color: widget.green),
-                      ),
-                    );
-                  },
-                  child: const Text('View Plan'),
-                ));
-                return Wrap(spacing: 8, runSpacing: 8, children: actions);
-              })
-              ,
-              const SizedBox(height: 12),
-              Obx(() {
-                final p = c.lastAiPayload.value;
-                if (p == null) return const SizedBox.shrink();
-                return Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                  child: Text(
-                    JsonEncoder.withIndent('  ').convert(p),
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                    ),
+              if (backendPlans.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey[300]!),
                   ),
-                );
-              })
-            ]),
+                  child: const Text('No generated plans found. Create one using the form above.'),
+                )
+              else
+                ...backendPlans.map((planData) => _buildGeneratedPlanCard(planData, widget.green)).toList(),
+            ],
           );
-        })
+        }),
+              const SizedBox(height: 12),
       ]),
     );
   }
@@ -1155,7 +1422,7 @@ class _AiTabState extends State<_AiTab> {
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(it.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-                    Text('${it.grams} g   ${it.calories} cal   ${it.proteinGrams}g protein   ${it.fatGrams}g fats   ${it.carbsGrams}g carbs', style: const TextStyle(fontSize: 10)),
+                    Text('${it.grams.toInt()}g  ${it.calories.toInt()}cal  ${it.proteinGrams.toInt()}g protein  ${it.fatGrams.toInt()}g fats  ${it.carbsGrams.toInt()}g carbs', style: const TextStyle(fontSize: 10)),
                   ]),
                 );
               },
@@ -1210,9 +1477,9 @@ class AiPlanDetailsPage extends StatelessWidget {
             return GridView.builder(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: cols.clamp(2, 3),
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 0.6,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 0.45, // Increased height to show more content
               ),
               itemCount: plan.days.length,
               itemBuilder: (_, i) => AiDetailedDayCard(day: plan.days[i], color: color),
@@ -1233,26 +1500,56 @@ class AiDetailedDayCard extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget meal(String title, List<MealItem> items) {
       return Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: color.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: color.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Container(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
-            child: Text(title.toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
+            child: Text(title.toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Expanded(
             child: ListView.builder(
               padding: EdgeInsets.zero,
               itemCount: items.length,
               itemBuilder: (_, i) {
                 final it = items[i];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: color.withOpacity(0.2)),
+                  ),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(it.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-                    Text('${it.grams} g   ${it.calories} cal   ${it.proteinGrams}g protein   ${it.fatGrams}g fats   ${it.carbsGrams}g carbs', style: const TextStyle(fontSize: 10)),
+                    Text(it.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Colors.black87)),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text('${it.grams.toInt()}g', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                        ),
+                        Expanded(
+                          child: Text('${it.calories.toInt()}cal', style: const TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text('${it.proteinGrams.toInt()}g protein', style: const TextStyle(fontSize: 10, color: Colors.blue)),
+                        ),
+                        Expanded(
+                          child: Text('${it.fatGrams.toInt()}g fats', style: const TextStyle(fontSize: 10, color: Colors.red)),
+                        ),
+                        Expanded(
+                          child: Text('${it.carbsGrams.toInt()}g carbs', style: const TextStyle(fontSize: 10, color: Colors.green)),
+                        ),
+                      ],
+                    ),
                   ]),
                 );
               },
@@ -1306,48 +1603,303 @@ class _GenerateAiPlanPageState extends State<GenerateAiPlanPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Generate AI Plan')),
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text('Generate AI Plan', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: widget.green,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [widget.green.withOpacity(0.1), Colors.white],
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
         child: Form(
           key: _formKey,
-          child: Column(children: [
-            DropdownButtonFormField<PlanCategory>(
-              decoration: const InputDecoration(labelText: 'Select Plan'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header Section
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: widget.green,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: widget.green.withOpacity(0.3),
+                          blurRadius: 10,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(Icons.restaurant_menu, color: Colors.white, size: 40),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Personalized Meal Plan',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Tell us about yourself to create your perfect nutrition plan',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 16,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 30),
+                  
+                  // Form Fields
+                  _buildSectionTitle('Plan Type'),
+                  _buildDropdownField<PlanCategory>(
               value: _category,
+                    decoration: _buildInputDecoration('Select Plan Type', Icons.fitness_center),
               items: const [
-                DropdownMenuItem(value: PlanCategory.muscleGain, child: Text('Muscle Gain')),
-                DropdownMenuItem(value: PlanCategory.weightLoss, child: Text('Weight Loss')),
+                      DropdownMenuItem(value: PlanCategory.muscleGain, child: Text('💪 Muscle Gain')),
+                      DropdownMenuItem(value: PlanCategory.weightLoss, child: Text('🔥 Weight Loss')),
               ],
               onChanged: (v) => setState(() => _category = v),
-              validator: (v) => v == null ? 'Required' : null,
-            ),
-            TextFormField(controller: _age, decoration: const InputDecoration(labelText: 'Age')),
-            TextFormField(controller: _height, decoration: const InputDecoration(labelText: 'Height')),
-            TextFormField(controller: _weight, decoration: const InputDecoration(labelText: 'Weight')),
-            TextFormField(controller: _illness, decoration: const InputDecoration(labelText: 'Any Illness')),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(labelText: 'Gender'),
+                    validator: (v) => v == null ? 'Please select a plan type' : null,
+                  ),
+                  
+                  const SizedBox(height: 20),
+                  
+                  _buildSectionTitle('Personal Information'),
+                  _buildTextField(
+                    controller: _age,
+                    decoration: _buildInputDecoration('Age', Icons.cake),
+                    keyboardType: TextInputType.number,
+                    validator: (value) => value?.isEmpty == true ? 'Age is required' : null,
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  _buildDropdownField<String>(
               value: _gender,
-              items: const [DropdownMenuItem(value: 'Male', child: Text('Male')), DropdownMenuItem(value: 'Female', child: Text('Female'))],
+                    decoration: _buildInputDecoration('Gender', Icons.person),
+                    items: const [
+                      DropdownMenuItem(value: 'Male', child: Text('👨 Male')),
+                      DropdownMenuItem(value: 'Female', child: Text('👩 Female')),
+                    ],
               onChanged: (v) => setState(() => _gender = v),
-            ),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(labelText: 'Country'),
+                    validator: (value) => value == null ? 'Gender is required' : null,
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  _buildTextField(
+                    controller: _height,
+                    decoration: _buildInputDecoration('Height (cm)', Icons.height),
+                    keyboardType: TextInputType.number,
+                    validator: (value) => value?.isEmpty == true ? 'Height is required' : null,
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  _buildTextField(
+                    controller: _weight,
+                    decoration: _buildInputDecoration('Weight (kg)', Icons.monitor_weight),
+                    keyboardType: TextInputType.number,
+                    validator: (value) => value?.isEmpty == true ? 'Weight is required' : null,
+                  ),
+                  
+                  const SizedBox(height: 20),
+                  
+                  _buildSectionTitle('Preferences'),
+                  _buildDropdownField<String>(
               value: _country,
-              items: const [DropdownMenuItem(value: 'USA', child: Text('USA')), DropdownMenuItem(value: 'Pakistan', child: Text('Pakistan'))],
+                    decoration: _buildInputDecoration('Country', Icons.public),
+                    items: const [
+                      DropdownMenuItem(value: 'Pakistan', child: Text('🇵🇰 Pakistan')),
+                      DropdownMenuItem(value: 'USA', child: Text('🇺🇸 USA')),
+                    ],
               onChanged: (v) => setState(() => _country = v),
-            ),
-            TextFormField(controller: _goal, decoration: const InputDecoration(labelText: 'Future Goal')),
-            const SizedBox(height: 20),
+                    validator: (value) => value == null ? 'Country is required' : null,
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  _buildTextField(
+                    controller: _goal,
+                    decoration: _buildInputDecoration('Future Goal', Icons.flag),
+                    maxLines: 2,
+                    validator: (value) => value?.isEmpty == true ? 'Future goal is required' : null,
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  _buildTextField(
+                    controller: _illness,
+                    decoration: _buildInputDecoration('Any Illness (Optional)', Icons.medical_services),
+                    maxLines: 2,
+                  ),
+                  
+                  const SizedBox(height: 30),
+                  
+                  // Submit Button
             Obx(() {
               final loading = c.aiLoading.value;
-              return SizedBox(
+                    return Container(
                 width: double.infinity,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: widget.green.withOpacity(0.3),
+                            blurRadius: 10,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
                 child: ElevatedButton(
-                  onPressed: loading
-                      ? null
-                      : () {
+                        onPressed: loading ? null : _submitForm,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: widget.green,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: loading
+                            ? const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                    ),
+                                  ),
+                                  SizedBox(width: 12),
+                                  Text('Creating Plan...', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                ],
+                              )
+                            : const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.auto_awesome, size: 24),
+                                  SizedBox(width: 8),
+                                  Text('Generate My Plan', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                      ),
+                    );
+                  }),
+                  
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+          color: widget.green,
+        ),
+      ),
+    );
+  }
+  
+  InputDecoration _buildInputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: widget.green),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey[300]!),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey[300]!),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: widget.green, width: 2),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.red),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.red, width: 2),
+      ),
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+    );
+  }
+  
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required InputDecoration decoration,
+    TextInputType? keyboardType,
+    int maxLines = 1,
+    String? Function(String?)? validator,
+  }) {
+    return TextFormField(
+      controller: controller,
+      decoration: decoration,
+      keyboardType: keyboardType,
+      maxLines: maxLines,
+      validator: validator,
+      style: const TextStyle(fontSize: 16),
+    );
+  }
+  
+  Widget _buildDropdownField<T>({
+    required T? value,
+    required InputDecoration decoration,
+    required List<DropdownMenuItem<T>> items,
+    required void Function(T?) onChanged,
+    String? Function(T?)? validator,
+  }) {
+    return DropdownButtonFormField<T>(
+      value: value,
+      decoration: decoration,
+      items: items,
+      onChanged: onChanged,
+      validator: validator,
+      style: const TextStyle(fontSize: 16, color: Colors.black87),
+      dropdownColor: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+    );
+  }
+  
+  void _submitForm() async {
                           if (_formKey.currentState?.validate() == true && _category != null) {
                             final form = {
                               'category': _category!,
@@ -1359,18 +1911,25 @@ class _GenerateAiPlanPageState extends State<GenerateAiPlanPage> {
                               'country': _country,
                               'goal': _goal.text,
                             };
-                            c.createGeneratedPlan(form: form);
+      
+      // Debug: Print essential form data
+      print('Form submission: age=${_age.text}, height=${_height.text}, weight=${_weight.text}');
+      
+                            // Close the form first, then start the AI generation
+                            if (mounted) {
                             Navigator.pop(context);
                           }
-                        },
-                  style: ElevatedButton.styleFrom(backgroundColor: widget.green, foregroundColor: Colors.white),
-                  child: Text(loading ? 'Sending…' : 'Create Plan'),
-                ),
-              );
-            })
-          ]),
-        ),
-      ),
-    );
+                            
+                            // Small delay to ensure navigation completes
+                            await Future.delayed(const Duration(milliseconds: 100));
+                            
+                            // Start AI generation after navigation is complete
+                            try {
+                              await c.createGeneratedPlan(form: form);
+                            } catch (e) {
+                              print('Error generating plan: $e');
+                              // Show error message if needed
+                            }
+                          }
   }
 }

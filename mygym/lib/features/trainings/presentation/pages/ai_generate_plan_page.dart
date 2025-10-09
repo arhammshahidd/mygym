@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../../../core/constants/app_constants.dart';
 import 'package:get/get.dart';
-import '../controllers/trainings_controller.dart';
+import '../controllers/plans_controller.dart';
 
 class AiGeneratePlanPage extends StatefulWidget {
   const AiGeneratePlanPage({super.key});
@@ -13,7 +13,7 @@ class AiGeneratePlanPage extends StatefulWidget {
 
 class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
   final _formKey = GlobalKey<FormState>();
-  String _selectedPlan = 'Strength';
+  String _selectedPlan = 'Muscle Building';
   final _ageCtrl = TextEditingController();
   final _heightCtrl = TextEditingController();
   final _weightCtrl = TextEditingController();
@@ -22,12 +22,12 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
   final _userLevelCtrl = TextEditingController();
   final _jsonCtrl = TextEditingController();
   bool _advancedJson = false;
-  late final TrainingsController _controller;
+  late final PlansController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = Get.find<TrainingsController>();
+    _controller = Get.find<PlansController>();
   }
 
   @override
@@ -44,12 +44,36 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
   Future<void> _submit() async {
     final now = DateTime.now();
     final startStr = now.toIso8601String().split('T').first;
-    final endStr = now.add(const Duration(days: 7)).toIso8601String().split('T').first;
+    
+    // Calculate realistic plan duration based on user level and goal
+    final goal = _goalCtrl.text.trim().toLowerCase();
+    final userLevel = _userLevelCtrl.text.trim().toLowerCase();
+    int planDays = 90; // Default 3 months
+    
+    if (userLevel.contains('beginner')) {
+      planDays = 90; // 3 months for beginners
+    } else if (userLevel.contains('intermediate')) {
+      planDays = 120; // 4 months for intermediate
+    } else if (userLevel.contains('advanced')) {
+      planDays = 150; // 5 months for advanced
+    }
+    
+    // Adjust based on specific goals
+    if (goal.contains('weight loss') || goal.contains('lose weight')) {
+      planDays = (planDays * 0.8).round(); // Slightly shorter for weight loss
+    } else if (goal.contains('muscle') || goal.contains('strength')) {
+      planDays = (planDays * 1.2).round(); // Longer for muscle building
+    }
+    
+    final endStr = now.add(Duration(days: planDays)).toIso8601String().split('T').first;
+    
     // Build payload strictly to backend schema for AI generated plans
     final payload = <String, dynamic>{
       'exercise_plan': _selectedPlan,
+      'exercise_plan_category': _selectedPlan, // Add this for consistency
       'start_date': startStr,
       'end_date': endStr,
+      'plan_duration_days': planDays, // Add plan duration
       'total_workouts': 0,
       'total_training_minutes': 0,
       'items': <Map<String, dynamic>>[],
@@ -63,6 +87,7 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
       'weight_kg': int.tryParse(_weightCtrl.text.trim()),
       'gender': _gender,
       'future_goal': _goalCtrl.text.trim(),
+      'plan_duration_days': planDays, // Add plan duration
     };
     try {
       // Decide path: if OpenAI key missing or flag enabled, use server-side requests
@@ -125,9 +150,9 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
                 value: _selectedPlan,
                 items: const [
                   DropdownMenuItem(value: 'Strength', child: Text('Strength')),
-                  DropdownMenuItem(value: 'Building', child: Text('Muscle Building')),
+                  DropdownMenuItem(value: 'Muscle Building', child: Text('Muscle Building')),
                   DropdownMenuItem(value: 'Weight Gain', child: Text('Weight Gain')),
-                  DropdownMenuItem(value: 'weight lose', child: Text('weight lose')),
+                  DropdownMenuItem(value: 'Weight Loss', child: Text('Weight Loss')),
                 ],
                 onChanged: (v) => setState(() => _selectedPlan = v ?? _selectedPlan),
                 decoration: _decoration(),

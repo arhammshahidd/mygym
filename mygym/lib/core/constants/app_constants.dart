@@ -13,8 +13,8 @@ class AppConfig {
   static const String trainingsPath = '/api/trainings';
   
   // Profile endpoints
-  static const String profilePath = '/api/appProfile';
-  static const String notificationsPath = '/api/appProfile';
+  static const String profilePath = '/api/profile';
+  static const String notificationsPath = '/api/appProfile'; // Keep notifications on old endpoint
   // Users endpoint not used (profile covers all)
   // Training approvals
   static const String trainingApprovalsPath = '/api/trainingApprovals';

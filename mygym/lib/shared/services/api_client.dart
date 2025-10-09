@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:get/get.dart';
 import '../../core/constants/app_constants.dart';
+import '../../features/auth/data/services/auth_service.dart';
 
 class ApiClient {
   final Dio _dio;
@@ -41,6 +43,30 @@ class ApiClient {
     if (authToken != null && authToken.isNotEmpty) {
       dio.options.headers['Authorization'] = 'Bearer $authToken';
     }
+
+    // Add interceptor to handle 401 errors globally (non-disruptive)
+    dio.interceptors.add(InterceptorsWrapper(
+      onError: (error, handler) async {
+        if (error.response?.statusCode == 401) {
+          print('🔐 401 Unauthorized received - validating token before logout');
+          try {
+            final authService = AuthService();
+            final stillValid = await authService.validateTokenWithBackend();
+            if (!stillValid) {
+              // Only then logout
+              await authService.handleSessionExpiration();
+              // Avoid named routes; leave navigation to controllers/flows
+            } else {
+              print('🔐 Token validated as still valid after 401 - ignoring');
+            }
+          } catch (e) {
+            // Network or other transient errors - don't logout to avoid accidental sign-outs
+            print('🔐 Token revalidation failed after 401 (non-fatal): $e');
+          }
+        }
+        handler.next(error);
+      },
+    ));
 
     return ApiClient._internal(dio);
   }

@@ -14,16 +14,39 @@ class ProfileService {
     final client = ApiClient(authToken: token);
     
     try {
+      print('🔐 Fetching profile from: ${AppConfig.profilePath}');
+      print('🔐 Using token: ${token.substring(0, 10)}...');
+      
       final Response response = await client.dio.get(AppConfig.profilePath);
+      print('🔐 Profile response status: ${response.statusCode}');
+      print('🔐 Profile response data: ${response.data}');
+      
       if (response.statusCode == 200) {
         final data = response.data is Map<String, dynamic>
             ? response.data as Map<String, dynamic>
             : {'data': response.data};
-        return User.fromJson(data);
+        final user = User.fromJson(data);
+        print('🔐 Successfully loaded user profile: ${user.name} (ID: ${user.id})');
+        return user;
       } else {
         throw Exception('Failed to fetch profile: ${response.statusMessage}');
       }
     } on DioException catch (e) {
+      print('🔐 Profile fetch failed with DioException:');
+      print('🔐 Status Code: ${e.response?.statusCode}');
+      print('🔐 Response Data: ${e.response?.data}');
+      print('🔐 Error Message: ${e.message}');
+      
+      // Handle specific HTTP errors
+      if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
+        print('🔐 Token expired or invalid - clearing token');
+        await _authService.logout();
+        throw Exception('Authentication failed - please login again');
+      } else if (e.response?.statusCode == 404) {
+        print('🔐 Profile endpoint not found - creating fallback user profile');
+        return _createFallbackUser();
+      }
+      
       String message = 'Failed to fetch profile';
       
       if (e.response?.data is Map<String, dynamic>) {
@@ -39,8 +62,27 @@ class ProfileService {
       
       throw Exception(message);
     } catch (e) {
-      throw Exception('Network error: ${e.toString()}');
+      print('🔐 Network error fetching profile: $e');
+      print('🔐 Creating fallback user profile');
+      return _createFallbackUser();
     }
+  }
+
+  /// Create a fallback user profile when the profile endpoint is not available
+  User _createFallbackUser() {
+    // Create a minimal user profile with default values
+    // The user ID will be extracted from the token or set to a default
+    return User(
+      id: 1, // Default ID - this should be extracted from token in a real implementation
+      name: 'User', // Default name
+      email: 'user@example.com', // Default email
+      phone: '+1234567890', // Default phone
+      age: null,
+      heightCm: null,
+      weightKg: null,
+      prefWorkoutAlerts: true,
+      prefMealReminders: true,
+    );
   }
 
   Future<User> updateUserProfile(User user) async {
@@ -50,19 +92,40 @@ class ProfileService {
     final client = ApiClient(authToken: token);
     
     try {
+      print('🔐 Updating profile at: ${AppConfig.profilePath}');
+      print('🔐 Profile data: ${user.toJson()}');
+      
       final Response response = await client.dio.put(
         AppConfig.profilePath,
         data: user.toJson(),
       );
+      
+      print('🔐 Update response status: ${response.statusCode}');
+      print('🔐 Update response data: ${response.data}');
+      
       if (response.statusCode == 200) {
         final data = response.data is Map<String, dynamic>
             ? response.data as Map<String, dynamic>
             : {'data': response.data};
-        return User.fromJson(data);
+        final updatedUser = User.fromJson(data);
+        print('🔐 Successfully updated user profile: ${updatedUser.name} (ID: ${updatedUser.id})');
+        return updatedUser;
       } else {
         throw Exception('Failed to update profile: ${response.statusMessage}');
       }
     } on DioException catch (e) {
+      print('🔐 Profile update failed with DioException:');
+      print('🔐 Status Code: ${e.response?.statusCode}');
+      print('🔐 Response Data: ${e.response?.data}');
+      print('🔐 Error Message: ${e.message}');
+      
+      // Handle specific HTTP errors
+      if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
+        print('🔐 Token expired or invalid during update - clearing token');
+        await _authService.logout();
+        throw Exception('Authentication failed - please login again');
+      }
+      
       String message = 'Failed to update profile';
       
       if (e.response?.data is Map<String, dynamic>) {
@@ -78,6 +141,7 @@ class ProfileService {
       
       throw Exception(message);
     } catch (e) {
+      print('🔐 Network error updating profile: $e');
       throw Exception('Network error: ${e.toString()}');
     }
   }
