@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../controllers/profile_controller.dart';
 import '../../../../shared/models/user_model.dart';
 
@@ -246,7 +247,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       keyboardType: keyboardType,
       decoration: InputDecoration(
         labelText: label + (required ? ' *' : ''),
-        prefixIcon: Icon(icon, color: const Color(0xFF2E7D32)),
+        prefixIcon: Icon(icon, color: AppTheme.textColor),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: Colors.grey),
@@ -277,7 +278,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       ),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF2E7D32)),
+          Icon(icon, color: AppTheme.textColor),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

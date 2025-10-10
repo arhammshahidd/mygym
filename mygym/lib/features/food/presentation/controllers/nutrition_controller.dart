@@ -243,22 +243,27 @@ class NutritionController extends GetxController {
       final lunch = parseMeal(latest['lunch']);
       final dinner = parseMeal(latest['dinner']);
 
-      MealItem toItem(Map<String, dynamic> m) => MealItem(
-            name: (m['food_item_name'] ?? m['name'] ?? m['item'] ?? 'Food').toString(),
-            calories: (m['calories'] is num)
-                ? (m['calories'] as num).round()
-                : int.tryParse('${m['calories'] ?? m['kcal']}') ?? 0,
-            proteinGrams: (m['protein'] is num)
-                ? (m['protein'] as num).round()
-                : int.tryParse('${m['protein'] ?? m['protein_g'] ?? m['proteins']}') ?? 0,
-            carbsGrams: (m['carbs'] is num)
-                ? (m['carbs'] as num).round()
-                : int.tryParse('${m['carbs'] ?? m['carbohydrates'] ?? m['carbs_g']}') ?? 0,
-            fatGrams: (m['fats'] is num)
-                ? (m['fats'] as num).round()
-                : int.tryParse('${m['fats'] ?? m['fat'] ?? m['fat_g']}') ?? 0,
-            grams: (m['grams'] is num) ? (m['grams'] as num).round() : int.tryParse('${m['grams']}') ?? 0,
-          );
+      MealItem toItem(Map<String, dynamic> m) {
+        print('🔍 DEBUG: Processing meal item data: $m');
+        final item = MealItem(
+          name: (m['food_item_name'] ?? m['name'] ?? m['item'] ?? 'Food').toString(),
+          calories: (m['calories'] is num)
+              ? (m['calories'] as num).round()
+              : int.tryParse('${m['calories'] ?? m['kcal']}') ?? 0,
+          proteinGrams: (m['protein'] is num)
+              ? (m['protein'] as num).round()
+              : int.tryParse('${m['protein'] ?? m['protein_g'] ?? m['proteins']}') ?? 0,
+          carbsGrams: (m['carbs'] is num)
+              ? (m['carbs'] as num).round()
+              : int.tryParse('${m['carbs'] ?? m['carbohydrates'] ?? m['carbs_g']}') ?? 0,
+          fatGrams: (m['fats'] is num)
+              ? (m['fats'] as num).round()
+              : int.tryParse('${m['fats'] ?? m['fat'] ?? m['fat_g']}') ?? 0,
+          grams: (m['grams'] is num) ? (m['grams'] as num).round() : int.tryParse('${m['grams']}') ?? 0,
+        );
+        print('✅ DEBUG: Created MealItem: ${item.name} - ${item.calories} cal, ${item.proteinGrams}g protein, ${item.carbsGrams}g carbs, ${item.fatGrams}g fat');
+        return item;
+      }
 
       // Group by day
       final Map<int, DayMeals> dayMap = {};
@@ -1034,14 +1039,19 @@ class NutritionController extends GetxController {
         // Use a default user ID if profile is not loaded
         final defaultUserId = 1;
         final plans = await _ai.listGeneratedPlans(userId: defaultUserId);
-        generatedPlans.assignAll(plans.cast<Map<String, dynamic>>());
+        // Convert backend format to frontend format for each plan
+        final convertedPlans = plans.map((plan) => _convertBackendToFrontendFormat(plan)).toList();
+        generatedPlans.assignAll(convertedPlans.cast<Map<String, dynamic>>());
         return;
       }
 
       final plans = await _ai.listGeneratedPlans(userId: user!.id);
       print('Fetched ${plans.length} plans from backend');
       print('Plans data: $plans');
-      generatedPlans.value = List<Map<String, dynamic>>.from(plans);
+      
+      // Convert backend format to frontend format for each plan
+      final convertedPlans = plans.map((plan) => _convertBackendToFrontendFormat(plan)).toList();
+      generatedPlans.value = List<Map<String, dynamic>>.from(convertedPlans);
       print('Updated generatedPlans list with ${generatedPlans.length} items');
     } catch (e) {
       print('Error loading generated plans: $e');
@@ -1050,13 +1060,142 @@ class NutritionController extends GetxController {
 
   Future<Map<String, dynamic>> getGeneratedPlanDetails(String planId) async {
     try {
-      print('Loading plan details for ID: $planId');
+      print('🔍 Loading plan details for ID: $planId');
       final details = await _ai.getGeneratedPlan(planId);
-      print('Plan details loaded: $details');
-      return details;
+      print('🔍 Raw plan details from backend: $details');
+      print('🔍 Plan details keys: ${details.keys.toList()}');
+      
+      // Check if we have the expected data structure
+      if (details.containsKey('data')) {
+        final data = details['data'] as Map<String, dynamic>;
+        print('🔍 Data section keys: ${data.keys.toList()}');
+        if (data.containsKey('daily_plans')) {
+          final dailyPlans = data['daily_plans'] as List;
+          print('🔍 Daily plans count: ${dailyPlans.length}');
+        }
+        if (data.containsKey('items')) {
+          final items = data['items'] as List;
+          print('🔍 Items count: ${items.length}');
+        }
+      }
+      
+      // Convert backend format to frontend format
+      final convertedDetails = _convertBackendToFrontendFormat(details);
+      print('🔍 Converted details keys: ${convertedDetails.keys.toList()}');
+      if (convertedDetails.containsKey('days')) {
+        final days = convertedDetails['days'] as List;
+        print('🔍 Converted days count: ${days.length}');
+      }
+      
+      return convertedDetails;
     } catch (e) {
-      print('Error loading plan details: $e');
+      print('❌ Error loading plan details: $e');
+      print('❌ Stack trace: ${StackTrace.current}');
       rethrow;
+    }
+  }
+
+  /// Convert backend meal plan format to frontend format
+  Map<String, dynamic> _convertBackendToFrontendFormat(Map<String, dynamic> backendData) {
+    try {
+      print('🔍 DEBUG: Backend data keys: ${backendData.keys.toList()}');
+      print('🔍 DEBUG: Backend data structure: $backendData');
+      
+      // Check for different possible data structures
+      List<dynamic> dailyPlans = [];
+      
+      if (backendData.containsKey('daily_plans')) {
+        dailyPlans = backendData['daily_plans'] as List? ?? [];
+        print('🔍 DEBUG: Found daily_plans with ${dailyPlans.length} items');
+      } else if (backendData.containsKey('items')) {
+        // If items are directly in the root, group them by date
+        final items = backendData['items'] as List? ?? [];
+        print('🔍 DEBUG: Found items directly in root with ${items.length} items');
+        
+        // Group items by date
+        final Map<String, List<dynamic>> groupedByDate = {};
+        for (final item in items) {
+          final date = item['date']?.toString() ?? 'unknown';
+          if (!groupedByDate.containsKey(date)) {
+            groupedByDate[date] = [];
+          }
+          groupedByDate[date]!.add(item);
+        }
+        
+        // Convert grouped items to daily_plans format
+        for (final entry in groupedByDate.entries) {
+          dailyPlans.add({
+            'date': entry.key,
+            'items': entry.value,
+          });
+        }
+        print('🔍 DEBUG: Grouped items into ${dailyPlans.length} daily plans');
+      } else if (backendData.containsKey('days')) {
+        // If already in frontend format, return as is
+        print('🔍 DEBUG: Data already in frontend format');
+        return backendData;
+      }
+      
+      final days = <Map<String, dynamic>>[];
+      
+      for (int i = 0; i < dailyPlans.length; i++) {
+        final dayPlan = dailyPlans[i];
+        print('🔍 DEBUG: Processing day plan $i: $dayPlan');
+        
+        final items = dayPlan['items'] as List? ?? [];
+        final breakfast = <Map<String, dynamic>>[];
+        final lunch = <Map<String, dynamic>>[];
+        final dinner = <Map<String, dynamic>>[];
+        
+        print('🔍 DEBUG: Day $i has ${items.length} items');
+        
+        for (final item in items) {
+          final mealType = item['meal_type']?.toString().toLowerCase() ?? '';
+          final mealItem = {
+            'name': item['food_item_name'] ?? item['name'] ?? 'Food',
+            'calories': item['calories'] ?? 0,
+            'protein': item['protein'] ?? 0,
+            'carbs': item['carbs'] ?? 0,
+            'fats': item['fat'] ?? item['fats'] ?? 0,
+            'grams': item['grams'] ?? 0,
+          };
+          
+          print('🔍 DEBUG: Adding $mealType item: ${mealItem['name']}');
+          
+          switch (mealType) {
+            case 'breakfast':
+              breakfast.add(mealItem);
+              break;
+            case 'lunch':
+              lunch.add(mealItem);
+              break;
+            case 'dinner':
+              dinner.add(mealItem);
+              break;
+          }
+        }
+        
+        days.add({
+          'day': days.length + 1,
+          'breakfast': breakfast,
+          'lunch': lunch,
+          'dinner': dinner,
+        });
+        
+        print('🔍 DEBUG: Day ${days.length} created with ${breakfast.length} breakfast, ${lunch.length} lunch, ${dinner.length} dinner items');
+      }
+      
+      // Create frontend format
+      final frontendData = Map<String, dynamic>.from(backendData);
+      frontendData['days'] = days;
+      
+      print('🔄 Converted backend format to frontend format: ${days.length} days');
+      print('🔍 DEBUG: Final frontend data structure: $frontendData');
+      return frontendData;
+    } catch (e) {
+      print('⚠️ Error converting backend format: $e');
+      print('⚠️ Stack trace: ${StackTrace.current}');
+      return backendData; // Return original if conversion fails
     }
   }
 

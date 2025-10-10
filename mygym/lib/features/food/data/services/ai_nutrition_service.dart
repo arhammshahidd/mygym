@@ -3,8 +3,6 @@ import 'package:dio/dio.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../shared/services/api_client.dart';
 import '../../../auth/data/services/auth_service.dart';
-import '../../../../shared/services/openai_service.dart';
-import '../../../../shared/services/local_ai_service.dart';
 
 class AiNutritionService {
   final AuthService _auth = AuthService();
@@ -48,12 +46,9 @@ class AiNutritionService {
         final preferences = payload['preferences'] as Map<String, dynamic>? ?? {};
         final trainingData = preferences['training_data'] as Map<String, dynamic>? ?? {};
         
-        // Use Local AI Service as primary (FREE) method, with OpenAI as optional enhancement
-        try {
-          if (AppConfig.openAIApiKey.isNotEmpty) {
-            print('🤖 Using OpenAI for enhanced meal plan generation');
-            final openAI = OpenAIService();
-            final gen = await openAI.generateMealPlanJson(
+        // Use local AI for meal plan generation
+        print('🤖 Using local AI for meal plan generation');
+        final gen = await _generateMealPlanWithLocalAI(
               userId: payload['user_id'] ?? 0,
               mealPlan: payload['meal_plan_category']?.toString() ?? payload['meal_category']?.toString() ?? 'Weight Loss',
               startDate: payload['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T').first,
@@ -70,40 +65,39 @@ class AiNutritionService {
               dailyCarbs: (payload['total_carbs'] ?? 200) / (payload['total_days'] ?? 30),
               dailyFats: (payload['total_fats'] ?? 60) / (payload['total_days'] ?? 30),
               trainingData: trainingData,
-            );
-            toSend = gen;
-          } else {
-            throw Exception('OpenAI API key not configured - using free Local AI');
-          }
-        } catch (e) {
-          print('🤖 Using FREE Local AI Service for meal plan generation: $e');
-          // Primary method: Local AI Service (completely FREE)
-          final localAI = LocalAIService();
-          final gen = await localAI.generateMealPlanJson(
-            userId: payload['user_id'] ?? 0,
-            mealPlan: payload['meal_plan_category']?.toString() ?? payload['meal_category']?.toString() ?? 'Weight Loss',
-            startDate: payload['start_date']?.toString() ?? DateTime.now().toIso8601String().split('T').first,
-            endDate: payload['end_date']?.toString() ?? DateTime.now().add(const Duration(days: 30)).toIso8601String().split('T').first,
-            age: payload['age'] ?? 25,
-            heightCm: payload['height_cm'] ?? 170,
-            weightKg: payload['weight_kg'] ?? 70,
-            gender: payload['gender']?.toString() ?? 'male',
-            futureGoal: payload['future_goal']?.toString() ?? payload['goal']?.toString() ?? 'lose weight',
-            country: payload['country']?.toString() ?? 'Pakistan',
-            totalDays: payload['total_days'] ?? 30,
-            targetDailyCalories: (payload['total_calories'] ?? 1800) / (payload['total_days'] ?? 30),
-            dailyProteins: (payload['total_proteins'] ?? 150) / (payload['total_days'] ?? 30),
-            dailyCarbs: (payload['total_carbs'] ?? 200) / (payload['total_days'] ?? 30),
-            dailyFats: (payload['total_fats'] ?? 60) / (payload['total_days'] ?? 30),
-            trainingData: trainingData,
+          originalPayload: payload,
           );
           toSend = gen;
-        }
       }
       
       final res = await dio.post('/api/appAIMeals/generated', data: toSend);
     if (res.statusCode == 200 || res.statusCode == 201) {
-        return Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+        final result = Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+        
+        // Extract the plan ID from the response
+        final planId = result['id'] ?? result['data']?['id'];
+        print('🔍 Created plan with ID: $planId');
+        
+        // Save individual meal items to the database
+        if (planId != null && toSend.containsKey('items')) {
+          final items = toSend['items'] as List;
+          if (items.isNotEmpty) {
+            print('🔍 Saving ${items.length} meal items to database');
+            try {
+              await _saveMealItemsToDatabase(dio, planId, items);
+              print('✅ Successfully saved meal items to database');
+            } catch (e) {
+              print('⚠️ Error saving meal items to database: $e');
+              // Don't throw error here - plan was created successfully
+            }
+          } else {
+            print('⚠️ No meal items to save to database');
+          }
+        } else {
+          print('⚠️ Cannot save meal items - missing plan ID or items');
+        }
+        
+        return result;
       }
       throw Exception('Failed to create generated meal plan: HTTP ${res.statusCode}');
     } on DioException catch (e) {
@@ -119,11 +113,17 @@ class AiNutritionService {
 
   Future<Map<String, dynamic>> getGeneratedPlan(dynamic id) async {
     final dio = await _authedDio();
+    print('🔍 Fetching plan details for ID: $id');
     final res = await dio.get('/api/appAIMeals/generated/$id');
+    print('🔍 Backend response status: ${res.statusCode}');
+    print('🔍 Backend response data: ${res.data}');
+    
     if (res.statusCode == 200) {
-      return Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+      final result = Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+      print('🔍 Processed result keys: ${result.keys.toList()}');
+      return result;
     }
-    throw Exception('Failed to fetch generated meal plan');
+    throw Exception('Failed to fetch generated meal plan: HTTP ${res.statusCode}');
   }
 
   Future<List<dynamic>> listGeneratedPlans({int? userId}) async {
@@ -216,9 +216,734 @@ class AiNutritionService {
     throw Exception('Mock meal plans are disabled. Please use AI generation for personalized meal plans.');
   }
 
-  // This method is no longer needed - Local AI Service handles meal generation
+  /// Generate meal plan using local AI algorithms
+  Future<Map<String, dynamic>> _generateMealPlanWithLocalAI({
+    required int userId,
+    required String mealPlan,
+    required String startDate,
+    required String endDate,
+    required int age,
+    required double heightCm,
+    required double weightKg,
+    required String gender,
+    required String futureGoal,
+    required String country,
+    required int totalDays,
+    required double targetDailyCalories,
+    required double dailyProteins,
+    required double dailyCarbs,
+    required double dailyFats,
+    required Map<String, dynamic> trainingData,
+    Map<String, dynamic>? originalPayload,
+  }) async {
+    print('🤖 LOCAL AI: Starting meal plan generation');
+    print('📊 TARGET: $targetDailyCalories cal/day, $dailyProteins g protein, $dailyCarbs g carbs, $dailyFats g fat');
+    
+    final items = <Map<String, dynamic>>[];
+    final startDateObj = DateTime.parse(startDate);
+    final goal = futureGoal.toLowerCase().contains('lose') || futureGoal.toLowerCase().contains('weight')
+        ? 'weight_loss'
+        : futureGoal.toLowerCase().contains('gain') || futureGoal.toLowerCase().contains('muscle')
+        ? 'muscle_gain'
+        : 'maintenance';
+    
+    // Get personalized food database based on user preferences and training data
+    final foodDatabase = _getPersonalizedFoodDatabase(goal, country, trainingData);
+    
+    for (int day = 0; day < totalDays; day++) {
+      final currentDate = startDateObj.add(Duration(days: day));
+      final dateStr = currentDate.toIso8601String().split('T').first;
+      
+      // Generate meals for each day
+      final meals = ['breakfast', 'lunch', 'dinner'];
+      final mealRatios = [0.25, 0.40, 0.35]; // Breakfast, Lunch, Dinner calorie distribution
+      
+      for (int mealIndex = 0; mealIndex < meals.length; mealIndex++) {
+        final mealType = meals[mealIndex];
+        final ratio = mealRatios[mealIndex];
+        
+        // Calculate target nutrition for this meal
+        final mealCalories = (targetDailyCalories * ratio).round();
+        final mealProteins = (dailyProteins * ratio).round();
+        final mealCarbs = (dailyCarbs * ratio).round();
+        final mealFats = (dailyFats * ratio).round();
+        
+        // Use local AI to select optimal food
+        try {
+          final selectedFood = _selectOptimalFood(
+            foodDatabase: foodDatabase,
+            mealType: mealType,
+            goal: goal,
+            targetCalories: mealCalories,
+            targetProteins: mealProteins,
+            targetCarbs: mealCarbs,
+            targetFats: mealFats,
+            day: day,
+            userPreferences: trainingData,
+          );
+          
+          if (selectedFood != null) {
+            print('🍽️ LOCAL AI: Selected food: ${selectedFood['name']}');
+            
+            // Create meal item with calculated nutrition values
+            final mealItem = {
+              'meal_type': mealType,
+              'food_item_name': selectedFood['name'],
+              'grams': selectedFood['grams'],
+              'calories': selectedFood['calories'],
+              'protein': selectedFood['protein'],
+              'fat': selectedFood['fat'],
+              'carbs': selectedFood['carbs'],
+              'date': dateStr,
+            };
+            items.add(mealItem);
+            print('🔍 Added meal item: $mealItem');
+            print('✅ LOCAL AI: Added meal item: ${selectedFood['name']}');
+          } else {
+            print('⚠️ LOCAL AI: No suitable food found for $mealType - using fallback');
+            // Use fallback food
+            final fallbackFood = _getFallbackFood(mealType, goal);
+            final mealItem = {
+              'meal_type': mealType,
+              'food_item_name': fallbackFood['name'],
+              'grams': fallbackFood['grams'],
+              'calories': fallbackFood['calories'],
+              'protein': fallbackFood['protein'],
+              'fat': fallbackFood['fat'],
+              'carbs': fallbackFood['carbs'],
+              'date': dateStr,
+            };
+            items.add(mealItem);
+          }
+        } catch (e) {
+          print('⚠️ LOCAL AI Error: $e - using fallback for $mealType');
+          // Use fallback food
+          final fallbackFood = _getFallbackFood(mealType, goal);
+          final mealItem = {
+            'meal_type': mealType,
+            'food_item_name': fallbackFood['name'],
+            'grams': fallbackFood['grams'],
+            'calories': fallbackFood['calories'],
+            'protein': fallbackFood['protein'],
+            'fat': fallbackFood['fat'],
+            'carbs': fallbackFood['carbs'],
+            'date': dateStr,
+          };
+          items.add(mealItem);
+        }
+      }
+    }
+    
+    // Start with original payload if provided, otherwise create new structure
+    final result = originalPayload != null ? Map<String, dynamic>.from(originalPayload) : <String, dynamic>{};
+    
+    // Add/update the generated meal plan data
+    result['user_id'] = userId;
+    result['start_date'] = startDate;
+    result['end_date'] = endDate;
+    result['meal_plan'] = mealPlan;
+    result['meal_plan_category'] = mealPlan;
+    result['total_days'] = totalDays;
+    result['items'] = items;
+    
+    // Add calculated totals
+    final totalCalories = items.fold<int>(0, (sum, item) => sum + (item['calories'] as int? ?? 0));
+    final totalProteins = items.fold<int>(0, (sum, item) => sum + (item['protein'] as int? ?? 0));
+    final totalCarbs = items.fold<int>(0, (sum, item) => sum + (item['carbs'] as int? ?? 0));
+    final totalFats = items.fold<int>(0, (sum, item) => sum + (item['fat'] as int? ?? 0));
+    
+    result['total_calories'] = totalCalories;
+    result['total_proteins'] = totalProteins;
+    result['total_carbs'] = totalCarbs;
+    result['total_fats'] = totalFats;
+    
+    print('🤖 LOCAL AI: Generated ${items.length} meal items for $totalDays days');
+    print('📊 TOTALS: $totalCalories cal, $totalProteins g protein, $totalCarbs g carbs, $totalFats g fat');
+    print('📋 MEAL PLAN DATA: ${result.toString()}');
+    
+    return result;
+  }
+
+  /// Estimate nutrition values for a food item based on its name and meal type
+  Map<String, dynamic> _estimateNutritionForFood(String foodName, String mealType, int targetCalories) {
+    // Base nutrition estimates based on meal type
+    final baseNutrition = _getBaseNutritionForMealType(mealType);
+    
+    // Adjust based on food name keywords
+    int calories = baseNutrition['calories'];
+    int protein = baseNutrition['proteins'];
+    int carbs = baseNutrition['carbs'];
+    int fats = baseNutrition['fats'];
+    int grams = baseNutrition['grams'];
+    
+    // Adjust based on food name keywords
+    if (foodName.toLowerCase().contains('chicken') || foodName.toLowerCase().contains('turkey')) {
+      protein += 15;
+      calories += 50;
+    }
+    if (foodName.toLowerCase().contains('salmon') || foodName.toLowerCase().contains('fish')) {
+      protein += 20;
+      fats += 8;
+      calories += 80;
+    }
+    if (foodName.toLowerCase().contains('eggs')) {
+      protein += 12;
+      fats += 10;
+      calories += 70;
+    }
+    if (foodName.toLowerCase().contains('quinoa') || foodName.toLowerCase().contains('rice')) {
+      carbs += 25;
+      protein += 5;
+      calories += 100;
+    }
+    if (foodName.toLowerCase().contains('oatmeal')) {
+      carbs += 30;
+      protein += 8;
+      calories += 120;
+    }
+    if (foodName.toLowerCase().contains('avocado')) {
+      fats += 15;
+      calories += 80;
+    }
+    if (foodName.toLowerCase().contains('nuts') || foodName.toLowerCase().contains('almonds')) {
+      fats += 12;
+      protein += 6;
+      calories += 90;
+    }
+    
+    // Adjust serving size to match target calories
+    final servingMultiplier = targetCalories / calories;
+    grams = (grams * servingMultiplier).round();
+    calories = (calories * servingMultiplier).round();
+    protein = (protein * servingMultiplier).round();
+    carbs = (carbs * servingMultiplier).round();
+    fats = (fats * servingMultiplier).round();
+    
+    return {
+      'grams': grams,
+      'calories': calories,
+      'protein': protein,
+      'carbs': carbs,
+      'fat': fats,
+    };
+  }
+
+  /// Get base nutrition for meal type
+  Map<String, dynamic> _getBaseNutritionForMealType(String mealType) {
+    switch (mealType.toLowerCase()) {
+      case 'breakfast':
+        return {
+          'grams': 200,
+          'calories': 350,
+          'proteins': 15,
+          'carbs': 45,
+          'fats': 12,
+        };
+      case 'lunch':
+        return {
+          'grams': 300,
+          'calories': 500,
+          'proteins': 25,
+          'carbs': 60,
+          'fats': 15,
+        };
+      case 'dinner':
+        return {
+          'grams': 350,
+          'calories': 450,
+          'proteins': 30,
+          'carbs': 40,
+          'fats': 18,
+        };
+      default:
+        return {
+          'grams': 250,
+          'calories': 400,
+          'proteins': 20,
+          'carbs': 50,
+          'fats': 15,
+        };
+    }
+  }
+
+  /// Get personalized food database based on user preferences and goals
+  Map<String, List<Map<String, dynamic>>> _getPersonalizedFoodDatabase(
+    String goal, 
+    String country, 
+    Map<String, dynamic> trainingData
+  ) {
+    final baseFoods = _getBaseFoodDatabase();
+    final personalizedFoods = <String, List<Map<String, dynamic>>>{};
+    
+    // Apply personalization based on user preferences
+    for (final mealType in baseFoods.keys) {
+      personalizedFoods[mealType] = List<Map<String, dynamic>>.from(baseFoods[mealType]!);
+      
+      // Adjust foods based on goal
+      if (goal == 'weight_loss') {
+        // Prioritize lower calorie, higher protein foods
+        personalizedFoods[mealType]!.sort((a, b) {
+          final aScore = (a['protein'] as int) - (a['calories'] as int) ~/ 10;
+          final bScore = (b['protein'] as int) - (b['calories'] as int) ~/ 10;
+          return bScore.compareTo(aScore);
+        });
+      } else if (goal == 'muscle_gain') {
+        // Prioritize higher protein foods
+        personalizedFoods[mealType]!.sort((a, b) {
+          return (b['protein'] as int).compareTo(a['protein'] as int);
+        });
+      }
+      
+      // Apply cultural preferences based on country
+      if (country.toLowerCase().contains('pakistan') || country.toLowerCase().contains('india')) {
+        // Add regional foods
+        personalizedFoods[mealType]!.addAll(_getRegionalFoods(mealType, 'south_asian'));
+      }
+    }
+    
+    return personalizedFoods;
+  }
+
+  /// Get base food database with comprehensive nutrition information
+  Map<String, List<Map<String, dynamic>>> _getBaseFoodDatabase() {
+    return {
+      'breakfast': [
+        {
+          'name': 'Oatmeal with berries and honey',
+          'calories': 320,
+          'protein': 12,
+          'carbs': 58,
+          'fat': 6,
+          'grams': 250,
+          'category': 'grain',
+          'preparation': 'cooked',
+        },
+        {
+          'name': 'Greek yogurt with mixed nuts',
+          'calories': 280,
+          'protein': 20,
+          'carbs': 15,
+          'fat': 16,
+          'grams': 200,
+          'category': 'dairy',
+          'preparation': 'raw',
+        },
+        {
+          'name': 'Scrambled eggs with whole wheat toast',
+          'calories': 350,
+          'protein': 22,
+          'carbs': 25,
+          'fat': 18,
+          'grams': 220,
+          'category': 'protein',
+          'preparation': 'cooked',
+        },
+        {
+          'name': 'Protein smoothie with banana',
+          'calories': 300,
+          'protein': 25,
+          'carbs': 35,
+          'fat': 8,
+          'grams': 300,
+          'category': 'beverage',
+          'preparation': 'blended',
+        },
+        {
+          'name': 'Avocado toast with poached egg',
+          'calories': 380,
+          'protein': 18,
+          'carbs': 30,
+          'fat': 22,
+          'grams': 200,
+          'category': 'protein',
+          'preparation': 'cooked',
+        },
+        {
+          'name': 'Quinoa porridge with fruits',
+          'calories': 290,
+          'protein': 10,
+          'carbs': 52,
+          'fat': 5,
+          'grams': 250,
+          'category': 'grain',
+          'preparation': 'cooked',
+        },
+      ],
+      'lunch': [
+        {
+          'name': 'Grilled chicken salad with quinoa',
+          'calories': 450,
+          'protein': 35,
+          'carbs': 40,
+          'fat': 15,
+          'grams': 350,
+          'category': 'protein',
+          'preparation': 'grilled',
+        },
+        {
+          'name': 'Salmon with sweet potato and broccoli',
+          'calories': 480,
+          'protein': 38,
+          'carbs': 45,
+          'fat': 18,
+          'grams': 400,
+          'category': 'protein',
+          'preparation': 'baked',
+        },
+        {
+          'name': 'Turkey and avocado wrap',
+          'calories': 420,
+          'protein': 28,
+          'carbs': 35,
+          'fat': 20,
+          'grams': 280,
+          'category': 'protein',
+          'preparation': 'wrapped',
+        },
+        {
+          'name': 'Lentil curry with brown rice',
+          'calories': 460,
+          'protein': 22,
+          'carbs': 70,
+          'fat': 8,
+          'grams': 400,
+          'category': 'legume',
+          'preparation': 'cooked',
+        },
+        {
+          'name': 'Quinoa vegetable bowl',
+          'calories': 380,
+          'protein': 15,
+          'carbs': 55,
+          'fat': 12,
+          'grams': 350,
+          'category': 'grain',
+          'preparation': 'cooked',
+        },
+        {
+          'name': 'Grilled fish with mixed vegetables',
+          'calories': 400,
+          'protein': 32,
+          'carbs': 20,
+          'fat': 22,
+          'grams': 350,
+          'category': 'protein',
+          'preparation': 'grilled',
+        },
+      ],
+      'dinner': [
+        {
+          'name': 'Baked salmon with roasted vegetables',
+          'calories': 420,
+          'protein': 35,
+          'carbs': 25,
+          'fat': 20,
+          'grams': 400,
+          'category': 'protein',
+          'preparation': 'baked',
+        },
+        {
+          'name': 'Grilled chicken with quinoa pilaf',
+          'calories': 450,
+          'protein': 40,
+          'carbs': 35,
+          'fat': 15,
+          'grams': 380,
+          'category': 'protein',
+          'preparation': 'grilled',
+        },
+        {
+          'name': 'Lean beef stir-fry with brown rice',
+          'calories': 480,
+          'protein': 38,
+          'carbs': 45,
+          'fat': 18,
+          'grams': 400,
+          'category': 'protein',
+          'preparation': 'stir-fried',
+        },
+        {
+          'name': 'Baked cod with roasted sweet potato',
+          'calories': 400,
+          'protein': 30,
+          'carbs': 40,
+          'fat': 12,
+          'grams': 350,
+          'category': 'protein',
+          'preparation': 'baked',
+        },
+        {
+          'name': 'Grilled fish with steamed vegetables',
+          'calories': 380,
+          'protein': 32,
+          'carbs': 20,
+          'fat': 18,
+          'grams': 350,
+          'category': 'protein',
+          'preparation': 'grilled',
+        },
+        {
+          'name': 'Chicken and vegetable curry',
+          'calories': 420,
+          'protein': 28,
+          'carbs': 35,
+          'fat': 16,
+          'grams': 400,
+          'category': 'protein',
+          'preparation': 'curried',
+        },
+      ],
+    };
+  }
+
+  /// Get regional foods based on country/culture
+  List<Map<String, dynamic>> _getRegionalFoods(String mealType, String region) {
+    if (region == 'south_asian') {
+      switch (mealType) {
+        case 'breakfast':
+          return [
+            {
+              'name': 'Paratha with yogurt',
+              'calories': 350,
+              'protein': 12,
+              'carbs': 45,
+              'fat': 14,
+              'grams': 200,
+              'category': 'grain',
+              'preparation': 'cooked',
+            },
+            {
+              'name': 'Dal with rice',
+              'calories': 320,
+              'protein': 15,
+              'carbs': 55,
+              'fat': 6,
+              'grams': 300,
+              'category': 'legume',
+              'preparation': 'cooked',
+            },
+          ];
+        case 'lunch':
+          return [
+            {
+              'name': 'Chicken biryani',
+              'calories': 520,
+              'protein': 25,
+              'carbs': 65,
+              'fat': 18,
+              'grams': 400,
+              'category': 'protein',
+              'preparation': 'cooked',
+            },
+            {
+              'name': 'Lamb curry with naan',
+              'calories': 480,
+              'protein': 30,
+              'carbs': 45,
+              'fat': 20,
+              'grams': 400,
+              'category': 'protein',
+              'preparation': 'curried',
+            },
+          ];
+        case 'dinner':
+          return [
+            {
+              'name': 'Fish curry with rice',
+              'calories': 450,
+              'protein': 28,
+              'carbs': 50,
+              'fat': 16,
+              'grams': 400,
+              'category': 'protein',
+              'preparation': 'curried',
+            },
+            {
+              'name': 'Vegetable biryani',
+              'calories': 400,
+              'protein': 12,
+              'carbs': 70,
+              'fat': 12,
+              'grams': 400,
+              'category': 'vegetable',
+              'preparation': 'cooked',
+            },
+          ];
+      }
+    }
+    return [];
+  }
+
+  /// Select optimal food using local AI algorithms
+  Map<String, dynamic>? _selectOptimalFood({
+    required Map<String, List<Map<String, dynamic>>> foodDatabase,
+    required String mealType,
+    required String goal,
+    required int targetCalories,
+    required int targetProteins,
+    required int targetCarbs,
+    required int targetFats,
+    required int day,
+    required Map<String, dynamic> userPreferences,
+  }) {
+    final availableFoods = foodDatabase[mealType] ?? [];
+    if (availableFoods.isEmpty) return null;
+
+    // Calculate fitness scores for each food
+    final scoredFoods = availableFoods.map((food) {
+      final score = _calculateFoodFitnessScore(
+        food: food,
+        targetCalories: targetCalories,
+        targetProteins: targetProteins,
+        targetCarbs: targetCarbs,
+        targetFats: targetFats,
+        goal: goal,
+        day: day,
+        userPreferences: userPreferences,
+      );
+      return {
+        'food': food,
+        'score': score,
+      };
+    }).toList();
+
+    // Sort by score (highest first)
+    scoredFoods.sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
+
+    // Add some variety by occasionally selecting from top 3 foods
+    final topFoods = scoredFoods.take(3).toList();
+    final selectedIndex = day % topFoods.length;
+    final selectedFood = topFoods[selectedIndex]['food'] as Map<String, dynamic>;
+
+    // Adjust serving size to better match targets
+    return _adjustServingSize(selectedFood, targetCalories, targetProteins, targetCarbs, targetFats);
+  }
+
+  /// Calculate fitness score for a food item
+  double _calculateFoodFitnessScore({
+    required Map<String, dynamic> food,
+    required int targetCalories,
+    required int targetProteins,
+    required int targetCarbs,
+    required int targetFats,
+    required String goal,
+    required int day,
+    required Map<String, dynamic> userPreferences,
+  }) {
+    double score = 0.0;
+
+    // Calorie match (40% weight)
+    final calorieDiff = ((food['calories'] as int) - targetCalories).abs();
+    final calorieScore = 1.0 - (calorieDiff / targetCalories);
+    score += calorieScore * 0.4;
+
+    // Protein match (30% weight)
+    final proteinDiff = ((food['protein'] as int) - targetProteins).abs();
+    final proteinScore = 1.0 - (proteinDiff / (targetProteins + 1));
+    score += proteinScore * 0.3;
+
+    // Macro balance (20% weight)
+    final carbDiff = ((food['carbs'] as int) - targetCarbs).abs();
+    final fatDiff = ((food['fat'] as int) - targetFats).abs();
+    final macroScore = 1.0 - ((carbDiff + fatDiff) / (targetCarbs + targetFats + 2));
+    score += macroScore * 0.2;
+
+    // Goal-specific adjustments (10% weight)
+    if (goal == 'weight_loss') {
+      // Prefer lower calorie density
+      final calorieDensity = (food['calories'] as int) / (food['grams'] as int);
+      if (calorieDensity < 2.0) score += 0.1;
+    } else if (goal == 'muscle_gain') {
+      // Prefer higher protein content
+      final proteinDensity = (food['protein'] as int) / (food['grams'] as int);
+      if (proteinDensity > 0.1) score += 0.1;
+    }
+
+    return score;
+  }
+
+  /// Adjust serving size to better match nutritional targets
+  Map<String, dynamic> _adjustServingSize(
+    Map<String, dynamic> food,
+    int targetCalories,
+    int targetProteins,
+    int targetCarbs,
+    int targetFats,
+  ) {
+    final currentCalories = food['calories'] as int;
+    final currentProteins = food['protein'] as int;
+    final currentCarbs = food['carbs'] as int;
+    final currentFats = food['fat'] as int;
+    final currentGrams = food['grams'] as int;
+
+    // Calculate adjustment factor based on calorie target
+    final calorieFactor = targetCalories / currentCalories;
+    
+    // Apply adjustment with some constraints
+    final adjustedFactor = calorieFactor.clamp(0.5, 2.0);
+
+    return {
+      'name': food['name'],
+      'calories': (currentCalories * adjustedFactor).round(),
+      'protein': (currentProteins * adjustedFactor).round(),
+      'carbs': (currentCarbs * adjustedFactor).round(),
+      'fat': (currentFats * adjustedFactor).round(),
+      'grams': (currentGrams * adjustedFactor).round(),
+    };
+  }
+
+  /// Get fallback food when AI selection fails
+  Map<String, dynamic> _getFallbackFood(String mealType, String goal) {
+    final baseNutrition = _getBaseNutritionForMealType(mealType);
+    
+    String foodName;
+    if (mealType == 'breakfast') {
+      foodName = goal == 'weight_loss' ? 'Oatmeal with berries' : 'Protein smoothie';
+    } else if (mealType == 'lunch') {
+      foodName = goal == 'weight_loss' ? 'Grilled chicken salad' : 'Salmon with quinoa';
+    } else {
+      foodName = goal == 'weight_loss' ? 'Baked fish with vegetables' : 'Grilled chicken with rice';
+    }
+
+    return {
+      'name': foodName,
+      'calories': baseNutrition['calories'],
+      'protein': baseNutrition['proteins'],
+      'carbs': baseNutrition['carbs'],
+      'fat': baseNutrition['fats'],
+      'grams': baseNutrition['grams'],
+    };
+  }
+
+  // This method is no longer needed - Local AI handles meal generation
   List<Map<String, dynamic>> _getMealItems(String mealType, String category) {
-    throw Exception('This method is deprecated. Use Local AI Service for meal generation.');
+    throw Exception('This method is deprecated. Use local AI for meal generation.');
+  }
+
+  /// Save meal items to database in the correct format
+  Future<void> _saveMealItemsToDatabase(Dio dio, dynamic planId, List<dynamic> items) async {
+    final List<Map<String, dynamic>> dbItems = [];
+    
+    for (final item in items) {
+      final itemMap = item as Map<String, dynamic>;
+      dbItems.add({
+        'plan_id': planId,
+        'date': itemMap['date'] ?? DateTime.now().toIso8601String().split('T').first,
+        'meal_type': itemMap['meal_type'] ?? 'breakfast',
+        'food_item_name': itemMap['food_item_name'] ?? 'Food',
+        'grams': itemMap['grams'] ?? 0,
+        'calories': itemMap['calories'] ?? 0,
+        'proteins': itemMap['protein'] ?? 0,
+        'fats': itemMap['fat'] ?? 0,
+        'carbs': itemMap['carbs'] ?? 0,
+      });
+    }
+    
+    print('🔍 Sending ${dbItems.length} items to database API');
+    print('🔍 Sample item: ${dbItems.isNotEmpty ? dbItems.first : 'No items'}');
+    
+    final response = await dio.post('/api/appAIGeneratedMealPlanItems', data: {'items': dbItems});
+    print('🔍 Database save response: ${response.statusCode} - ${response.data}');
   }
 
   Future<void> _saveMealItems(Dio dio, dynamic planId, Map<String, dynamic> planJson) async {

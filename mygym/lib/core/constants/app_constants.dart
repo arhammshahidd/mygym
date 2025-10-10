@@ -1,10 +1,12 @@
 class AppConfig {
   // Backend base URL for mobile app (override with --dart-define=BASE_API_URL=http://IP:PORT)
   static const String baseApiUrl = String.fromEnvironment('BASE_API_URL', defaultValue: 'http://localhost:5000');
-  // OpenAI configuration (set via --dart-define for safety)
+  // OpenAI configuration (for training services only)
   static const String openAIApiKey = String.fromEnvironment('OPENAI_API_KEY', defaultValue: '');
   static const String openAIBaseUrl = 'https://api.openai.com/v1';
   static const String openAIModel = String.fromEnvironment('OPENAI_MODEL', defaultValue: 'gpt-4o-mini');
+  
+  // Local AI Nutrition System - No external API keys needed
   // Toggle to route through backend /requests first (backend does AI), else app generates and posts to /generated
   static const bool useAiRequests = bool.fromEnvironment('USE_AI_REQUESTS', defaultValue: false);
 

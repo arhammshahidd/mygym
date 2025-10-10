@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
 import '../../features/trainings/presentation/pages/trainings_page.dart';
 import '../../features/stats/presentation/pages/stats_page.dart';
@@ -38,8 +39,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
             _currentIndex = index;
           });
         },
-        selectedItemColor: Theme.of(context).colorScheme.primary,
-        unselectedItemColor: Colors.grey,
+        selectedItemColor: AppTheme.textColor,
+        unselectedItemColor: AppTheme.textColor,
+        backgroundColor: AppTheme.appBackgroundColor,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.dashboard),

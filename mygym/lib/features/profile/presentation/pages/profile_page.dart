@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../controllers/profile_controller.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import 'edit_profile_page.dart';
@@ -32,25 +33,25 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppTheme.appBackgroundColor,
       appBar: AppBar(
         title: const Text('Profile'),
-        backgroundColor: Colors.white,
+        backgroundColor: AppTheme.appBackgroundColor,
         elevation: 0,
-        foregroundColor: const Color(0xFF2E7D32),
+        foregroundColor: AppTheme.textColor,
         actions: [
           IconButton(
             onPressed: () {
               Get.to(() => const EditProfilePage());
             },
-            icon: const Icon(Icons.edit),
+            icon: const Icon(Icons.edit, color: AppTheme.textColor),
             tooltip: 'Edit Profile',
           ),
         ],
       ),
       body: Obx(() {
         if (_profileController.isLoading) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor));
         }
         
         if (_profileController.errorMessage.isNotEmpty) {
@@ -61,7 +62,7 @@ class _ProfilePageState extends State<ProfilePage> {
           return _buildProfileContent();
         }
         
-        return const Center(child: Text('No user data'));
+        return const Center(child: Text('No user data', style: TextStyle(color: AppTheme.textColor)));
       }),
     );
   }
@@ -77,19 +78,20 @@ class _ProfilePageState extends State<ProfilePage> {
             color: Colors.red,
           ),
           const SizedBox(height: 16),
-          Text(
+          const Text(
             'Error loading profile',
-            style: Theme.of(context).textTheme.headlineSmall,
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.textColor),
           ),
           const SizedBox(height: 8),
           Text(
             _profileController.errorMessage,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.grey),
+            style: const TextStyle(color: AppTheme.textColor),
           ),
           const SizedBox(height: 24),
           ElevatedButton(
             onPressed: _profileController.refresh,
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor, foregroundColor: AppTheme.textColor),
             child: const Text('Retry'),
           ),
         ],
@@ -133,11 +135,12 @@ class _ProfilePageState extends State<ProfilePage> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.cardBackgroundColor,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.primaryColor, width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withOpacity(0.1),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -150,14 +153,14 @@ class _ProfilePageState extends State<ProfilePage> {
             width: 80,
             height: 80,
             decoration: BoxDecoration(
-              color: const Color(0xFF2E7D32),
+              color: AppTheme.primaryColor,
               shape: BoxShape.circle,
             ),
             child: Center(
               child: Text(
                 _profileController.user!.initials,
                 style: const TextStyle(
-                  color: Colors.black,
+                  color: AppTheme.textColor,
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
                 ),
@@ -174,7 +177,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 _profileController.user!.name,
                 style: const TextStyle(
                   fontSize: 24,
-                   color: Colors.black,
+                  color: AppTheme.textColor,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -210,7 +213,7 @@ class _ProfilePageState extends State<ProfilePage> {
             _profileController.user!.email,
             style: const TextStyle(
               fontSize: 16,
-              color: Colors.black87,
+              color: AppTheme.textColor,
             ),
           ),
           const SizedBox(height: 16),
@@ -219,13 +222,13 @@ class _ProfilePageState extends State<ProfilePage> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFF2E7D32)),
+              border: Border.all(color: AppTheme.primaryColor),
               borderRadius: BorderRadius.circular(20),
             ),
             child: const Text(
               'Since March 2025',
               style: TextStyle(
-                color: Color(0xFF2E7D32),
+                color: AppTheme.primaryColor,
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
               ),
@@ -245,6 +248,7 @@ class _ProfilePageState extends State<ProfilePage> {
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
+            color: AppTheme.textColor,
           ),
         ),
         const SizedBox(height: 12),
@@ -269,6 +273,7 @@ class _ProfilePageState extends State<ProfilePage> {
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
+            color: AppTheme.textColor,
           ),
         ),
         const SizedBox(height: 12),
@@ -296,6 +301,7 @@ class _ProfilePageState extends State<ProfilePage> {
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
+            color: AppTheme.textColor,
           ),
         ),
         const SizedBox(height: 12),
@@ -320,18 +326,18 @@ class _ProfilePageState extends State<ProfilePage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.cardBackgroundColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2E7D32)),
+        border: Border.all(color: AppTheme.primaryColor),
       ),
       child: ListTile(
-        leading: Icon(icon, color: const Color(0xFF2E7D32)),
+        leading: Icon(icon, color: AppTheme.textColor),
         title: Text(
           title,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textColor),
         ),
-        subtitle: Text(subtitle),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+        subtitle: Text(subtitle, style: const TextStyle(color: AppTheme.textColor)),
+        trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: AppTheme.textColor),
         onTap: onTap,
       ),
     );
@@ -347,21 +353,21 @@ class _ProfilePageState extends State<ProfilePage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.cardBackgroundColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2E7D32)),
+        border: Border.all(color: AppTheme.primaryColor),
       ),
       child: ListTile(
-        leading: Icon(icon, color: const Color(0xFF2E7D32)),
+        leading: Icon(icon, color: AppTheme.textColor),
         title: Text(
           title,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textColor),
         ),
-        subtitle: Text(subtitle),
+        subtitle: Text(subtitle, style: const TextStyle(color: AppTheme.textColor)),
         trailing: Switch(
           value: isEnabled,
           onChanged: onToggle,
-          activeColor: const Color(0xFF2E7D32),
+          activeColor: AppTheme.primaryColor,
         ),
       ),
     );
@@ -372,7 +378,7 @@ class _ProfilePageState extends State<ProfilePage> {
       width: double.infinity,
       height: 56,
       decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFF2E7D32)),
+        border: Border.all(color: AppTheme.primaryColor),
         borderRadius: BorderRadius.circular(12),
       ),
       child: ElevatedButton.icon(
@@ -386,12 +392,12 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
         icon: const Icon(
           Icons.logout,
-          color: Color(0xFF2E7D32),
+          color: AppTheme.primaryColor,
         ),
         label: const Text(
           'Sign out',
           style: TextStyle(
-            color: Color(0xFF2E7D32),
+            color: AppTheme.primaryColor,
             fontSize: 16,
             fontWeight: FontWeight.w600,
           ),

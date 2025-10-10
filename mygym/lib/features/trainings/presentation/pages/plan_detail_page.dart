@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../controllers/schedules_controller.dart';
 import '../controllers/plans_controller.dart';
 
@@ -90,57 +91,39 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
         full = await _plansController.getAiGeneratedPlan(id);
       } else {
         // Check if this plan is from assignments (Schedules tab) or manual plans (Plans tab)
-        if (widget.plan['assignment_id'] != null) {
-          print('🔍 Plan Detail - This is an assignment, fetching assignment details');
-          final assignmentId = widget.plan['assignment_id'];
+        // Only treat as assignment if assignment_id is explicitly set and not null/empty
+        final assignmentId = widget.plan['assignment_id'];
+        final webPlanId = widget.plan['web_plan_id'];
+        
+        if (assignmentId != null && assignmentId.toString().trim().isNotEmpty && assignmentId != 0) {
+          print('🔍 Plan Detail - This is an assignment (assignment_id: $assignmentId), fetching assignment details');
           full = await _schedulesController.getAssignmentDetails(assignmentId);
-        } else if (widget.plan['web_plan_id'] != null) {
+        } else if (webPlanId != null && webPlanId.toString().trim().isNotEmpty && webPlanId != 0) {
           // This might be a plan from assignments that's being viewed from Plans tab
-          print('🔍 Plan Detail - Plan has web_plan_id, checking if it exists in assignments');
+          print('🔍 Plan Detail - Plan has web_plan_id ($webPlanId), checking if it exists in assignments');
           try {
             // Try to find this plan in assignments first
             final assignments = _schedulesController.assignments;
             final matchingAssignment = assignments.firstWhereOrNull(
-              (assignment) => assignment['web_plan_id']?.toString() == widget.plan['web_plan_id']?.toString()
+              (assignment) => assignment['web_plan_id']?.toString() == webPlanId.toString()
             );
             
             if (matchingAssignment != null) {
               print('🔍 Plan Detail - Found matching assignment, using assignment data');
               full = Map<String, dynamic>.from(matchingAssignment);
             } else {
-              print('🔍 Plan Detail - No matching assignment found, using original plan data');
-              full = Map<String, dynamic>.from(widget.plan);
+              print('🔍 Plan Detail - No matching assignment found, treating as manual plan');
+              // Fall through to manual plan logic
+              full = await _handleManualPlan(id);
             }
           } catch (e) {
-            print('❌ Plan Detail - Error checking assignments: $e');
-            full = Map<String, dynamic>.from(widget.plan);
+            print('❌ Plan Detail - Error checking assignments: $e, treating as manual plan');
+            // Fall through to manual plan logic
+            full = await _handleManualPlan(id);
           }
         } else {
-          print('🔍 Plan Detail - This is a manual plan, checking if we need to fetch details');
-          print('🔍 Plan Detail - Manual plan ID: $id');
-          
-          // Check if the original plan already has complete data
-          final hasItems = widget.plan['items'] != null && (widget.plan['items'] as List).isNotEmpty;
-          final hasExercisesDetails = widget.plan['exercises_details'] != null && 
-              ((widget.plan['exercises_details'] is List && (widget.plan['exercises_details'] as List).isNotEmpty) ||
-               (widget.plan['exercises_details'] is String && (widget.plan['exercises_details'] as String).trim().isNotEmpty));
-          
-          if (hasItems || hasExercisesDetails) {
-            print('🔍 Plan Detail - Original plan has complete data, using it directly');
-            full = Map<String, dynamic>.from(widget.plan);
-          } else {
-            print('🔍 Plan Detail - Original plan lacks data, fetching from backend');
-            try {
-              full = await _plansController.getManualPlan(id);
-              print('🔍 Plan Detail - Manual plan fetch successful');
-            } catch (e) {
-              print('❌ Plan Detail - Manual plan fetch failed: $e');
-              // If manual plan fetch fails, use the original plan data
-              full = Map<String, dynamic>.from(widget.plan);
-              print('🔍 Plan Detail - Using original plan data as fallback');
-              print('🔍 Plan Detail - Original plan exercises_details: ${widget.plan['exercises_details']}');
-            }
-          }
+          // This is definitely a manual plan
+          full = await _handleManualPlan(id);
         }
       }
       
@@ -241,6 +224,35 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<Map<String, dynamic>> _handleManualPlan(int id) async {
+    print('🔍 Plan Detail - Handling manual plan with ID: $id');
+    print('🔍 Plan Detail - Original plan data: ${widget.plan}');
+    
+    // Check if the original plan already has complete data
+    final hasItems = widget.plan['items'] != null && (widget.plan['items'] as List).isNotEmpty;
+    final hasExercisesDetails = widget.plan['exercises_details'] != null && 
+        ((widget.plan['exercises_details'] is List && (widget.plan['exercises_details'] as List).isNotEmpty) ||
+         (widget.plan['exercises_details'] is String && (widget.plan['exercises_details'] as String).trim().isNotEmpty));
+    
+    if (hasItems || hasExercisesDetails) {
+      print('🔍 Plan Detail - Original plan has complete data, using it directly');
+      return Map<String, dynamic>.from(widget.plan);
+    } else {
+      print('🔍 Plan Detail - Original plan lacks data, fetching from backend');
+      try {
+        final full = await _plansController.getManualPlan(id);
+        print('🔍 Plan Detail - Manual plan fetch successful');
+        return full;
+      } catch (e) {
+        print('❌ Plan Detail - Manual plan fetch failed: $e');
+        // If manual plan fetch fails, use the original plan data
+        print('🔍 Plan Detail - Using original plan data as fallback');
+        print('🔍 Plan Detail - Original plan exercises_details: ${widget.plan['exercises_details']}');
+        return Map<String, dynamic>.from(widget.plan);
+      }
     }
   }
 
@@ -450,19 +462,20 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.appBackgroundColor,
       appBar: AppBar(
         title: const Text('TRAINING'),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF2E7D32),
+        backgroundColor: AppTheme.appBackgroundColor,
+        foregroundColor: AppTheme.textColor,
         actions: [
           TextButton(
             onPressed: _shuffle,
-            child: const Text('Shuffle'),
+            child: const Text('Shuffle', style: TextStyle(color: AppTheme.textColor)),
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor))
           : SingleChildScrollView(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -471,7 +484,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
             Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFF2E7D32)),
+                border: Border.all(color: AppTheme.primaryColor),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(8.0),
@@ -488,9 +501,9 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
                           width: itemWidth,
                           child: Container(
                             decoration: BoxDecoration(
-                              color: const Color(0xFF2E7D32).withOpacity(0.1),
+                              color: AppTheme.cardBackgroundColor,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: const Color(0xFF2E7D32)),
+                              border: Border.all(color: AppTheme.primaryColor),
                             ),
                             child: Padding(
                               padding: const EdgeInsets.all(8.0),
@@ -502,7 +515,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
                                     style: const TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 16,
-                                      color: Color(0xFF2E7D32),
+                                      color: AppTheme.primaryColor,
                                     ),
                                   ),
                                   const SizedBox(height: 8),
@@ -512,7 +525,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
                                       child: Center(
                                         child: Text(
                                           'No exercises',
-                                          style: TextStyle(color: Colors.grey),
+                                          style: TextStyle(color: AppTheme.textColor),
                                         ),
                                       ),
                                     )
@@ -545,7 +558,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF2E7D32),
+        color: AppTheme.primaryColor,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -554,45 +567,45 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Exercise Types', style: TextStyle(color: Colors.white, fontSize: 10)),
-              Text('${ex['exercise_types'] ?? 'N/A'}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+              const Text('Exercise Types', style: TextStyle(color: AppTheme.textColor, fontSize: 10)),
+              Text('${ex['exercise_types'] ?? 'N/A'}', style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 2),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Workout Name', style: TextStyle(color: Colors.white, fontSize: 10)),
-              Flexible(child: Text(workoutName, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))),
+              const Text('Workout Name', style: TextStyle(color: AppTheme.textColor, fontSize: 10)),
+              Flexible(child: Text(workoutName, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold))),
             ],
           ),
           const SizedBox(height: 2),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Sets', style: TextStyle(color: Colors.white, fontSize: 10)),
-              Text('$sets', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+              const Text('Sets', style: TextStyle(color: AppTheme.textColor, fontSize: 10)),
+              Text('$sets', style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Reps', style: TextStyle(color: Colors.white, fontSize: 10)),
-              Text('$reps', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+              const Text('Reps', style: TextStyle(color: AppTheme.textColor, fontSize: 10)),
+              Text('$reps', style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Weight/kg', style: TextStyle(color: Colors.white, fontSize: 10)),
-              Text('$weight', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+              const Text('Weight/kg', style: TextStyle(color: AppTheme.textColor, fontSize: 10)),
+              Text('$weight', style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Training Minutes', style: TextStyle(color: Colors.white, fontSize: 10)),
-              Text('$minutes', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+              const Text('Training Minutes', style: TextStyle(color: AppTheme.textColor, fontSize: 10)),
+              Text('$minutes', style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
         ],
@@ -604,8 +617,8 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(k, style: const TextStyle(color: Colors.white, fontSize: 10)),
-        Text(v, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+        Text(k, style: const TextStyle(color: AppTheme.textColor, fontSize: 10)),
+        Text(v, style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
       ],
     );
   }

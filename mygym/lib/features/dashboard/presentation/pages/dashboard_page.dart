@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import '../../../../core/theme/app_theme.dart';
 import '../../../profile/presentation/controllers/profile_controller.dart';
 import '../../../trainings/presentation/controllers/schedules_controller.dart';
 import '../../../trainings/presentation/controllers/plans_controller.dart';
@@ -195,10 +196,11 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppTheme.cardBackgroundColor,
           borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppTheme.primaryColor, width: 1),
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 12, offset: const Offset(0, 3)),
+            BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 12, offset: const Offset(0, 3)),
           ],
         ),
         child: Row(
@@ -206,8 +208,8 @@ class _DashboardPageState extends State<DashboardPage> {
             Container(
               width: 60,
               height: 60,
-              decoration: BoxDecoration(color: const Color(0xFFE8F5E9), borderRadius: BorderRadius.circular(20)),
-              child: Icon(icon, color: const Color(0xFF2E7D32)),
+              decoration: BoxDecoration(color: AppTheme.primaryColor.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
+              child: Icon(icon, color: AppTheme.textColor),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -219,14 +221,14 @@ class _DashboardPageState extends State<DashboardPage> {
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                    style: const TextStyle(fontSize: 12, color: AppTheme.textColor),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     value,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppTheme.textColor),
                   ),
                 ],
               ),
@@ -242,9 +244,10 @@ class _DashboardPageState extends State<DashboardPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.cardBackgroundColor,
         borderRadius: BorderRadius.circular(14),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 12, offset: const Offset(0, 3))],
+        border: Border.all(color: AppTheme.primaryColor, width: 1),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 12, offset: const Offset(0, 3))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -254,11 +257,11 @@ class _DashboardPageState extends State<DashboardPage> {
               Container(
                 width: 28,
                 height: 28,
-                decoration: BoxDecoration(color: const Color(0xFFE8F5E9), borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.today, size: 18, color: Color(0xFF2E7D32)),
+                decoration: BoxDecoration(color: AppTheme.primaryColor.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+                child: const Icon(Icons.today, size: 18, color: AppTheme.textColor),
               ),
               const SizedBox(width: 8),
-              Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700))),
+              Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppTheme.textColor))),
             ],
           ),
           const SizedBox(height: 12),
@@ -332,7 +335,7 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Day ${currentDay + 1}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+          Text('Day ${currentDay + 1}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppTheme.textColor)),
           const SizedBox(height: 8),
           if (hasActive)
             Column(
@@ -353,12 +356,12 @@ class _DashboardPageState extends State<DashboardPage> {
                     return Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE8F5E8),
+                        color: AppTheme.cardBackgroundColor,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFF2E7D32), width: 2),
+                        border: Border.all(color: AppTheme.primaryColor, width: 2),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
+                            color: Colors.black.withOpacity(0.2),
                             blurRadius: 6,
                             offset: const Offset(0, 2),
                           ),
@@ -379,7 +382,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 14,
-                                    color: Color(0xFF2E7D32),
+                                    color: AppTheme.textColor,
                                   ),
                                 ),
                                 const SizedBox(height: 6),
@@ -401,7 +404,7 @@ class _DashboardPageState extends State<DashboardPage> {
               ],
             )
           else
-            const Text('Start a plan from Schedules or Plans to see today\'s workout', style: TextStyle(color: Colors.black54)),
+            const Text('Start a plan from Schedules or Plans to see today\'s workout', style: TextStyle(color: AppTheme.textColor)),
         ],
       ),
     );
@@ -421,7 +424,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Day ${dayIdx + 1}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                Text('Day ${dayIdx + 1}', style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.textColor)),
                 const SizedBox(height: 8),
                 // Modern grid layout for meal cards
                 GridView.builder(
@@ -436,21 +439,21 @@ class _DashboardPageState extends State<DashboardPage> {
                   itemCount: 3,
                   itemBuilder: (context, index) {
                     final entries = [
-                      {'label': 'BREAKFAST', 'items': (snapshot?['breakfast'] as List? ?? const []), 'icon': Icons.wb_sunny, 'color': const Color(0xFFFF9800)},
-                      {'label': 'LUNCH', 'items': (snapshot?['lunch'] as List? ?? const []), 'icon': Icons.wb_sunny_outlined, 'color': const Color(0xFF4CAF50)},
-                      {'label': 'DINNER', 'items': (snapshot?['dinner'] as List? ?? const []), 'icon': Icons.nights_stay, 'color': const Color(0xFF2196F3)},
+                      {'label': 'BREAKFAST', 'items': (snapshot?['breakfast'] as List? ?? const []), 'icon': Icons.wb_sunny, 'color': AppTheme.textColor},
+                      {'label': 'LUNCH', 'items': (snapshot?['lunch'] as List? ?? const []), 'icon': Icons.wb_sunny_outlined, 'color': AppTheme.textColor},
+                      {'label': 'DINNER', 'items': (snapshot?['dinner'] as List? ?? const []), 'icon': Icons.nights_stay, 'color': AppTheme.textColor},
                     ];
                     final entry = entries[index];
                     
                     return Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppTheme.cardBackgroundColor,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: entry['color'] as Color, width: 2),
+                        border: Border.all(color: AppTheme.primaryColor, width: 2),
                         boxShadow: [
                           BoxShadow(
-                            color: (entry['color'] as Color).withOpacity(0.1),
+                            color: Colors.black.withOpacity(0.2),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -465,12 +468,12 @@ class _DashboardPageState extends State<DashboardPage> {
                               Container(
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
-                                  color: (entry['color'] as Color).withOpacity(0.1),
+                                  color: AppTheme.primaryColor.withOpacity(0.2),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Icon(
                                   entry['icon'] as IconData,
-                                  color: entry['color'] as Color,
+                                  color: AppTheme.primaryColor,
                                   size: 20,
                                 ),
                               ),
@@ -478,10 +481,10 @@ class _DashboardPageState extends State<DashboardPage> {
                               Expanded(
                                 child: Text(
                                   entry['label']!.toString(), 
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                     fontSize: 14, 
                                     fontWeight: FontWeight.bold, 
-                                    color: entry['color'] as Color,
+                                    color: AppTheme.textColor,
                                   ),
                                 ),
                               ),
@@ -497,7 +500,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                     margin: const EdgeInsets.only(bottom: 4),
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color: (entry['color'] as Color).withOpacity(0.05),
+                                      color: AppTheme.primaryColor.withOpacity(0.1),
                                       borderRadius: BorderRadius.circular(4),
                                     ),
                                     child: Column(
@@ -507,7 +510,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                           m['name']?.toString() ?? 'Food Item',
                                           maxLines: 1, 
                                           overflow: TextOverflow.ellipsis, 
-                                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.textColor),
                                         ),
                                         const SizedBox(height: 2),
                                         Wrap(
@@ -536,13 +539,13 @@ class _DashboardPageState extends State<DashboardPage> {
                   width: double.infinity,
                   child: OutlinedButton(
                     onPressed: _incrementMealsLogged,
-                    style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF2E7D32), side: const BorderSide(color: Color(0xFF2E7D32)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                    style: OutlinedButton.styleFrom(foregroundColor: AppTheme.textColor, side: const BorderSide(color: AppTheme.primaryColor), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                     child: const Text('Log Meals'),
                   ),
                 ),
               ],
             )
-          : const Text('Start a meal plan from Schedules or AI Suggestions to see today\'s meals', style: TextStyle(color: Colors.black54)),
+          : const Text('Start a meal plan from Schedules or AI Suggestions to see today\'s meals', style: TextStyle(color: AppTheme.textColor)),
     );
   }
 
@@ -562,7 +565,7 @@ class _DashboardPageState extends State<DashboardPage> {
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w500,
-              color: Color(0xFF2E7D32),
+              color: AppTheme.textColor,
             ),
           ),
           Expanded(
@@ -570,7 +573,7 @@ class _DashboardPageState extends State<DashboardPage> {
               value,
               style: const TextStyle(
                 fontSize: 12,
-                color: Colors.black87,
+                color: AppTheme.textColor,
               ),
               overflow: TextOverflow.ellipsis,
             ),
@@ -590,7 +593,7 @@ class _DashboardPageState extends State<DashboardPage> {
             style: const TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w500,
-              color: Color(0xFF2E7D32),
+              color: AppTheme.textColor,
             ),
           ),
           Expanded(
@@ -598,7 +601,7 @@ class _DashboardPageState extends State<DashboardPage> {
               value,
               style: const TextStyle(
                 fontSize: 10,
-                color: Colors.black87,
+                color: AppTheme.textColor,
               ),
               overflow: TextOverflow.ellipsis,
             ),
@@ -636,19 +639,19 @@ class _DashboardPageState extends State<DashboardPage> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.cardBackgroundColor,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppTheme.primaryColor,
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.1),
+            color: Colors.black.withOpacity(0.2),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
         ],
-        border: Border.all(
-          color: color.withOpacity(0.2),
-          width: 1,
-        ),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -656,22 +659,22 @@ class _DashboardPageState extends State<DashboardPage> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: AppTheme.primaryColor.withOpacity(0.2),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
               icon,
-              color: color,
+              color: AppTheme.primaryColor,
               size: 18,
             ),
           ),
           const SizedBox(height: 8),
           Text(
             value,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: color,
+              color: AppTheme.textColor,
             ),
           ),
           const SizedBox(height: 4),
@@ -679,7 +682,7 @@ class _DashboardPageState extends State<DashboardPage> {
             label,
             style: const TextStyle(
               fontSize: 12,
-              color: Colors.black54,
+              color: AppTheme.textColor,
               fontWeight: FontWeight.w500,
             ),
             textAlign: TextAlign.center,
@@ -694,12 +697,12 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppTheme.appBackgroundColor,
       appBar: AppBar(
         title: const Text('Dashboard'),
-        backgroundColor: Colors.white,
+        backgroundColor: AppTheme.appBackgroundColor,
         elevation: 0,
-        foregroundColor: const Color(0xFF2E7D32),
+        foregroundColor: AppTheme.textColor,
       ),
       body: Obx(() {
         final user = _profileController.user;
@@ -728,7 +731,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
-                            color: Colors.black54,
+                            color: AppTheme.textColor,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -737,18 +740,18 @@ class _DashboardPageState extends State<DashboardPage> {
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
-                            color: Colors.black87,
+                            color: AppTheme.textColor,
                           ),
                         ),
                       ],
                     ),
                     CircleAvatar(
                       radius: 24,
-                      backgroundColor: const Color(0xFF2E7D32),
+                      backgroundColor: AppTheme.primaryColor,
                       child: Text(
                         initial,
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: AppTheme.textColor,
                           fontWeight: FontWeight.bold,
                           fontSize: 20,
                         ),
@@ -772,19 +775,19 @@ class _DashboardPageState extends State<DashboardPage> {
                     icon: Icons.local_fire_department,
                     label: 'Calories',
                     value: '${_caloriesTargetPerDay}/day',
-                    color: const Color(0xFFFF6B35),
+                    color: AppTheme.primaryColor,
                   ),
                   _buildModernStatTile(
                     icon: Icons.fitness_center,
                     label: 'Workouts',
                     value: '$_workoutsCompletedToday',
-                    color: const Color(0xFF2E7D32),
+                    color: AppTheme.primaryColor,
                   ),
                   _buildModernStatTile(
                     icon: Icons.restaurant,
                     label: 'Meals',
                     value: '$_mealsLoggedToday',
-                    color: const Color(0xFF1976D2),
+                    color: AppTheme.primaryColor,
                   ),
                 ],
               ),

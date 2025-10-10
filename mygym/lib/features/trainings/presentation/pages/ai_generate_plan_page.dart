@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/theme/app_theme.dart';
 import 'package:get/get.dart';
 import '../controllers/plans_controller.dart';
 
@@ -132,10 +133,11 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.appBackgroundColor,
       appBar: AppBar(
         title: const Text('Generate AI Plan'),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF2E7D32),
+        backgroundColor: AppTheme.appBackgroundColor,
+        foregroundColor: AppTheme.textColor,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -144,15 +146,17 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Select Plan', style: TextStyle(fontSize: 12, color: Colors.black54)),
+              const Text('Select Plan', style: TextStyle(fontSize: 12, color: AppTheme.textColor)),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 value: _selectedPlan,
+                style: const TextStyle(color: AppTheme.textColor),
+                dropdownColor: AppTheme.cardBackgroundColor,
                 items: const [
-                  DropdownMenuItem(value: 'Strength', child: Text('Strength')),
-                  DropdownMenuItem(value: 'Muscle Building', child: Text('Muscle Building')),
-                  DropdownMenuItem(value: 'Weight Gain', child: Text('Weight Gain')),
-                  DropdownMenuItem(value: 'Weight Loss', child: Text('Weight Loss')),
+                  DropdownMenuItem(value: 'Strength', child: Text('Strength', style: TextStyle(color: AppTheme.textColor))),
+                  DropdownMenuItem(value: 'Muscle Building', child: Text('Muscle Building', style: TextStyle(color: AppTheme.textColor))),
+                  DropdownMenuItem(value: 'Weight Gain', child: Text('Weight Gain', style: TextStyle(color: AppTheme.textColor))),
+                  DropdownMenuItem(value: 'Weight Loss', child: Text('Weight Loss', style: TextStyle(color: AppTheme.textColor))),
                 ],
                 onChanged: (v) => setState(() => _selectedPlan = v ?? _selectedPlan),
                 decoration: _decoration(),
@@ -164,13 +168,15 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
               const SizedBox(height: 16),
               _text('Weight', _weightCtrl, hint: 'Enter your weight (e.g., 150 lbs or 68 kg)'),
               const SizedBox(height: 16),
-              const Text('Gender', style: TextStyle(fontSize: 12, color: Colors.black54)),
+              const Text('Gender', style: TextStyle(fontSize: 12, color: AppTheme.textColor)),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 value: _gender,
+                style: const TextStyle(color: AppTheme.textColor),
+                dropdownColor: AppTheme.cardBackgroundColor,
                 items: const [
-                  DropdownMenuItem(value: 'Male', child: Text('Male')),
-                  DropdownMenuItem(value: 'Female', child: Text('Female')),
+                  DropdownMenuItem(value: 'Male', child: Text('Male', style: TextStyle(color: AppTheme.textColor))),
+                  DropdownMenuItem(value: 'Female', child: Text('Female', style: TextStyle(color: AppTheme.textColor))),
                 ],
                 onChanged: (v) => setState(() => _gender = v ?? _gender),
                 decoration: _decoration(),
@@ -185,7 +191,8 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
                 child: ElevatedButton(
                   onPressed: _submit,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: AppTheme.textColor,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
@@ -196,8 +203,8 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
             SwitchListTile(
               value: _advancedJson,
               onChanged: (v) => setState(() => _advancedJson = v),
-              title: const Text('Advanced: Paste full plan JSON to create now'),
-              activeColor: const Color(0xFF2E7D32),
+              title: const Text('Advanced: Paste full plan JSON to create now', style: TextStyle(color: AppTheme.textColor)),
+              activeColor: AppTheme.primaryColor,
               contentPadding: EdgeInsets.zero,
               dense: true,
             ),
@@ -210,7 +217,8 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
                 child: ElevatedButton(
                   onPressed: _createFromJson,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: AppTheme.textColor,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
@@ -227,9 +235,20 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
 
   InputDecoration _decoration() {
     return InputDecoration(
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppTheme.primaryColor),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppTheme.primaryColor),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+      ),
       filled: true,
-      fillColor: Colors.white,
+      fillColor: AppTheme.cardBackgroundColor,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     );
   }
@@ -238,12 +257,16 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+        Text(label, style: const TextStyle(fontSize: 12, color: AppTheme.textColor)),
         const SizedBox(height: 6),
         TextFormField(
           controller: ctrl,
           keyboardType: keyboardType,
-          decoration: _decoration().copyWith(hintText: hint),
+          style: const TextStyle(color: AppTheme.textColor),
+          decoration: _decoration().copyWith(
+            hintText: hint,
+            hintStyle: const TextStyle(color: AppTheme.textColor),
+          ),
         ),
       ],
     );
@@ -253,12 +276,16 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Plan JSON', style: TextStyle(fontSize: 12, color: Colors.black54)),
+        const Text('Plan JSON', style: TextStyle(fontSize: 12, color: AppTheme.textColor)),
         const SizedBox(height: 6),
         TextFormField(
           controller: _jsonCtrl,
           maxLines: 10,
-          decoration: _decoration().copyWith(hintText: '{ ... }'),
+          style: const TextStyle(color: AppTheme.textColor),
+          decoration: _decoration().copyWith(
+            hintText: '{ ... }',
+            hintStyle: const TextStyle(color: AppTheme.textColor),
+          ),
         ),
       ],
     );

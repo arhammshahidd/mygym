@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../controllers/plans_controller.dart';
 
 class EditPlanPage extends StatefulWidget {
@@ -258,8 +259,8 @@ class _EditPlanPageState extends State<EditPlanPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Edit Plan'),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF2E7D32),
+        backgroundColor: AppTheme.appBackgroundColor,
+        foregroundColor: AppTheme.textColor,
         actions: [
           TextButton(onPressed: _save, child: const Text('Save')),
         ],
@@ -276,11 +277,24 @@ class _EditPlanPageState extends State<EditPlanPage> {
             _buildFieldLabel('Exercise Plan Category'),
             TextFormField(
               controller: _categoryCtrl,
+              style: const TextStyle(color: AppTheme.textColor),
               decoration: InputDecoration(
                 hintText: 'Enter exercise plan category',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                hintStyle: const TextStyle(color: AppTheme.textColor),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.primaryColor),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.primaryColor),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+                ),
                 filled: true,
-                fillColor: Colors.grey[50],
+                fillColor: AppTheme.cardBackgroundColor,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               ),
               readOnly: _categoryLocked,
@@ -315,9 +329,21 @@ class _EditPlanPageState extends State<EditPlanPage> {
             _buildFieldLabel('User Level'),
             TextFormField(
               controller: _userLevelCtrl,
-              decoration: const InputDecoration(
+              style: const TextStyle(color: AppTheme.textColor),
+              decoration: InputDecoration(
                 hintText: 'e.g., Beginner, Intermediate, Advanced',
-                border: OutlineInputBorder(),
+                hintStyle: const TextStyle(color: AppTheme.textColor),
+                border: OutlineInputBorder(
+                  borderSide: const BorderSide(color: AppTheme.primaryColor),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: AppTheme.primaryColor),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+                ),
+                filled: true,
+                fillColor: AppTheme.cardBackgroundColor,
               ),
             ),
             const SizedBox(height: 24),
@@ -347,8 +373,8 @@ class _EditPlanPageState extends State<EditPlanPage> {
                   });
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2E7D32),
-                  foregroundColor: Colors.white,
+                  backgroundColor: AppTheme.primaryColor,
+                  foregroundColor: AppTheme.textColor,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   elevation: 2,
@@ -379,17 +405,17 @@ class _EditPlanPageState extends State<EditPlanPage> {
         height: 56,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: Colors.grey[50],
-          border: Border.all(color: Colors.grey[300]!),
+          color: AppTheme.cardBackgroundColor,
+          border: Border.all(color: AppTheme.primaryColor),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today, size: 20, color: Color(0xFF2E7D32)),
+            const Icon(Icons.calendar_today, size: 20, color: AppTheme.textColor),
             const SizedBox(width: 12),
             Text(
               value.toIso8601String().split('T').first,
-              style: const TextStyle(fontSize: 16, color: Colors.black87),
+              style: const TextStyle(fontSize: 16, color: AppTheme.textColor),
             ),
           ],
         ),
@@ -405,7 +431,7 @@ class _EditPlanPageState extends State<EditPlanPage> {
         style: const TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
-          color: Color(0xFF2E7D32),
+          color: AppTheme.textColor,
         ),
       ),
     );
@@ -419,7 +445,7 @@ class _EditPlanPageState extends State<EditPlanPage> {
         style: const TextStyle(
           fontSize: 18,
           fontWeight: FontWeight.bold,
-          color: Color(0xFF2E7D32),
+          color: AppTheme.textColor,
         ),
       ),
     );
@@ -432,11 +458,24 @@ Widget _numField({required String hint, required String initial, required ValueC
   return TextField(
     controller: controller,
     keyboardType: TextInputType.number,
+    style: const TextStyle(color: AppTheme.textColor),
     decoration: InputDecoration(
       hintText: hint,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      hintStyle: const TextStyle(color: AppTheme.textColor),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppTheme.primaryColor),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppTheme.primaryColor),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+      ),
       filled: true,
-      fillColor: Colors.grey[50],
+      fillColor: AppTheme.cardBackgroundColor,
       isDense: true,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     ),
@@ -450,12 +489,12 @@ extension on _EditPlanPageState {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey[300]!),
+        color: AppTheme.cardBackgroundColor,
+        border: Border.all(color: AppTheme.primaryColor),
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.black.withOpacity(0.1),
             spreadRadius: 1,
             blurRadius: 3,
             offset: const Offset(0, 1),
@@ -470,7 +509,7 @@ extension on _EditPlanPageState {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2E7D32).withOpacity(0.1),
+                  color: AppTheme.primaryColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
@@ -478,7 +517,7 @@ extension on _EditPlanPageState {
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF2E7D32),
+                    color: AppTheme.textColor,
                   ),
                 ),
               ),
@@ -500,11 +539,24 @@ extension on _EditPlanPageState {
           _buildFieldLabel('Workout Name'),
           TextFormField(
             initialValue: ex['workout_name']?.toString() ?? '',
+            style: const TextStyle(color: AppTheme.textColor),
             decoration: InputDecoration(
               hintText: 'Enter workout name',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              hintStyle: const TextStyle(color: AppTheme.textColor),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppTheme.primaryColor),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppTheme.primaryColor),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+              ),
               filled: true,
-              fillColor: Colors.grey[50],
+              fillColor: AppTheme.cardBackgroundColor,
               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
             onChanged: (v) => ex['workout_name'] = v,
@@ -513,11 +565,24 @@ extension on _EditPlanPageState {
           _buildFieldLabel('Exercise Types (e.g., 6)'),
           TextFormField(
             initialValue: ex['exercise_types']?.toString() ?? '',
+            style: const TextStyle(color: AppTheme.textColor),
             decoration: InputDecoration(
               hintText: 'e.g., 6',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              hintStyle: const TextStyle(color: AppTheme.textColor),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppTheme.primaryColor),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppTheme.primaryColor),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+              ),
               filled: true,
-              fillColor: Colors.grey[50],
+              fillColor: AppTheme.cardBackgroundColor,
               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
             keyboardType: TextInputType.number,

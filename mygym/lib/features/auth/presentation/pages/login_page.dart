@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../controllers/auth_controller.dart';
  
 
@@ -35,15 +36,16 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.appBackgroundColor,
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Color(0xFF2E7D32), // Dark green
-              Color(0xFF4CAF50), // Light green
-              Color(0xFF66BB6A), // Lighter green
+              AppTheme.appBackgroundColor,
+              AppTheme.cardBackgroundColor,
+              AppTheme.primaryColor,
             ],
           ),
         ),
@@ -58,13 +60,14 @@ class _LoginPageState extends State<LoginPage> {
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
+                      color: AppTheme.cardBackgroundColor.withOpacity(0.3),
                       shape: BoxShape.circle,
+                      border: Border.all(color: AppTheme.primaryColor, width: 2),
                     ),
                     child: const Icon(
                       Icons.fitness_center,
                       size: 60,
-                      color: Colors.white,
+                      color: AppTheme.textColor,
                     ),
                   ),
                   const SizedBox(height: 32),
@@ -75,7 +78,7 @@ class _LoginPageState extends State<LoginPage> {
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                      color: AppTheme.textColor,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -83,7 +86,7 @@ class _LoginPageState extends State<LoginPage> {
                     'Sign in to continue your fitness journey',
                     style: TextStyle(
                       fontSize: 16,
-                      color: Colors.white70,
+                      color: AppTheme.textColor,
                     ),
                   ),
                   const SizedBox(height: 48),
@@ -92,11 +95,12 @@ class _LoginPageState extends State<LoginPage> {
                   Container(
                     padding: const EdgeInsets.all(24),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppTheme.cardBackgroundColor,
                       borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppTheme.primaryColor, width: 2),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
+                          color: Colors.black.withOpacity(0.3),
                           blurRadius: 10,
                           offset: const Offset(0, 5),
                         ),
@@ -110,20 +114,23 @@ class _LoginPageState extends State<LoginPage> {
                           // Phone Field
                           TextFormField(
                             controller: _phoneController,
+                            style: const TextStyle(color: AppTheme.textColor),
                             decoration: InputDecoration(
                               labelText: 'Phone Number',
+                              labelStyle: const TextStyle(color: AppTheme.textColor),
                               hintText: '+1234567890',
-                              prefixIcon: const Icon(Icons.phone, color: Color(0xFF2E7D32)),
+                              hintStyle: TextStyle(color: AppTheme.textColor.withOpacity(0.7)),
+                              prefixIcon: const Icon(Icons.phone, color: AppTheme.textColor),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Colors.grey),
+                                borderSide: const BorderSide(color: AppTheme.primaryColor),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 2),
+                                borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
                               ),
                               filled: true,
-                              fillColor: Colors.grey[50],
+                              fillColor: AppTheme.appBackgroundColor,
                             ),
                             keyboardType: TextInputType.phone,
                             validator: (value) {
@@ -138,19 +145,21 @@ class _LoginPageState extends State<LoginPage> {
                           // Password Field
                           TextFormField(
                             controller: _passwordController,
+                            style: const TextStyle(color: AppTheme.textColor),
                             decoration: InputDecoration(
                               labelText: 'Password',
-                              prefixIcon: const Icon(Icons.lock, color: Color(0xFF2E7D32)),
+                              labelStyle: const TextStyle(color: AppTheme.textColor),
+                              prefixIcon: const Icon(Icons.lock, color: AppTheme.textColor),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Colors.grey),
+                                borderSide: const BorderSide(color: AppTheme.primaryColor),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 2),
+                                borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
                               ),
                               filled: true,
-                              fillColor: Colors.grey[50],
+                              fillColor: AppTheme.appBackgroundColor,
                             ),
                             obscureText: true,
                             validator: (value) {
@@ -166,9 +175,10 @@ class _LoginPageState extends State<LoginPage> {
                             height: 56,
                             decoration: BoxDecoration(
                               gradient: const LinearGradient(
-                                colors: [Color(0xFF2E7D32), Color(0xFF4CAF50)],
+                                colors: [AppTheme.primaryColor, AppTheme.primaryColor],
                               ),
                               borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: AppTheme.primaryColor, width: 2),
                             ),
                             child: Obx(() => ElevatedButton(
                               onPressed: _authController.isLoading ? null : _submit,
@@ -181,14 +191,14 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                               child: _authController.isLoading
                                   ? const CircularProgressIndicator(
-                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                      valueColor: AlwaysStoppedAnimation<Color>(AppTheme.textColor),
                                     )
                                   : const Text(
                                       'LOGIN',
                                       style: TextStyle(
                                         fontSize: 18,
                                         fontWeight: FontWeight.bold,
-                                        color: Colors.white,
+                                        color: AppTheme.textColor,
                                       ),
                                     ),
                             )),

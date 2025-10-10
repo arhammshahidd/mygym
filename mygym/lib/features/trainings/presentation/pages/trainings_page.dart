@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../controllers/schedules_controller.dart';
 import '../controllers/plans_controller.dart';
 import 'create_plan_page.dart';
@@ -62,15 +63,16 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.appBackgroundColor,
       appBar: AppBar(
         title: const Text('Training'),
-        backgroundColor: const Color(0xFF2E7D32),
-        foregroundColor: Colors.white,
+        backgroundColor: AppTheme.appBackgroundColor,
+        foregroundColor: AppTheme.textColor,
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
+          indicatorColor: AppTheme.primaryColor,
+          labelColor: AppTheme.textColor,
+          unselectedLabelColor: AppTheme.textColor,
           tabs: const [
             Tab(text: 'Schedules'),
             Tab(text: 'Plans'),
@@ -96,7 +98,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
       final approvedPlans = _schedulesController.assignments.toList();
       if (approvedPlans.isEmpty) {
         return const Center(
-          child: Text('No scheduled workouts yet'),
+          child: Text('No scheduled workouts yet', style: TextStyle(color: AppTheme.textColor)),
         );
       }
       
@@ -111,7 +113,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             // Header
             const Text(
               'Scheduled Workouts',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.textColor),
             ),
                     const SizedBox(height: 16),
             
@@ -145,7 +147,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
           children: [
             const Text(
               'Workout Plans',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.textColor),
             ),
               ElevatedButton(
                 onPressed: () {
@@ -157,8 +159,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     );
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2E7D32),
-                  foregroundColor: Colors.white,
+                  backgroundColor: AppTheme.primaryColor,
+                  foregroundColor: AppTheme.textColor,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
                 ),
@@ -182,7 +184,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 children: [
                   const Text(
                     'Manual Plans',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                   ),
                   const SizedBox(height: 12),
                     ...manualPlans.map((plan) => _buildManualPlanCard(plan)).toList(),
@@ -205,7 +207,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                       children: [
                   const Text(
                     'AI Generated Plans',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                         ),
                         TextButton.icon(
                           onPressed: () {
@@ -236,7 +238,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
               return const Center(
                 child: Text(
                   'No plans created yet',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                  style: TextStyle(fontSize: 16, color: AppTheme.textColor),
                 ),
               );
             }
@@ -260,6 +262,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
       
       return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: AppTheme.cardBackgroundColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+      ),
       child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -275,7 +282,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     plan['plan_category']?.toString() ?? 
                     plan['workout_name']?.toString() ?? 
                     'Training Plan',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                   ),
                 ),
                 ElevatedButton(
@@ -287,8 +294,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isStarted ? Colors.red : const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
+                    backgroundColor: isStarted ? Colors.red : AppTheme.primaryColor,
+                    foregroundColor: AppTheme.textColor,
                   ),
                   child: Text(isStarted ? 'Stop Plan' : 'Start Plan'),
               ),
@@ -297,54 +304,38 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
           const SizedBox(height: 8),
             // Plan Category Name - try multiple field names
             if (plan['exercise_plan_category'] != null)
-              Text('Plan Category: ${plan['exercise_plan_category']}')
+              Text('Plan Category: ${plan['exercise_plan_category']}', style: const TextStyle(color: AppTheme.textColor))
             else if (plan['category'] != null)
-              Text('Plan Category: ${plan['category']}')
+              Text('Plan Category: ${plan['category']}', style: const TextStyle(color: AppTheme.textColor))
             else if (plan['plan_category'] != null)
-              Text('Plan Category: ${plan['plan_category']}')
+              Text('Plan Category: ${plan['plan_category']}', style: const TextStyle(color: AppTheme.textColor))
             else if (plan['workout_name'] != null)
-              Text('Plan Category: ${plan['workout_name']}'),
+              Text('Plan Category: ${plan['workout_name']}', style: const TextStyle(color: AppTheme.textColor)),
             // Total Days - try multiple field names
             if (plan['total_days'] != null)
-              Text('Total Days: ${plan['total_days']}')
+              Text('Total Days: ${plan['total_days']}', style: const TextStyle(color: AppTheme.textColor))
             else if (plan['days'] != null)
-              Text('Total Days: ${plan['days']}')
+              Text('Total Days: ${plan['days']}', style: const TextStyle(color: AppTheme.textColor))
             else if (plan['duration'] != null)
-              Text('Total Days: ${plan['duration']}'),
+              Text('Total Days: ${plan['duration']}', style: const TextStyle(color: AppTheme.textColor)),
             // User Level
             if (plan['user_level'] != null)
-              Text('User Level: ${plan['user_level']}'),
+              Text('User Level: ${plan['user_level']}', style: const TextStyle(color: AppTheme.textColor)),
             const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => PlanDetailPage(plan: plan, isAi: false),
-                      ),
-                    );
-                  },
-                    child: const Text('View Plan'),
+          OutlinedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => PlanDetailPage(plan: plan, isAi: false),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => EditPlanPage(plan: plan),
-                        ),
-                      );
-                    },
-                    child: const Text('Edit Plan'),
-                ),
-              ),
-            ],
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.primaryColor,
+              side: const BorderSide(color: AppTheme.primaryColor),
+            ),
+            child: const Text('View Plan'),
           ),
           ],
         ),
@@ -360,6 +351,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: AppTheme.cardBackgroundColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+      ),
       child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -371,7 +367,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 Expanded(
                   child: Text(
                     plan['name']?.toString() ?? 'Manual Plan',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                   ),
                 ),
                 Row(
@@ -443,6 +439,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: AppTheme.cardBackgroundColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+      ),
       child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -454,7 +455,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 Expanded(
                   child: Text(
                     plan['name']?.toString() ?? 'AI Generated Plan',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                   ),
                 ),
                 Row(
@@ -527,8 +528,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
         return ElevatedButton(
           onPressed: null,
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey[400],
-            foregroundColor: Colors.white,
+            backgroundColor: AppTheme.cardBackgroundColor,
+            foregroundColor: AppTheme.textColor,
           ),
           child: const Text('Pending'),
         );
@@ -538,8 +539,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             _plansController.startPlan(plan);
           },
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2E7D32),
-            foregroundColor: Colors.white,
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: AppTheme.textColor,
           ),
           child: const Text('Start Plan'),
         );
@@ -550,13 +551,13 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('Plan sent for approval'),
-                backgroundColor: Color(0xFF2E7D32),
+                backgroundColor: AppTheme.primaryColor,
               ),
             );
           },
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2E7D32),
-            foregroundColor: Colors.white,
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: AppTheme.textColor,
           ),
           child: const Text('Send Plan'),
         );
@@ -565,6 +566,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
 
   Widget _buildAiGeneratorCard() {
     return Card(
+      color: AppTheme.cardBackgroundColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
       child: Column(
@@ -572,12 +578,12 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
         children: [
             const Text(
               'AI Plan Generator',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
             ),
             const SizedBox(height: 8),
             const Text(
               'Get a personalized workout plan based on your goals, experience, and available time.',
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(color: AppTheme.textColor),
             ),
             const SizedBox(height: 12),
             ElevatedButton(
@@ -590,8 +596,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 );
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2E7D32),
-                foregroundColor: Colors.white,
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: AppTheme.textColor,
               ),
               child: const Text('Generate AI Plan'),
               ),
@@ -613,6 +619,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     
     return Card(
       margin: const EdgeInsets.only(top: 16),
+      color: AppTheme.cardBackgroundColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+      ),
       child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -623,7 +634,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
               Expanded(
                 child: Text(
                     'Active Schedule - Day ${currentDay + 1}',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -633,7 +644,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
+                    foregroundColor: AppTheme.textColor,
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
                   child: const Text('Stop'),
@@ -641,7 +652,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             ],
           ),
           const SizedBox(height: 8),
-            Text('Plan: ${activeSchedule['exercise_plan_category'] ?? 'Workout Plan'}'),
+            Text('Plan: ${activeSchedule['exercise_plan_category'] ?? 'Workout Plan'}', style: const TextStyle(color: AppTheme.textColor)),
             const SizedBox(height: 16),
             
             // Day Plan Content
@@ -660,7 +671,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 final dayItems = _getDayItems(planDetails, currentDay);
                 
                 if (dayItems.isEmpty) {
-                  return const Text('No workouts for this day');
+                  return const Text('No workouts for this day', style: TextStyle(color: AppTheme.textColor));
                 }
                 
                 return Column(
@@ -668,7 +679,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   children: [
                     Text(
                       'Today\'s Workouts (${dayItems.length} exercises)',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textColor),
             ),
             const SizedBox(height: 8),
                     ...dayItems.map((item) => _buildWorkoutItem(item)).toList(),
@@ -798,10 +809,10 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
   Widget _buildWorkoutItem(Map<String, dynamic> item) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      color: const Color(0xFFE8F5E8), // Light green background
+      color: AppTheme.cardBackgroundColor,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: Color(0xFF2E7D32), width: 2),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 2),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -824,7 +835,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xFF2E7D32),
+                      color: AppTheme.textColor,
                     ),
                   ),
                   if (item['exercise_types'] != null)
@@ -832,7 +843,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                       '${item['exercise_types']} Exercises',
                       style: const TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF2E7D32),
+                        color: AppTheme.textColor,
                       ),
                     ),
                 ],
@@ -846,7 +857,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2E7D32),
+                color: AppTheme.textColor,
               ),
             ),
             const SizedBox(height: 12),
@@ -855,11 +866,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             if (item['sets'] != null || item['reps'] != null) ...[
               Row(
                 children: [
-                  const Icon(Icons.fitness_center, size: 16, color: Color(0xFF2E7D32)),
+                  const Icon(Icons.fitness_center, size: 16, color: AppTheme.textColor),
                   const SizedBox(width: 8),
                   Text(
                     '${item['sets'] ?? 'N/A'} sets x ${item['reps'] ?? 'N/A'} reps',
-                    style: const TextStyle(fontSize: 14, color: Color(0xFF2E7D32)),
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
                 ),
             ],
           ),
@@ -870,11 +881,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             if (item['weight_kg'] != null) ...[
               Row(
                 children: [
-                  const Icon(Icons.sports_gymnastics, size: 16, color: Color(0xFF2E7D32)),
+                  const Icon(Icons.sports_gymnastics, size: 16, color: AppTheme.textColor),
                   const SizedBox(width: 8),
                   Text(
                     '${item['weight_kg']} kg',
-                    style: const TextStyle(fontSize: 14, color: Color(0xFF2E7D32)),
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
           ),
         ],
       ),
@@ -885,11 +896,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             if (item['minutes'] != null) ...[
               Row(
                 children: [
-                  const Icon(Icons.access_time, size: 16, color: Color(0xFF2E7D32)),
+                  const Icon(Icons.access_time, size: 16, color: AppTheme.textColor),
                   const SizedBox(width: 8),
                   Text(
                     '${item['minutes']} minutes',
-                    style: const TextStyle(fontSize: 14, color: Color(0xFF2E7D32)),
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
                   ),
                 ],
               ),
@@ -900,11 +911,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             // Motivational text
             Row(
               children: [
-                const Icon(Icons.emoji_emotions, size: 16, color: Color(0xFF2E7D32)),
+                const Icon(Icons.emoji_emotions, size: 16, color: AppTheme.textColor),
                 const SizedBox(width: 8),
                 const Text(
                   'You can do it',
-                  style: TextStyle(fontSize: 14, color: Color(0xFF2E7D32)),
+                  style: TextStyle(fontSize: 14, color: AppTheme.textColor),
                 ),
               ],
             ),
@@ -914,11 +925,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             if (item['user_level'] != null) ...[
               Row(
                 children: [
-                  const Icon(Icons.person, size: 16, color: Color(0xFF2E7D32)),
+                  const Icon(Icons.person, size: 16, color: AppTheme.textColor),
                   const SizedBox(width: 8),
                   Text(
                     'User Level: ${item['user_level']}',
-                    style: const TextStyle(fontSize: 14, color: Color(0xFF2E7D32)),
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
                   ),
                 ],
               ),
@@ -945,7 +956,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
               
               if (isCompleted) {
                 buttonText = 'Completed';
-                buttonColor = Colors.grey;
+                buttonColor = AppTheme.cardBackgroundColor;
                 onPressed = null;
               } else if (isStarted) {
                 buttonText = 'Plan Started - $remainingMinutes minutes remaining';
@@ -953,7 +964,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 onPressed = null;
                   } else {
                 buttonText = 'Start Workout';
-                buttonColor = const Color(0xFF2E7D32);
+                buttonColor = AppTheme.primaryColor;
                 onPressed = () {
                   final totalMinutes = int.tryParse(item['minutes']?.toString() ?? '0') ?? 0;
                   _schedulesController.startWorkout(workoutKey, totalMinutes);
@@ -966,7 +977,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   onPressed: onPressed,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: buttonColor,
-                    foregroundColor: Colors.white,
+                    foregroundColor: AppTheme.textColor,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -1016,7 +1027,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text('${isAi ? 'AI Generated' : 'Manual'} plan deleted successfully'),
-                        backgroundColor: Colors.green,
+                        backgroundColor: AppTheme.primaryColor,
                       ),
                     );
                   }
@@ -1032,7 +1043,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   }
                 }
               },
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              style: TextButton.styleFrom(foregroundColor: AppTheme.textColor),
               child: const Text('Delete'),
             ),
           ],

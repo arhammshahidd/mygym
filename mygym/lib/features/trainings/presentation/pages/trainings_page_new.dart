@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../controllers/schedules_controller.dart';
 import '../controllers/plans_controller.dart';
 import 'create_plan_page.dart';
@@ -52,13 +53,13 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     return Scaffold(
       appBar: AppBar(
         title: const Text('Training'),
-        backgroundColor: const Color(0xFF2E7D32),
-        foregroundColor: Colors.white,
+        backgroundColor: AppTheme.appBackgroundColor,
+        foregroundColor: AppTheme.textColor,
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
+          indicatorColor: AppTheme.primaryColor,
+          labelColor: AppTheme.textColor,
+          unselectedLabelColor: AppTheme.textColor,
           tabs: const [
             Tab(text: 'Schedules'),
             Tab(text: 'Plans'),
@@ -168,8 +169,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: AppTheme.textColor,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -247,7 +248,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 return const Center(
                   child: Text(
                     'No plans created yet',
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                    style: TextStyle(fontSize: 16, color: AppTheme.textColor),
                   ),
                 );
               }
@@ -288,8 +289,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isStarted ? Colors.red : const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
+                    backgroundColor: isStarted ? Colors.red : AppTheme.primaryColor,
+                    foregroundColor: AppTheme.textColor,
                   ),
                   child: Text(isStarted ? 'Stop Plan' : 'Start Plan'),
                 ),
@@ -300,36 +301,20 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             if (plan['web_plan_id'] != null)
               Text('Web Plan ID: ${plan['web_plan_id']}'),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => PlanDetailPage(plan: plan, isAi: false),
-                        ),
-                      );
-                    },
-                    child: const Text('View Plan'),
+            OutlinedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => PlanDetailPage(plan: plan, isAi: false),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => EditPlanPage(plan: plan),
-                        ),
-                      );
-                    },
-                    child: const Text('Edit Plan'),
-                  ),
-                ),
-              ],
+                );
+              },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.primaryColor,
+                side: const BorderSide(color: AppTheme.primaryColor),
+              ),
+              child: const Text('View Plan'),
             ),
           ],
         ),
@@ -473,8 +458,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
         return ElevatedButton(
           onPressed: null,
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey[400],
-            foregroundColor: Colors.white,
+            backgroundColor: AppTheme.textColor[400],
+            foregroundColor: AppTheme.textColor,
           ),
           child: const Text('Pending'),
         );
@@ -484,8 +469,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             _plansController.startPlan(plan);
           },
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2E7D32),
-            foregroundColor: Colors.white,
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: AppTheme.textColor,
           ),
           child: const Text('Start Plan'),
         );
@@ -501,8 +486,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             );
           },
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2E7D32),
-            foregroundColor: Colors.white,
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: AppTheme.textColor,
           ),
           child: const Text('Send Plan'),
         );
@@ -523,7 +508,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             const SizedBox(height: 8),
             const Text(
               'Get a personalized workout plan based on your goals, experience, and available time.',
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(color: AppTheme.textColor),
             ),
             const SizedBox(height: 12),
             ElevatedButton(
@@ -536,8 +521,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 );
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2E7D32),
-                foregroundColor: Colors.white,
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: AppTheme.textColor,
               ),
               child: const Text('Generate AI Plan'),
             ),
@@ -572,7 +557,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
+                foregroundColor: AppTheme.textColor,
               ),
               child: const Text('Stop Schedule'),
             ),

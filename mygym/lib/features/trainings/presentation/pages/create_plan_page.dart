@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../../presentation/controllers/plans_controller.dart';
 import '../../../profile/presentation/controllers/profile_controller.dart';
 
@@ -200,10 +201,11 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.appBackgroundColor,
       appBar: AppBar(
         title: const Text('Create Fitness Plan'),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF2E7D32),
+        backgroundColor: AppTheme.appBackgroundColor,
+        foregroundColor: AppTheme.textColor,
         elevation: 0,
       ),
       body: SingleChildScrollView(
@@ -320,8 +322,8 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  border: Border.all(color: Colors.grey[300]!),
+                  color: AppTheme.cardBackgroundColor,
+                  border: Border.all(color: AppTheme.primaryColor),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
@@ -332,8 +334,8 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                       decoration: BoxDecoration(
-                        color: Colors.white,
-                        border: Border.all(color: Colors.grey[300]!),
+                        color: AppTheme.appBackgroundColor,
+                        border: Border.all(color: AppTheme.primaryColor),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -341,7 +343,7 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF2E7D32),
+                          color: AppTheme.textColor,
                         ),
                       ),
                     ),
@@ -356,8 +358,8 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
                 child: ElevatedButton.icon(
                   onPressed: _addExercise,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: AppTheme.textColor,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     elevation: 2,
@@ -373,12 +375,12 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(color: Colors.grey[300]!),
+                    color: AppTheme.cardBackgroundColor,
+                    border: Border.all(color: AppTheme.primaryColor),
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.grey.withOpacity(0.1),
+                        color: Colors.black.withOpacity(0.1),
                         spreadRadius: 1,
                         blurRadius: 3,
                         offset: const Offset(0, 1),
@@ -394,16 +396,16 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.grey[50],
+                          color: AppTheme.appBackgroundColor,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey[200]!),
+                          border: Border.all(color: AppTheme.primaryColor.withOpacity(0.3)),
                         ),
                         child: Row(
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF2E7D32).withOpacity(0.1),
+                                color: AppTheme.primaryColor.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
@@ -411,7 +413,7 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
                                 style: const TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
-                                  color: Color(0xFF2E7D32),
+                                  color: AppTheme.primaryColor,
                                 ),
                               ),
                             ),
@@ -425,12 +427,13 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w600,
                                       fontSize: 16,
+                                      color: AppTheme.textColor,
                                     ),
                                   ),
                                   Text(
                                     '${ex['sets']} sets × ${ex['reps']} reps • ${ex['weight_kg']} kg • ${ex['minutes']} min',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
+                                    style: const TextStyle(
+                                      color: AppTheme.textColor,
                                       fontSize: 14,
                                     ),
                                   ),
@@ -454,8 +457,8 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
                 child: ElevatedButton.icon(
                   onPressed: _createPlan,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E7D32),
-                    foregroundColor: Colors.white,
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: AppTheme.textColor,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     elevation: 2,
@@ -475,12 +478,26 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
     return TextFormField(
       controller: ctrl,
       keyboardType: keyboardType,
+      style: const TextStyle(color: AppTheme.textColor),
       decoration: InputDecoration(
         labelText: label,
+        labelStyle: const TextStyle(color: AppTheme.textColor),
         hintText: hint,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        hintStyle: const TextStyle(color: AppTheme.textColor),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTheme.primaryColor),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTheme.primaryColor),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+        ),
         filled: true,
-        fillColor: Colors.grey[50],
+        fillColor: AppTheme.cardBackgroundColor,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       ),
     );
@@ -493,17 +510,17 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
         height: 56,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: Colors.grey[50],
-          border: Border.all(color: Colors.grey[300]!),
+          color: AppTheme.cardBackgroundColor,
+          border: Border.all(color: AppTheme.primaryColor),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today, size: 20, color: Color(0xFF2E7D32)),
+            const Icon(Icons.calendar_today, size: 20, color: AppTheme.textColor),
             const SizedBox(width: 12),
             Text(
               value,
-              style: const TextStyle(fontSize: 16, color: Colors.black87),
+              style: const TextStyle(fontSize: 16, color: AppTheme.textColor),
             ),
           ],
         ),
@@ -519,7 +536,7 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
         style: const TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
-          color: Color(0xFF2E7D32),
+          color: AppTheme.textColor,
         ),
       ),
     );
@@ -533,7 +550,7 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
         style: const TextStyle(
           fontSize: 18,
           fontWeight: FontWeight.bold,
-          color: Color(0xFF2E7D32),
+          color: AppTheme.textColor,
         ),
       ),
     );
@@ -546,11 +563,11 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color: const Color(0xFF2E7D32),
+          color: AppTheme.primaryColor,
           borderRadius: BorderRadius.circular(8),
           boxShadow: [
             BoxShadow(
-              color: Colors.grey.withOpacity(0.2),
+              color: Colors.black.withOpacity(0.2),
               spreadRadius: 1,
               blurRadius: 2,
               offset: const Offset(0, 1),
@@ -563,7 +580,7 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
             style: const TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: Colors.white,
+              color: AppTheme.textColor,
             ),
           ),
         ),
