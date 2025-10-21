@@ -20,6 +20,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
   late TabController _tabController;
   final SchedulesController _schedulesController = Get.find<SchedulesController>();
   final PlansController _plansController = Get.find<PlansController>();
+  ScaffoldMessengerState? _scaffoldMessenger;
 
   @override
   void initState() {
@@ -40,6 +41,12 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     
     // Load initial data for both tabs and refresh automatically
     _loadInitialData();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scaffoldMessenger = ScaffoldMessenger.of(context);
   }
 
   Future<void> _loadInitialData() async {
@@ -437,6 +444,25 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     final isStarted = _plansController.isPlanStarted(planId);
     final approvalStatus = _plansController.getPlanApprovalStatus(planId);
     
+    // Debug: Check what user_level data we're receiving
+    print('🔍 AI Plan Card - Plan ID: $planId');
+    print('🔍 AI Plan Card - User Level: "${plan['user_level']}"');
+    print('🔍 AI Plan Card - Plan keys: ${plan.keys.toList()}');
+    
+    // Calculate total days from start and end dates
+    int totalDays = 0;
+    if (plan['start_date'] != null && plan['end_date'] != null) {
+      try {
+        final startDate = DateTime.parse(plan['start_date'].toString());
+        final endDate = DateTime.parse(plan['end_date'].toString());
+        totalDays = endDate.difference(startDate).inDays + 1;
+      } catch (e) {
+        totalDays = plan['total_days'] ?? plan['plan_duration_days'] ?? 0;
+      }
+    } else {
+      totalDays = plan['total_days'] ?? plan['plan_duration_days'] ?? 0;
+    }
+    
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       color: AppTheme.cardBackgroundColor,
@@ -454,7 +480,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             children: [
                 Expanded(
                   child: Text(
-                    plan['name']?.toString() ?? 'AI Generated Plan',
+                    // Use plan category as title instead of generic name
+                    plan['exercise_plan_category']?.toString() ?? 'AI Generated Plan',
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                   ),
                 ),
@@ -472,17 +499,107 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            // Plan Category Name
-            if (plan['exercise_plan_category'] != null)
-              Text('Plan Category: ${plan['exercise_plan_category']}'),
-            // Total Days
-            if (plan['total_days'] != null)
-              Text('Total Days: ${plan['total_days']}'),
-            // User Level
-            if (plan['user_level'] != null)
-              Text('User Level: ${plan['user_level']}'),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
+            
+            // Plan Details Row
+            Row(
+              children: [
+                // Total Days
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.primaryColor.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.calendar_today, size: 16, color: AppTheme.primaryColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$totalDays Days',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                
+                // User Level
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.primaryColor.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.person, size: 16, color: AppTheme.primaryColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          plan['user_level']?.toString() ?? 'Beginner',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 12),
+            
+            // Motivational "You can do it" line with icon
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    AppTheme.primaryColor.withOpacity(0.1),
+                    AppTheme.primaryColor.withOpacity(0.05),
+                  ],
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                ),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.primaryColor.withOpacity(0.2)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.emoji_events,
+                    size: 18,
+                    color: AppTheme.primaryColor,
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'You can do it! 💪',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -505,7 +622,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                          builder: (context) => EditPlanPage(plan: plan),
+                          builder: (context) => EditPlanPage(plan: plan, isAi: true),
                     ),
                   );
                 },
@@ -548,12 +665,14 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
         return ElevatedButton(
                   onPressed: () async {
             // Send plan for approval
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Plan sent for approval'),
-                backgroundColor: AppTheme.primaryColor,
-              ),
-            );
+            if (_scaffoldMessenger != null) {
+              _scaffoldMessenger!.showSnackBar(
+                const SnackBar(
+                  content: Text('Plan sent for approval'),
+                  backgroundColor: AppTheme.primaryColor,
+                ),
+              );
+            }
           },
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.primaryColor,
@@ -783,13 +902,6 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     print('🔍 FINAL Total workout minutes: $totalMinutes');
     print('🔍 FINAL Number of workouts: ${workouts.length}');
     
-    // FORCE TEST: Always apply filtering if we have more than 2 workouts
-    if (workouts.length > 2) {
-      print('🔍 🚨 FORCE TEST: More than 2 workouts detected, applying filtering regardless of minutes');
-      final filteredWorkouts = workouts.take(2).toList();
-      print('🔍 🚨 FORCE FILTERED: Showing ${filteredWorkouts.length} workouts: ${filteredWorkouts.map((w) => w['name']).toList()}');
-      return filteredWorkouts;
-    }
     
     // Apply distribution logic
     if (totalMinutes > 80 && workouts.length > 2) {
@@ -1023,8 +1135,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   }
                   
                   // Show success message
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
                       SnackBar(
                         content: Text('${isAi ? 'AI Generated' : 'Manual'} plan deleted successfully'),
                         backgroundColor: AppTheme.primaryColor,
@@ -1033,8 +1145,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   }
                 } catch (e) {
                   // Show error message
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
                       SnackBar(
                         content: Text('Failed to delete plan: $e'),
                         backgroundColor: Colors.red,

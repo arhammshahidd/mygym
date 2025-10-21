@@ -44,7 +44,7 @@ class ApiClient {
       dio.options.headers['Authorization'] = 'Bearer $authToken';
     }
 
-    // Add interceptor to handle 401 errors globally (non-disruptive)
+    // Add interceptor to handle 401 and 403 errors globally (non-disruptive)
     dio.interceptors.add(InterceptorsWrapper(
       onError: (error, handler) async {
         if (error.response?.statusCode == 401) {
@@ -62,6 +62,21 @@ class ApiClient {
           } catch (e) {
             // Network or other transient errors - don't logout to avoid accidental sign-outs
             print('🔐 Token revalidation failed after 401 (non-fatal): $e');
+          }
+        } else if (error.response?.statusCode == 403) {
+          print('🔐 403 Forbidden received - checking token validity');
+          try {
+            final authService = AuthService();
+            final stillValid = await authService.validateTokenWithBackend();
+            if (!stillValid) {
+              // Token is invalid, logout
+              await authService.handleSessionExpiration();
+            } else {
+              // Token is valid but access denied - this might be a permissions issue
+              print('🔐 Token valid but access denied - possible permissions issue');
+            }
+          } catch (e) {
+            print('🔐 Token validation failed after 403 (non-fatal): $e');
           }
         }
         handler.next(error);

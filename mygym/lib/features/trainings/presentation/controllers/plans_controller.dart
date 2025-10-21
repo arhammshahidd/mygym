@@ -2,9 +2,11 @@ import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../../../profile/presentation/controllers/profile_controller.dart';
+import '../../../stats/presentation/controllers/stats_controller.dart';
 import '../../data/services/manual_training_service.dart';
 import '../../data/services/ai_training_service.dart';
 import '../../data/services/training_approval_service.dart';
+import '../../data/services/daily_training_service.dart';
 import '../../../../shared/services/realtime_service.dart';
 import '../../../auth/data/services/auth_service.dart';
 
@@ -12,6 +14,7 @@ class PlansController extends GetxController {
   final ManualTrainingService _manualService = ManualTrainingService();
   final AiTrainingService _aiService = AiTrainingService();
   final TrainingApprovalService _approvalService = TrainingApprovalService();
+  final DailyTrainingService _dailyTrainingService = DailyTrainingService();
   final RealtimeService _realtime = RealtimeService();
   final AuthService _authService = AuthService();
   final ProfileController _profileController = Get.find<ProfileController>();
@@ -109,7 +112,7 @@ class PlansController extends GetxController {
       // Fetch AI generated plans (Plans-specific)
       try {
         print('🤖 Plans - Fetching AI generated plans...');
-        final aiRes = await _aiService.listGenerated();
+        final aiRes = await _aiService.listGenerated(userId: userId);
         print('🤖 Plans - AI plans result: ${aiRes.length} items');
         
         aiGeneratedPlans.assignAll(aiRes.map((e) => Map<String, dynamic>.from(e)));
@@ -389,6 +392,36 @@ class PlansController extends GetxController {
     return await _aiService.createGenerated(payload);
   }
 
+  Future<Map<String, dynamic>> createAiGeneratedPlanViaBackend(Map<String, dynamic> payload) async {
+    return await _aiService.createGeneratedViaBackend(payload);
+  }
+
+  /// Generate via backend and wait briefly for the plan to appear in /generated
+  Future<void> generateViaBackendAndAwait(Map<String, dynamic> payload, {Duration timeout = const Duration(seconds: 20)}) async {
+    final start = DateTime.now();
+    final int? uid = _profileController.user?.id;
+    final before = await _aiService.listGenerated(userId: uid);
+    await createAiGeneratedPlanViaBackend(payload);
+    while (DateTime.now().difference(start) < timeout) {
+      await Future.delayed(const Duration(seconds: 2));
+      // Check if controller is still active
+      if (!isClosed) {
+        final after = await _aiService.listGenerated(userId: uid);
+        if (after.length > before.length) {
+          aiGeneratedPlans.assignAll(after.map((e) => Map<String, dynamic>.from(e)));
+          return;
+        }
+      } else {
+        print('⚠️ Plans Controller - Controller disposed, stopping generation wait');
+        return;
+      }
+    }
+    // timeout: still refresh to reflect any late results
+    if (!isClosed) {
+      aiGeneratedPlans.assignAll((await _aiService.listGenerated(userId: uid)).map((e) => Map<String, dynamic>.from(e)));
+    }
+  }
+
   // Plan update methods
   Future<Map<String, dynamic>> updateManualPlan(int id, Map<String, dynamic> payload) async {
     return await _manualService.updatePlan(id, payload);
@@ -431,7 +464,7 @@ class PlansController extends GetxController {
 
   Future<void> refreshAiPlans() async {
     try {
-      final aiRes = await _aiService.listGenerated();
+      final aiRes = await _aiService.listGenerated(userId: _profileController.user?.id);
       aiGeneratedPlans.assignAll(aiRes.map((e) => Map<String, dynamic>.from(e)));
     } catch (e) {
       print('❌ Plans - Error refreshing AI plans: $e');
@@ -498,6 +531,35 @@ class PlansController extends GetxController {
     } catch (e) {
       print('❌ Plans - Error deleting AI generated plan: $e');
       rethrow;
+    }
+  }
+
+  // Submit daily training completion for Plans
+  Future<void> submitDailyTrainingCompletion({
+    required int planId,
+    required List<Map<String, dynamic>> completionData,
+  }) async {
+    try {
+      print('📊 Submitting daily training completion for plan $planId');
+      
+      // Submit to daily training API
+      await _dailyTrainingService.submitCompletion(
+        dailyPlanId: planId,
+        completionData: completionData,
+      );
+      
+      print('✅ Daily training completion submitted successfully');
+      
+      // Notify stats controller to refresh
+      try {
+        final statsController = Get.find<StatsController>();
+        statsController.refreshStats();
+      } catch (e) {
+        print('⚠️ Stats controller not found, skipping stats refresh: $e');
+      }
+    } catch (e) {
+      print('❌ Failed to submit daily training completion: $e');
+      rethrow; // Re-throw to let the caller handle the error
     }
   }
 }

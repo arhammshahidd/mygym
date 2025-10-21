@@ -158,7 +158,6 @@ class _DashboardPageState extends State<DashboardPage> {
   List<Map<String, dynamic>> _applyWorkoutDistributionLogic(List<Map<String, dynamic>> workouts) {
     if (workouts.isEmpty) return workouts;
     
-    // FORCE TEST: Always apply filtering if we have more than 2 workouts
     if (workouts.length > 2) {
       return workouts.take(2).toList();
     }

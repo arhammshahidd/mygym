@@ -23,12 +23,20 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
   final _userLevelCtrl = TextEditingController();
   final _jsonCtrl = TextEditingController();
   bool _advancedJson = false;
+  bool _isGenerating = false;
   late final PlansController _controller;
+  ScaffoldMessengerState? _scaffoldMessenger;
 
   @override
   void initState() {
     super.initState();
     _controller = Get.find<PlansController>();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scaffoldMessenger = ScaffoldMessenger.of(context);
   }
 
   @override
@@ -42,7 +50,54 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
     super.dispose();
   }
 
+  /// Safe setState that checks if widget is still mounted
+  void _safeSetState(VoidCallback fn) {
+    if (mounted) {
+      try {
+        setState(fn);
+      } catch (e) {
+        print('⚠️ AI Generate Plan - setState failed (widget disposed): $e');
+      }
+    }
+  }
+
+  /// Safe navigation that checks if widget is still mounted
+  void _safeNavigateBack() {
+    if (mounted && Navigator.canPop(context)) {
+      try {
+        Navigator.pop(context);
+      } catch (e) {
+        print('⚠️ AI Generate Plan - Navigation failed (widget disposed): $e');
+      }
+    }
+  }
+
+  /// Safe snackbar that checks if widget is still mounted
+  void _safeShowSnackBar(String message, {bool isError = false}) {
+    if (mounted && _scaffoldMessenger != null) {
+      try {
+        _scaffoldMessenger!.showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: isError ? Colors.red : null,
+          ),
+        );
+      } catch (e) {
+        print('⚠️ AI Generate Plan - SnackBar failed (widget disposed): $e');
+      }
+    }
+  }
+
   Future<void> _submit() async {
+    // Prevent multiple submissions
+    if (_isGenerating) {
+      print('⚠️ AI Generate Plan - Already generating, ignoring duplicate request');
+      return;
+    }
+    
+    _safeSetState(() => _isGenerating = true);
+    print('🔄 AI Generate Plan - Starting generation process...');
+    
     final now = DateTime.now();
     final startStr = now.toIso8601String().split('T').first;
     
@@ -91,10 +146,24 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
       'plan_duration_days': planDays, // Add plan duration
     };
     try {
-      // Decide path: if OpenAI key missing or flag enabled, use server-side requests
-      final bool useRequests = AppConfig.useAiRequests || AppConfig.openAIApiKey.isEmpty;
-      // If configured to send requests, include all required request fields
-      if (useRequests) {
+      // If frontend has GEMINI key, generate client-side; otherwise, ask backend to generate from request
+      final bool hasFrontendGemini = AppConfig.geminiApiKey.isNotEmpty;
+      print('🤖 Frontend Gemini API Key available: $hasFrontendGemini');
+      print('🤖 Gemini API Key length: ${AppConfig.geminiApiKey.length}');
+      print('🤖 Gemini API Key value: "${AppConfig.geminiApiKey}"');
+      print('🤖 Gemini API Key isEmpty: ${AppConfig.geminiApiKey.isEmpty}');
+      
+      if (hasFrontendGemini) {
+        print('🤖 Using client-side Gemini generation');
+        try {
+          await _controller.createAiGeneratedPlan(payload);
+          print('✅ Client-side generation completed successfully');
+        } catch (e) {
+          print('❌ Client-side generation failed: $e');
+          rethrow;
+        }
+      } else {
+        print('🤖 Using backend generation (no frontend Gemini key)');
         int? _toInt(String s) {
           final onlyDigits = RegExp(r'\d+').allMatches(s).map((m) => m.group(0)).join();
           if (onlyDigits.isEmpty) return null;
@@ -109,24 +178,55 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
           'gender': _gender,
           'future_goal': _goalCtrl.text.trim(),
         };
-        await _controller.createAiRequest(reqPayload);
-        // Refresh lists so newly generated plans (if synchronous) or requests reflected
-        await _controller.loadData();
-      } else {
-        // App-side AI (or direct save) path
-        await _controller.createAiGeneratedPlan(payload);
+        // Prefer backend generation endpoint which creates plan records immediately
+        final generatePayload = {
+          'user_id': _controller.userId,
+          if (_controller.user != null && _controller.user!['gym_id'] != null) 'gym_id': _controller.user!['gym_id'],
+          'exercise_plan_category': payload['exercise_plan_category'],
+          'start_date': payload['start_date'],
+          'end_date': payload['end_date'],
+          if (reqPayload['age'] != null) 'age': reqPayload['age'],
+          if (reqPayload['height_cm'] != null) 'height_cm': reqPayload['height_cm'],
+          if (reqPayload['weight_kg'] != null) 'weight_kg': reqPayload['weight_kg'],
+          'gender': _gender,
+          'future_goal': _goalCtrl.text.trim(),
+          'user_level': _userLevelCtrl.text.trim(),
+          // Add these fields to help backend generate items
+          'plan_duration_days': planDays,
+          'total_workouts': 0, // Let backend calculate
+          'training_minutes': 0, // Let backend calculate
+          'items': [], // Empty array to trigger generation
+          // Add a flag to tell backend to generate items
+          'generate_items': true,
+        };
+        
+        print('🤖 Backend payload being sent: $generatePayload');
+        print('🤖 User Level being sent: "${_userLevelCtrl.text.trim()}"');
+        try {
+          await _controller.generateViaBackendAndAwait(generatePayload);
+          print('✅ Backend generation completed successfully');
+        } catch (e) {
+          print('❌ Backend generation failed: $e');
+          rethrow;
+        }
+      }
+      
+      // For client-side generation, refresh the plans list
+      if (hasFrontendGemini) {
         await _controller.loadData();
       }
       if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('AI generated plan created')),
-      );
+      
+      print('✅ AI Generate Plan - Generation completed, navigating back...');
+      _safeNavigateBack();
+      _safeShowSnackBar('AI generated plan created');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed: $e')),
-      );
+      print('❌ AI Generate Plan - Generation failed: $e');
+      _safeShowSnackBar('Failed: $e', isError: true);
+    } finally {
+      print('🔄 AI Generate Plan - Resetting loading state...');
+      _safeSetState(() => _isGenerating = false);
     }
   }
 
@@ -189,14 +289,42 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _submit,
+                  onPressed: _isGenerating ? null : _submit,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryColor,
                     foregroundColor: AppTheme.textColor,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
-                  child: const Text('Submit'),
+                  child: _isGenerating 
+                    ? const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'Generating Plan...',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      )
+                    : const Text(
+                        'Submit',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                 ),
               ),
             const SizedBox(height: 24),
@@ -298,22 +426,27 @@ class _AiGeneratePlanPageState extends State<AiGeneratePlanPage> {
       parsed = raw.isEmpty ? null : _parseJson(raw);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Invalid JSON: $e')));
+      if (_scaffoldMessenger != null) {
+        _scaffoldMessenger!.showSnackBar(SnackBar(content: Text('Invalid JSON: $e')));
+      }
       return;
     }
     if (parsed is! Map<String, dynamic>) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('JSON must be an object')));
+      if (_scaffoldMessenger != null) {
+        _scaffoldMessenger!.showSnackBar(const SnackBar(content: Text('JSON must be an object')));
+      }
       return;
     }
     try {
       await _controller.createAiGeneratedPlan(parsed);
       if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('AI generated plan created')));
+      
+      _safeNavigateBack();
+      _safeShowSnackBar('AI generated plan created');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      _safeShowSnackBar('Failed: $e', isError: true);
     }
   }
 

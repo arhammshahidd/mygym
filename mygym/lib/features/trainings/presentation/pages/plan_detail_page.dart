@@ -129,6 +129,8 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       
       print('🔍 Plan Detail - Full plan data: $full');
       print('🔍 Plan Detail - Items: ${full['items']}');
+      print('🔍 Plan Detail - Items type: ${full['items'].runtimeType}');
+      print('🔍 Plan Detail - Items length: ${full['items'] is List ? (full['items'] as List).length : 'not a list'}');
       print('🔍 Plan Detail - Exercises details: ${full['exercises_details']}');
       
       _startStr = full['start_date']?.toString() ?? _startStr;
@@ -223,7 +225,13 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       _days = List.generate(1, (_) => []);
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        try {
+          setState(() => _loading = false);
+        } catch (e) {
+          print('⚠️ Plan Detail - setState failed (widget disposed): $e');
+        }
+      }
     }
   }
 
@@ -285,28 +293,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     
     if (items.isEmpty) {
       print('🔍 Plan Detail - No items, showing empty days');
-      // Create some test data for debugging
-      print('🔍 Plan Detail - Creating test data for debugging...');
-      final testItems = [
-        {
-          'workout_name': 'Test Workout 1',
-          'sets': 3,
-          'reps': 10,
-          'weight_kg': 50,
-          'minutes': 30,
-          'exercise_types': 'Strength'
-        },
-        {
-          'workout_name': 'Test Workout 2',
-          'sets': 3,
-          'reps': 12,
-          'weight_kg': 40,
-          'minutes': 25,
-          'exercise_types': 'Cardio'
-        }
-      ];
-      print('🔍 Plan Detail - Using test items: $testItems');
-      _rebuildDays(testItems.map((e) => Map<String, dynamic>.from(e)).toList());
+      _days = List.generate(totalDays, (_) => []);
       return;
     }
 
@@ -331,7 +318,13 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       print('🔍 Plan Detail - Day ${i + 1}: ${_days[i].length} exercises');
     }
     
-    if (mounted) setState(() {});
+    if (mounted) {
+      try {
+        setState(() {});
+      } catch (e) {
+        print('⚠️ Plan Detail - setState failed (widget disposed): $e');
+      }
+    }
   }
 
   int _applyWorkoutDistributionLogicForPlanDetail(List<Map<String, dynamic>> workouts) {
@@ -354,12 +347,6 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     print('🔍 PLAN DETAIL FINAL Total workout minutes: $totalMinutes');
     print('🔍 PLAN DETAIL FINAL Number of workouts: ${workouts.length}');
     
-    // FORCE TEST: Always apply filtering if we have more than 2 workouts
-    if (workouts.length > 2) {
-      print('🔍 🚨 PLAN DETAIL FORCE TEST: More than 2 workouts detected, applying filtering regardless of minutes');
-      print('🔍 🚨 PLAN DETAIL FORCE FILTERED: Showing 2 workouts per day');
-      return 2;
-    }
     
     // Apply distribution logic
     if (totalMinutes > 80 && workouts.length > 2) {
@@ -547,8 +534,37 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     );
   }
 
+  String _formatExerciseTypes(dynamic exerciseTypes) {
+    if (exerciseTypes == null) return 'N/A';
+    
+    // If it's already a number, format it as "X types"
+    if (exerciseTypes is int) {
+      return '$exerciseTypes types';
+    }
+    
+    // If it's a string that can be parsed as a number, format it
+    if (exerciseTypes is String) {
+      final parsed = int.tryParse(exerciseTypes);
+      if (parsed != null) {
+        return '$parsed types';
+      }
+      // If it's a descriptive string like "Strength" or "Cardio", return as-is
+      return exerciseTypes;
+    }
+    
+    return exerciseTypes.toString();
+  }
+
+  String _formatWorkoutName(String rawName) {
+    if (rawName.isEmpty) return 'Exercise';
+    
+    // Capitalize first letter and return
+    return rawName.isNotEmpty ? rawName[0].toUpperCase() + rawName.substring(1) : rawName;
+  }
+
   Widget _exerciseCard(Map<String, dynamic> ex) {
-    final workoutName = (ex['workout_name'] ?? ex['exercise_name'] ?? ex['name'] ?? 'Exercise').toString();
+    final rawWorkoutName = (ex['workout_name'] ?? ex['exercise_name'] ?? ex['name'] ?? 'Exercise').toString();
+    final workoutName = _formatWorkoutName(rawWorkoutName);
     final totalExercises = ex['total_exercises'] ?? ex['total_workouts'] ?? 0;
     final sets = ex['sets'] ?? 0;
     final reps = ex['reps'] ?? 0;
@@ -568,7 +584,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text('Exercise Types', style: TextStyle(color: AppTheme.textColor, fontSize: 10)),
-              Text('${ex['exercise_types'] ?? 'N/A'}', style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
+              Text('${_formatExerciseTypes(ex['exercise_types'])}', style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 2),

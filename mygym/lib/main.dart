@@ -7,6 +7,7 @@ import 'features/profile/presentation/controllers/profile_controller.dart';
 import 'features/trainings/presentation/controllers/schedules_controller.dart';
 import 'features/trainings/presentation/controllers/plans_controller.dart';
 import 'features/food/presentation/controllers/nutrition_controller.dart';
+import 'features/stats/presentation/controllers/stats_controller.dart';
 import 'shared/widgets/main_tab_screen.dart';
 
 void main() {
@@ -70,5 +71,6 @@ class AppBinding extends Bindings {
     Get.put<SchedulesController>(SchedulesController(), permanent: true);
     Get.put<PlansController>(PlansController(), permanent: true);
     Get.put<NutritionController>(NutritionController(), permanent: true);
+    Get.put<StatsController>(StatsController(), permanent: true);
   }
 }

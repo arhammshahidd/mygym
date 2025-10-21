@@ -242,8 +242,12 @@ class _EditPlanPageState extends State<EditPlanPage> {
     try {
       if (widget.isAi) {
         await _controller.updateAiGeneratedPlan(id, payload);
+        // Refresh AI plans to show updated data
+        await _controller.refreshAiPlans();
       } else {
         await _controller.updateManualPlan(id, payload);
+        // Refresh manual plans to show updated data
+        await _controller.refreshManualPlans();
       }
       if (!mounted) return;
       Navigator.pop(context);

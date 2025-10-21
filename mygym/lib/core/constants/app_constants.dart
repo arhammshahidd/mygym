@@ -5,6 +5,10 @@ class AppConfig {
   static const String openAIApiKey = String.fromEnvironment('OPENAI_API_KEY', defaultValue: '');
   static const String openAIBaseUrl = 'https://api.openai.com/v1';
   static const String openAIModel = String.fromEnvironment('OPENAI_MODEL', defaultValue: 'gpt-4o-mini');
+  // Gemini configuration
+  static const String geminiApiKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
+  static const String geminiBaseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+  static const String geminiModel = String.fromEnvironment('GEMINI_MODEL', defaultValue: 'gemini-1.5-flash');
   
   // Local AI Nutrition System - No external API keys needed
   // Toggle to route through backend /requests first (backend does AI), else app generates and posts to /generated
