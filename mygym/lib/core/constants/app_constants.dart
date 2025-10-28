@@ -23,7 +23,7 @@ class AppConfig {
   static const String notificationsPath = '/api/appProfile'; // Keep notifications on old endpoint
   // Users endpoint not used (profile covers all)
   // Training approvals
-  static const String trainingApprovalsPath = '/api/trainingApprovals';
+  static const String trainingApprovalsPath = '/api/trainingApprovals/mobile/submit';
   // Nutrition (Food Menu)
   static const String foodMenuAssignmentsPath = '/api/foodMenu/assignments';
   static const String foodMenuAssignPath = '/api/foodMenu/assign';

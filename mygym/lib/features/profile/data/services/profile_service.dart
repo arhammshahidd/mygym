@@ -15,7 +15,7 @@ class ProfileService {
     
     try {
       print('🔐 Fetching profile from: ${AppConfig.profilePath}');
-      print('🔐 Using token: ${token.substring(0, 10)}...');
+      // Do not print token
       
       final Response response = await client.dio.get(AppConfig.profilePath);
       print('🔐 Profile response status: ${response.statusCode}');

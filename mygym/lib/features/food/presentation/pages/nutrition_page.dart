@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/models/meal_plan.dart';
 import '../controllers/nutrition_controller.dart';
+import '../../data/services/ai_nutrition_service.dart';
 
 class NutritionPage extends StatefulWidget {
   const NutritionPage({super.key});
@@ -918,18 +919,29 @@ class _AiTabState extends State<_AiTab> {
   MealPlan _convertToMealPlan(Map<String, dynamic> planDetails, Map<String, dynamic> planData) {
     print('🔍 DEBUG: _convertToMealPlan called with planDetails keys: ${planDetails.keys.toList()}');
     print('🔍 DEBUG: _convertToMealPlan called with planData keys: ${planData.keys.toList()}');
+    print('🔍 DEBUG: Full planDetails structure: $planDetails');
+    
+    // Extract plan data for use throughout the function
+    final extractedPlanData = planDetails['data'] ?? planDetails;
     
     // Check if data is already in frontend format (has 'days' key)
     if (planDetails.containsKey('days') && planDetails['days'] is List) {
       print('🔍 DEBUG: Data already in frontend format, converting days directly');
       final daysList = planDetails['days'] as List;
+      print('🔍 DEBUG: Days list length: ${daysList.length}');
+      print('🔍 DEBUG: Days list content: $daysList');
+      
       final days = <DayMeals>[];
       
       for (int i = 0; i < daysList.length; i++) {
         final dayData = daysList[i] as Map<String, dynamic>;
+        print('🔍 DEBUG: Processing day $i: ${dayData.keys.toList()}');
+        
         final breakfast = _convertMealItems(dayData['breakfast'] as List? ?? []);
         final lunch = _convertMealItems(dayData['lunch'] as List? ?? []);
         final dinner = _convertMealItems(dayData['dinner'] as List? ?? []);
+        
+        print('🔍 DEBUG: Day $i - Breakfast: ${breakfast.length}, Lunch: ${lunch.length}, Dinner: ${dinner.length}');
         
         days.add(DayMeals(
           dayNumber: i + 1,
@@ -954,6 +966,10 @@ class _AiTabState extends State<_AiTab> {
     
     // Fallback to original logic for backend format
     print('🔍 DEBUG: Data in backend format, using original conversion logic');
+    print('🔍 DEBUG: planDetails structure: $planDetails');
+    
+    // Check if we have daily_plans or items
+    print('🔍 DEBUG: Using extractedPlanData section: ${extractedPlanData.keys.toList()}');
     
     // Normalize helpers
     String _toDateOnly(dynamic v) {
@@ -968,17 +984,66 @@ class _AiTabState extends State<_AiTab> {
 
     // Extract items from nested data if present, else root
     final data = (planDetails['data'] is Map) ? Map<String, dynamic>.from(planDetails['data']) : planDetails;
-    final items = (data['items'] is List)
-        ? List<Map<String, dynamic>>.from(data['items'].map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)))
-        : (planDetails['items'] is List)
-            ? List<Map<String, dynamic>>.from((planDetails['items'] as List).map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)))
-            : <Map<String, dynamic>>[];
+    print('🔍 DEBUG: Data keys: ${data.keys.toList()}');
+    print('🔍 DEBUG: Data structure: $data');
+    
+    // Check for different possible item locations
+    List<Map<String, dynamic>> items = [];
+    
+    if (data['items'] is List) {
+      print('🔍 DEBUG: Found items in data.items with ${(data['items'] as List).length} entries');
+      items = List<Map<String, dynamic>>.from(data['items'].map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)));
+    } else if (planDetails['items'] is List) {
+      print('🔍 DEBUG: Found items in planDetails.items with ${(planDetails['items'] as List).length} entries');
+      items = List<Map<String, dynamic>>.from((planDetails['items'] as List).map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)));
+    } else if (data['daily_plans'] is List) {
+      print('🔍 DEBUG: Found daily_plans with ${(data['daily_plans'] as List).length} entries');
+      for (final dp in data['daily_plans']) {
+        if (dp is Map && dp['items'] is List) {
+          print('🔍 DEBUG: Daily plan has ${(dp['items'] as List).length} items');
+          items.addAll((dp['items'] as List).map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)));
+        }
+      }
+    } else if (data['food_items'] is List) {
+      print('🔍 DEBUG: Found food_items with ${(data['food_items'] as List).length} entries');
+      items = List<Map<String, dynamic>>.from(data['food_items'].map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)));
+    } else {
+      print('⚠️ DEBUG: No items found in any expected location');
+      print('⚠️ DEBUG: Available keys in data: ${data.keys.toList()}');
+      
+      // Try to find any list that might contain meal items
+      for (final key in data.keys) {
+        final value = data[key];
+        if (value is List && value.isNotEmpty) {
+          print('🔍 DEBUG: Found list under key "$key" with ${value.length} items');
+          if (value.first is Map) {
+            final firstItem = value.first as Map<String, dynamic>;
+            print('🔍 DEBUG: First item in "$key": ${firstItem.keys.toList()}');
+            if (firstItem.containsKey('food_item_name') || firstItem.containsKey('meal_type') || firstItem.containsKey('name')) {
+              print('🔍 DEBUG: Key "$key" appears to contain meal items, using it');
+              items = List<Map<String, dynamic>>.from(value.map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)));
+              break;
+            }
+          }
+        }
+      }
+    }
 
-    print('🔍 DEBUG: Found ${items.length} items in backend format');
+    print('🔍 DEBUG: Total items collected: ${items.length}');
+    if (items.isNotEmpty) {
+      print('🔍 DEBUG: First item structure: ${items.first.keys.toList()}');
+      print('🔍 DEBUG: First item: ${items.first}');
+    }
 
     // Group items by date and meal type (Breakfast/Lunch/Dinner)
     final Map<String, Map<String, List<MealItem>>> groupedItems = {};
-    for (final item in items) {
+    print('🔍 DEBUG: Starting to group ${items.length} items');
+    
+    // Track all unique dates found in items
+    final Set<String> allDates = {};
+    
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i];
       final date = _toDateOnly(item['date']);
       final mealType = (item['meal_type']?.toString() ?? 'Breakfast');
       final foodName = item['food_item_name']?.toString() ?? 'Food';
@@ -988,57 +1053,170 @@ class _AiTabState extends State<_AiTab> {
       final fats = (item['fats'] is num) ? (item['fats'] as num).toInt() : int.tryParse('${item['fats'] ?? item['fat']}') ?? 0;
       final grams = (item['grams'] is num) ? (item['grams'] as num).toInt() : int.tryParse('${item['grams']}') ?? 0;
 
+      print('🔍 DEBUG: Item $i - Date: $date, Meal: $mealType, Food: $foodName');
+      print('🔍 DEBUG: Item $i - Calories: $calories, Protein: $protein, Carbs: $carbs, Fats: $fats, Grams: $grams');
+
+      // Track this date
+      allDates.add(date);
+
+      // Normalize meal type to standard format
+      String normalizedMealType = 'Breakfast';
+      if (mealType.toLowerCase().contains('lunch')) {
+        normalizedMealType = 'Lunch';
+      } else if (mealType.toLowerCase().contains('dinner')) {
+        normalizedMealType = 'Dinner';
+      }
+
       groupedItems.putIfAbsent(date, () => {'Breakfast': [], 'Lunch': [], 'Dinner': []});
-      groupedItems[date]![mealType]!.add(MealItem(
+      groupedItems[date]![normalizedMealType]!.add(MealItem(
         name: foodName,
         calories: calories,
         proteinGrams: protein,
         carbsGrams: carbs,
         fatGrams: fats,
         grams: grams,
+        notes: (item['notes'] ?? '').toString(),
       ));
     }
+    
+    print('🔍 DEBUG: Found ${allDates.length} unique dates in items: ${allDates.toList()..sort()}');
+    
+    print('🔍 DEBUG: Grouped items into ${groupedItems.length} dates: ${groupedItems.keys.toList()}');
 
-    // Determine full expected date range
+    // Determine full expected date range - use ALL available data sources
     List<String> expectedDates = [];
     try {
-      final sd = data['start_date'] ?? planData['start_date'];
-      final ed = data['end_date'] ?? planData['end_date'];
+      // Strategy: Use the largest set of dates available
+      final sd = data['start_date'] ?? extractedPlanData['start_date'];
+      final ed = data['end_date'] ?? extractedPlanData['end_date'];
+      final totalDays = data['total_days'] ?? extractedPlanData['total_days'];
+      
+      print('🔍 DEBUG: Date sources - Start: $sd, End: $ed, Total Days: $totalDays, Items dates: ${allDates.length}');
+      
+      // Calculate dates from start/end if available
+      List<String> calculatedDates = [];
       if (sd != null && ed != null) {
         final start = DateTime.parse(sd.toString());
         final end = DateTime.parse(ed.toString());
         int days = end.difference(start).inDays;
-        if (days <= 0) days = (data['total_days'] is num) ? (data['total_days'] as num).toInt() : 1;
+        if (days <= 0) days = (totalDays is num) ? (totalDays as num).toInt() : 1;
+        
+        print('🔍 DEBUG: Calculated days from date range: $days');
+        
         for (int i = 0; i < days; i++) {
-          expectedDates.add(_toDateOnly(start.add(Duration(days: i)).toIso8601String()));
+          calculatedDates.add(_toDateOnly(start.add(Duration(days: i)).toIso8601String()));
         }
+        } else if (totalDays != null) {
+          // If no date range but we have total days, create dates based on total days
+          final startDate = DateTime.now();
+          final actualTotalDays = totalDays is num ? (totalDays as num).toInt() : 90; // Use actual total_days
+          print('🔍 DEBUG: Using total_days: $actualTotalDays, starting from: $startDate');
+          
+          for (int i = 0; i < actualTotalDays; i++) {
+            calculatedDates.add(_toDateOnly(startDate.add(Duration(days: i)).toIso8601String()));
+          }
+        }
+      
+      // Use the larger set of dates (calculated vs actual items)
+      if (calculatedDates.length >= allDates.length) {
+        expectedDates = calculatedDates;
+        print('🔍 DEBUG: Using calculated dates: ${expectedDates.length} days');
+      } else {
+        expectedDates = allDates.toList()..sort();
+        print('🔍 DEBUG: Using actual item dates: ${expectedDates.length} days');
       }
-    } catch (_) {}
+      
+      print('🔍 DEBUG: Final expected dates count: ${expectedDates.length}');
+      if (expectedDates.isNotEmpty) {
+        print('🔍 DEBUG: First few expected dates: ${expectedDates.take(5).toList()}');
+        print('🔍 DEBUG: Last few expected dates: ${expectedDates.length > 5 ? expectedDates.skip(expectedDates.length - 5).toList() : expectedDates}');
+      }
+    } catch (e) {
+      print('⚠️ DEBUG: Error calculating expected dates: $e');
+      // Fallback to actual dates from items
+      expectedDates = allDates.toList()..sort();
+    }
 
-    // Build DayMeals in chronological order, filling missing dates with empty meals
+    // Collect all meal items for distribution across all days
+    final allMealItems = <String, List<MealItem>>{
+      'Breakfast': [],
+      'Lunch': [],
+      'Dinner': [],
+    };
+    
+    // Collect all meal items from grouped data
+    for (final dayData in groupedItems.values) {
+      for (final mealType in ['Breakfast', 'Lunch', 'Dinner']) {
+        final items = dayData[mealType] ?? <MealItem>[];
+        allMealItems[mealType]!.addAll(items);
+      }
+    }
+    
+    print('🔍 DEBUG: Collected meal items - Breakfast: ${allMealItems['Breakfast']!.length}, Lunch: ${allMealItems['Lunch']!.length}, Dinner: ${allMealItems['Dinner']!.length}');
+    
+    // Build DayMeals with distributed meals across all expected days
     final List<String> sortedDates = expectedDates.isNotEmpty
         ? expectedDates
         : (groupedItems.keys.toList()..sort());
 
+    print('🔍 DEBUG: Building days from ${sortedDates.length} dates');
+    print('🔍 DEBUG: First 5 dates: ${sortedDates.take(5).toList()}');
+    print('🔍 DEBUG: Last 5 dates: ${sortedDates.length > 5 ? sortedDates.skip(sortedDates.length - 5).toList() : sortedDates}');
+
     final days = <DayMeals>[];
     int dayNumber = 1;
     for (final date in sortedDates) {
-      final dayData = groupedItems[date] ?? {'Breakfast': <MealItem>[], 'Lunch': <MealItem>[], 'Dinner': <MealItem>[]};
+      // Check if this date has actual meal data
+      final dayData = groupedItems[date];
+      List<MealItem> breakfastItems;
+      List<MealItem> lunchItems;
+      List<MealItem> dinnerItems;
+      
+      if (dayData != null) {
+        // Use actual meal data for this date
+        breakfastItems = List<MealItem>.from(dayData['Breakfast'] ?? <MealItem>[]);
+        lunchItems = List<MealItem>.from(dayData['Lunch'] ?? <MealItem>[]);
+        dinnerItems = List<MealItem>.from(dayData['Dinner'] ?? <MealItem>[]);
+      } else {
+        // Distribute meals using rotation strategy for missing dates
+        breakfastItems = [];
+        lunchItems = [];
+        dinnerItems = [];
+        
+        if (allMealItems['Breakfast']!.isNotEmpty) {
+          final breakfastIndex = (dayNumber - 1) % allMealItems['Breakfast']!.length;
+          breakfastItems.add(allMealItems['Breakfast']![breakfastIndex]);
+        }
+        
+        if (allMealItems['Lunch']!.isNotEmpty) {
+          final lunchIndex = (dayNumber - 1) % allMealItems['Lunch']!.length;
+          lunchItems.add(allMealItems['Lunch']![lunchIndex]);
+        }
+        
+        if (allMealItems['Dinner']!.isNotEmpty) {
+          final dinnerIndex = (dayNumber - 1) % allMealItems['Dinner']!.length;
+          dinnerItems.add(allMealItems['Dinner']![dinnerIndex]);
+        }
+      }
+      
+      print('🔍 DEBUG: Day $dayNumber ($date) - Breakfast: ${breakfastItems.length}, Lunch: ${lunchItems.length}, Dinner: ${dinnerItems.length}');
+      
       days.add(DayMeals(
         dayNumber: dayNumber++,
-        breakfast: List<MealItem>.from(dayData['Breakfast'] ?? <MealItem>[]),
-        lunch: List<MealItem>.from(dayData['Lunch'] ?? <MealItem>[]),
-        dinner: List<MealItem>.from(dayData['Dinner'] ?? <MealItem>[]),
+        breakfast: breakfastItems,
+        lunch: lunchItems,
+        dinner: dinnerItems,
       ));
     }
+    
+    print('🔍 DEBUG: Created ${days.length} total days (including empty days)');
+    print('🔍 DEBUG: Total meal items processed: ${items.length}');
+    print('🔍 DEBUG: Unique dates found: ${allDates.length}');
+    print('🔍 DEBUG: Days with actual meal data: ${groupedItems.length}');
 
     if (days.isEmpty) {
-      days.add(DayMeals(
-        dayNumber: 1,
-        breakfast: [],
-        lunch: [],
-        dinner: [],
-      ));
+      print('⚠️ DEBUG: No days created - returning empty plan');
+      // Don't create dummy days - return empty plan
     }
 
     return MealPlan(
@@ -1063,6 +1241,7 @@ class _AiTabState extends State<_AiTab> {
         carbsGrams: (itemMap['carbs'] is num) ? (itemMap['carbs'] as num).toInt() : int.tryParse('${itemMap['carbs']}') ?? 0,
         fatGrams: (itemMap['fats'] is num) ? (itemMap['fats'] as num).toInt() : int.tryParse('${itemMap['fats']}') ?? 0,
         grams: (itemMap['grams'] is num) ? (itemMap['grams'] as num).toInt() : int.tryParse('${itemMap['grams']}') ?? 0,
+        notes: (itemMap['notes'] ?? '').toString(),
       );
     }).toList();
   }
@@ -1139,11 +1318,11 @@ class _AiTabState extends State<_AiTab> {
             ),
             const SizedBox(height: 8),
             Text('Plan ID: $planId', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            Text('Total Days: ${planData['total_days']?.toString() ?? 'N/A'}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Text('Total Days: ${planData['days']?.length ?? 'N/A'}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 8),
             // Calculate per-day values
             Builder(builder: (context) {
-              final totalDays = int.tryParse(planData['total_days']?.toString() ?? '1') ?? 1;
+              final totalDays = planData['days']?.length ?? 1; // Use actual days count
               final dailyCalories = (double.tryParse(totalCalories) ?? 0) / totalDays;
               final dailyProteins = (double.tryParse(totalProteins) ?? 0) / totalDays;
               final dailyFats = (double.tryParse(totalFats) ?? 0) / totalDays;
@@ -1613,10 +1792,10 @@ class AiPlanDetailsPage extends StatelessWidget {
                   final int cols = width ~/ 180 >= 2 ? width ~/ 180 : 2;
                   return GridView.builder(
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: cols.clamp(2, 3),
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 0.25, // Significantly increased height to prevent overflow
+                      crossAxisCount: 2, // 2 columns for better space utilization
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 0.4, // Decreased aspect ratio for shorter boxes
                     ),
                     itemCount: plan.days.length,
                     itemBuilder: (_, i) => AiDetailedDayCard(day: plan.days[i], color: color),
@@ -1635,75 +1814,109 @@ class AiDetailedDayCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget meal(String title, List<MealItem> items) {
+    Widget meal(String title, List<MealItem> items, IconData icon) {
       return Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: color.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
-            child: Text(title.toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
-          ),
-          const SizedBox(height: 6),
-          // Remove Expanded and ListView to show all content without scrolling
-          ...items.map((it) => Container(
             margin: const EdgeInsets.only(bottom: 4),
-            padding: const EdgeInsets.all(6),
+        padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: color.withOpacity(0.2)),
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(it.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11, color: Colors.black87)),
-              const SizedBox(height: 2),
-              Row(
+          color: const Color(0xFFF58220), // Vibrant orange like Schedule Details
+          borderRadius: BorderRadius.circular(6), // Small rounded corners
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: Text('${it.grams.toInt()}g', style: const TextStyle(fontSize: 9, color: Colors.grey)),
-                  ),
-                  Expanded(
-                    child: Text('${it.calories.toInt()}cal', style: const TextStyle(fontSize: 9, color: Colors.orange, fontWeight: FontWeight.bold)),
-                  ),
-                ],
+            // Meal type header
+            Text(
+              title.toUpperCase(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 2),
+            if (items.isNotEmpty) ...[
+              // Food item name
+              Text(
+                items.first.name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.normal,
+                ),
               ),
               const SizedBox(height: 1),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text('${it.proteinGrams.toInt()}g protein', style: const TextStyle(fontSize: 8, color: Colors.blue)),
-                  ),
-                  Expanded(
-                    child: Text('${it.fatGrams.toInt()}g fats', style: const TextStyle(fontSize: 8, color: Colors.red)),
-                  ),
-                  Expanded(
-                    child: Text('${it.carbsGrams.toInt()}g carbs', style: const TextStyle(fontSize: 8, color: Colors.green)),
-                  ),
-                ],
+              // Nutritional details in Schedule Details format
+              Text(
+                '${items.first.calories} cal ${items.first.proteinGrams}g protein ${items.first.carbsGrams}g carbs ${items.first.fatGrams}g fats',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.normal,
+                ),
               ),
-            ]),
-          )).toList(),
-        ]),
+            ] else ...[
+              Text(
+                'No items',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
       );
     }
 
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('DAY ${day.dayNumber}', style: TextStyle(color: color, fontWeight: FontWeight.w800)),
+    return Container(
+      margin: const EdgeInsets.all(4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Day header - Light orange/yellowish text on dark background
+          Text(
+            'DAY ${day.dayNumber}',
+            style: const TextStyle(
+              color: Color(0xFFFFD700), // Light orange/yellowish text
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Meals - Orange cards directly on dark background
+          Column(
+            children: [
+              meal('Breakfast', day.breakfast, Icons.wb_sunny),
           const SizedBox(height: 4),
-          // Remove Expanded to allow content to expand naturally
-          Column(children: [
-            meal('Breakfast', day.breakfast),
+              meal('Lunch', day.lunch, Icons.wb_sunny_outlined),
             const SizedBox(height: 4),
-            meal('Lunch', day.lunch),
-            const SizedBox(height: 4),
-            meal('Dinner', day.dinner),
-          ]),
-        ]),
+              meal('Dinner', day.dinner, Icons.nights_stay),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNutrientChip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.2), // Semi-transparent white background
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withOpacity(0.3)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white, // White text
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -2050,13 +2263,151 @@ class _GenerateAiPlanPageState extends State<GenerateAiPlanPage> {
                             // Small delay to ensure navigation completes
                             await Future.delayed(const Duration(milliseconds: 100));
                             
-                            // Start AI generation after navigation is complete
+      // Show progress dialog while generating
+      if (mounted && context.mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              backgroundColor: AppTheme.cardBackgroundColor,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+                    strokeWidth: 3,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Generating Your Meal Plan...',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.textColor,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'This may take up to 90 seconds',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.textColor.withOpacity(0.7),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      }
+      
+      // Start AI generation after showing progress dialog
                             try {
                               await c.createGeneratedPlan(form: form);
+        
+        // Close progress dialog and show success
+        if (mounted && context.mounted) {
+          Navigator.of(context).pop(); // Close progress dialog
+          
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Meal plan generated successfully!'),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } on GeminiAIException catch (e) {
+        print('❌ Gemini AI Exception in form: ${e.errorCode} - ${e.errorMessage}');
+        
+        // Close progress dialog
+        if (mounted && context.mounted) {
+          Navigator.of(context).pop(); // Close progress dialog
+        }
+        
+        // Handle different error types
+        if (e.isServiceUnavailable) {
+          _showServiceUnavailableDialog(e.errorMessage, e.retryAfter);
+        } else {
+          _showErrorSnackBar(e.errorMessage);
+        }
                             } catch (e) {
-                              print('Error generating plan: $e');
-                              // Show error message if needed
-                            }
+        print('❌ Error generating plan: $e');
+        
+        // Close progress dialog
+        if (mounted && context.mounted) {
+          Navigator.of(context).pop(); // Close progress dialog
+        }
+        
+        _showErrorSnackBar('Network error. Please check your connection.');
+      } finally {
+        // Ensure progress dialog is always dismissed
+        if (mounted && context.mounted) {
+          try {
+            Navigator.of(context).pop();
+          } catch (_) {
+            // Dialog might already be dismissed, ignore error
+          }
+        }
+      }
+    }
+  }
+
+  /// Show service unavailable dialog with retry information
+  void _showServiceUnavailableDialog(String message, int? retryAfter) {
+    final retryMinutes = retryAfter != null ? (retryAfter / 60).ceil() : 5;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Service Temporarily Unavailable'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message),
+            const SizedBox(height: 12),
+            Text(
+              'Please try again in $retryMinutes minutes.',
+              style: const TextStyle(
+                fontWeight: FontWeight.w500,
+                color: Colors.orange,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show error snackbar with user-friendly message
+  void _showErrorSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
                           }
   }
 }

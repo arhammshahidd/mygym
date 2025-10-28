@@ -33,6 +33,7 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.darkTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
+      debugShowCheckedModeBanner: false,
       initialBinding: AppBinding(),
       initialRoute: '/',
       getPages: [

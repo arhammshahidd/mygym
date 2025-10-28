@@ -90,39 +90,14 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       if (widget.isAi) {
         full = await _plansController.getAiGeneratedPlan(id);
       } else {
-        // Check if this plan is from assignments (Schedules tab) or manual plans (Plans tab)
-        // Only treat as assignment if assignment_id is explicitly set and not null/empty
+        // Only treat as assignment if assignment_id is explicitly present.
         final assignmentId = widget.plan['assignment_id'];
-        final webPlanId = widget.plan['web_plan_id'];
-        
         if (assignmentId != null && assignmentId.toString().trim().isNotEmpty && assignmentId != 0) {
-          print('🔍 Plan Detail - This is an assignment (assignment_id: $assignmentId), fetching assignment details');
+          print('🔍 Plan Detail - Detected assignment_id=$assignmentId → loading assignment details');
           full = await _schedulesController.getAssignmentDetails(assignmentId);
-        } else if (webPlanId != null && webPlanId.toString().trim().isNotEmpty && webPlanId != 0) {
-          // This might be a plan from assignments that's being viewed from Plans tab
-          print('🔍 Plan Detail - Plan has web_plan_id ($webPlanId), checking if it exists in assignments');
-          try {
-            // Try to find this plan in assignments first
-            final assignments = _schedulesController.assignments;
-            final matchingAssignment = assignments.firstWhereOrNull(
-              (assignment) => assignment['web_plan_id']?.toString() == webPlanId.toString()
-            );
-            
-            if (matchingAssignment != null) {
-              print('🔍 Plan Detail - Found matching assignment, using assignment data');
-              full = Map<String, dynamic>.from(matchingAssignment);
-            } else {
-              print('🔍 Plan Detail - No matching assignment found, treating as manual plan');
-              // Fall through to manual plan logic
-              full = await _handleManualPlan(id);
-            }
-          } catch (e) {
-            print('❌ Plan Detail - Error checking assignments: $e, treating as manual plan');
-            // Fall through to manual plan logic
-            full = await _handleManualPlan(id);
-          }
         } else {
-          // This is definitely a manual plan
+          // Manual plan: always fetch manual plan details (or use inline data)
+          print('🔍 Plan Detail - Treating as MANUAL plan (no assignment_id).');
           full = await _handleManualPlan(id);
         }
       }
@@ -347,17 +322,21 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     print('🔍 PLAN DETAIL FINAL Total workout minutes: $totalMinutes');
     print('🔍 PLAN DETAIL FINAL Number of workouts: ${workouts.length}');
     
-    
-    // Apply distribution logic
-    if (totalMinutes > 80 && workouts.length > 2) {
-      // If total minutes > 80 and we have more than 2 workouts, show only 2 workouts
-      print('🔍 PLAN DETAIL ✅ APPLYING LOGIC: Total minutes ($totalMinutes) > 80, showing only 2 workouts');
+    // Apply same limiting logic for both Manual and Assigned Plans
+    // Per-day pair rule: evaluate consecutive pair by average pair for this page
+    if (workouts.length >= 2) {
+      final int m1 = int.tryParse(workouts[0]['minutes']?.toString() ?? workouts[0]['training_minutes']?.toString() ?? '0') ?? 0;
+      final int m2 = int.tryParse(workouts[1]['minutes']?.toString() ?? workouts[1]['training_minutes']?.toString() ?? '0') ?? 0;
+      final int combined = m1 + m2;
+      if (combined > 80) {
+        final planType = widget.isAi ? 'Assigned/AI' : 'Manual';
+        print('🔍 PLAN DETAIL ✅ LIMIT (combined > 80) [$planType]: 1 workout');
+        return 1;
+      }
+      print('🔍 PLAN DETAIL ✅ LIMIT (combined <= 80): 2 workouts');
       return 2;
-    } else {
-      // If total minutes <= 80 or we have 2 or fewer workouts, show all workouts
-      print('🔍 PLAN DETAIL ✅ APPLYING LOGIC: Total minutes ($totalMinutes) <= 80 or <= 2 workouts, showing all ${workouts.length} workouts');
-      return workouts.length;
     }
+    return workouts.isEmpty ? 0 : 1;
   }
 
   void _distributeMultipleWorkoutsPerDay(List<Map<String, dynamic>> items, int totalDays, double avgMinutes) {
@@ -377,17 +356,17 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     final int actualWorkoutsPerDay = workoutsPerDay > itemsList.length ? itemsList.length : workoutsPerDay;
     print('🔍 Plan Detail - Actual workouts per day: $actualWorkoutsPerDay (limited by ${itemsList.length} available exercises)');
 
-    // Distribute exercises across days, cycling through exercises to fill all days
-    int exerciseIndex = 0;
+    // Distribute workouts across days, cycling through workouts to fill all days
+    int workoutIndex = 0;
     for (int day = 0; day < totalDays; day++) {
       for (int i = 0; i < actualWorkoutsPerDay; i++) {
         if (itemsList.isNotEmpty) {
-          print('🔍 Plan Detail - Day $day, Workout $i: Adding item at index $exerciseIndex');
-          _days[day].add(Map<String, dynamic>.from(itemsList[exerciseIndex % itemsList.length]));
-          exerciseIndex++;
+          print('🔍 Plan Detail - Day $day, Workout $i: Adding workout at index $workoutIndex');
+          _days[day].add(Map<String, dynamic>.from(itemsList[workoutIndex % itemsList.length]));
+          workoutIndex++;
         }
       }
-      print('🔍 Plan Detail - Day $day now has ${_days[day].length} exercises');
+      print('🔍 Plan Detail - Day $day now has ${_days[day].length} workouts');
     }
   }
 
@@ -399,13 +378,17 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     // Don't shuffle - keep original order for consistency
     final itemsList = List<Map<String, dynamic>>.from(items);
 
-    // Build per-day targets: start with 1 each, then distribute remaining up to 3
+    // Apply workout distribution logic to determine workouts per day
+    final int workoutsPerDay = _applyWorkoutDistributionLogicForPlanDetail(itemsList);
+    print('🔍 Plan Detail - Workouts per day: $workoutsPerDay');
+
+    // Build per-day targets: start with 1 each, then distribute remaining up to workoutsPerDay
     final counts = List<int>.filled(totalDays, 1);
     if (totalItems >= totalDays) {
       int remaining = totalItems - totalDays;
       int idx = 0;
       while (remaining > 0) {
-        if (counts[idx] < 3) {
+        if (counts[idx] < workoutsPerDay) {
           counts[idx]++;
           remaining--;
         }
@@ -418,16 +401,16 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     int cursor = 0;
     for (int day = 0; day < totalDays; day++) {
       final target = counts[day];
-      print('🔍 Plan Detail - Day $day target: $target exercises');
+      print('🔍 Plan Detail - Day $day target: $target workouts');
       for (int i = 0; i < target; i++) {
         if (itemsList.isNotEmpty) {
           final src = itemsList[cursor % totalItems];
-          print('🔍 Plan Detail - Day $day, Exercise $i: Adding item at cursor ${cursor % totalItems}');
+          print('🔍 Plan Detail - Day $day, Workout $i: Adding workout at cursor ${cursor % totalItems}');
         _days[day].add(Map<String, dynamic>.from(src));
           cursor++;
         }
       }
-      print('🔍 Plan Detail - Day $day now has ${_days[day].length} exercises');
+      print('🔍 Plan Detail - Day $day now has ${_days[day].length} workouts');
     }
   }
 
@@ -614,7 +597,7 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text('Weight/kg', style: TextStyle(color: AppTheme.textColor, fontSize: 10)),
-              Text('$weight', style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
+              Text(_formatWeightDisplay(ex), style: const TextStyle(color: AppTheme.textColor, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           ),
           Row(
@@ -627,6 +610,41 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
         ],
       ),
     );
+  }
+
+  String _formatWeightDisplay(Map<String, dynamic> item) {
+    // Safely convert to double, handling both string and numeric inputs
+    final weightMin = _safeParseDouble(item['weight_min_kg']);
+    final weightMax = _safeParseDouble(item['weight_max_kg']);
+    final weight = _safeParseDouble(item['weight_kg']);
+    
+    // If we have min and max, show range
+    if (weightMin != null && weightMax != null) {
+      return '${weightMin.toStringAsFixed(0)}-${weightMax.toStringAsFixed(0)}';
+    }
+    // If we only have min or max, show that with a dash
+    else if (weightMin != null) {
+      return '${weightMin.toStringAsFixed(0)}+';
+    }
+    else if (weightMax != null) {
+      return 'up to ${weightMax.toStringAsFixed(0)}';
+    }
+    // Fallback to single weight value
+    else if (weight != null) {
+      return '${weight.toStringAsFixed(0)}';
+    }
+    
+    return 'N/A';
+  }
+
+  double? _safeParseDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
   }
 
   Widget _kv(String k, String v) {

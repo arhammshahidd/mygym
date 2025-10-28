@@ -218,7 +218,10 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Widget _buildTrainingStatsOverview() {
-    final stats = _statsController.trainingStats.value!;
+    final stats = _statsController.trainingStats.value;
+    if (stats == null) {
+      return const SizedBox.shrink();
+    }
     
     return Card(
       color: AppTheme.cardBackgroundColor,
@@ -513,7 +516,7 @@ class _StatsPageState extends State<StatsPage> {
                 Expanded(
                   child: _buildStatDetail(
                     'Weight Lifted',
-                    '${(weeklyProgress['total_weight_lifted'] as double).toStringAsFixed(1)} kg',
+                    '${((weeklyProgress['total_weight_lifted'] as double?) ?? 0.0).toStringAsFixed(1)} kg',
                     Icons.fitness_center,
                   ),
                 ),
@@ -613,7 +616,7 @@ class _StatsPageState extends State<StatsPage> {
                 Expanded(
                   child: _buildStatDetail(
                     'Daily Average',
-                    '${(monthlyProgress['daily_average'] as double).toStringAsFixed(1)}',
+                    '${((monthlyProgress['daily_average'] as double?) ?? 0.0).toStringAsFixed(1)}',
                     Icons.trending_up,
                   ),
                 ),
@@ -639,7 +642,7 @@ class _StatsPageState extends State<StatsPage> {
                 Expanded(
                   child: _buildStatDetail(
                     'Weight Lifted',
-                    '${(monthlyProgress['total_weight_lifted'] as double).toStringAsFixed(1)} kg',
+                    '${((monthlyProgress['total_weight_lifted'] as double?) ?? 0.0).toStringAsFixed(1)} kg',
                     Icons.fitness_center,
                   ),
                 ),

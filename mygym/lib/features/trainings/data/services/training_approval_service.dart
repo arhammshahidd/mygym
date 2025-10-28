@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../shared/services/api_client.dart';
@@ -14,25 +15,89 @@ class TrainingApprovalService {
     if (token == null || token.isEmpty) throw Exception('No authentication token');
     final dio = ApiClient(authToken: token).dio;
 
+    // Add gym_id to payload if not present (required by backend)
+    final enhancedPayload = Map<String, dynamic>.from(payload);
+    if (!enhancedPayload.containsKey('gym_id')) {
+      // Try to get gym_id from user_id (assuming gym_id = 11 for now)
+      // TODO: Get actual gym_id from user profile or JWT token
+      enhancedPayload['gym_id'] = 11; // Default gym_id
+      print('🔍 TrainingApprovalService - Added default gym_id: 11');
+    }
+
     final body = {
       'source': source,
-      'data': payload,
+      'data': enhancedPayload,
     };
-
-    print('🔍 TrainingApprovalService - sendForApproval called');
-    print('🔍 TrainingApprovalService - Source: $source');
-    print('🔍 TrainingApprovalService - Payload: $payload');
-    print('🔍 TrainingApprovalService - Body: $body');
-    print('🔍 TrainingApprovalService - Endpoint: ${AppConfig.trainingApprovalsPath}');
-
-    final Response res = await dio.post(AppConfig.trainingApprovalsPath, data: body);
-    print('🔍 TrainingApprovalService - Response status: ${res.statusCode}');
-    print('🔍 TrainingApprovalService - Response data: ${res.data}');
     
-    if (res.statusCode == 200 || res.statusCode == 201) {
-      return Map<String, dynamic>.from(res.data);
+    // For AI plans, add required fields at root level if they exist in the payload
+    if ((source == 'ai' || source == 'manual') && enhancedPayload.containsKey('start_date')) {
+      body['start_date'] = enhancedPayload['start_date'];
+      body['end_date'] = enhancedPayload['end_date'];
+      
+      // Add other potentially required fields
+      if (enhancedPayload.containsKey('workout_name')) {
+        body['workout_name'] = enhancedPayload['workout_name'];
+      }
+      if (enhancedPayload.containsKey('category')) {
+        body['category'] = enhancedPayload['category'];
+      }
+      if (enhancedPayload.containsKey('plan_id')) {
+        body['plan_id'] = enhancedPayload['plan_id'];
+      }
+      if (enhancedPayload.containsKey('user_id')) {
+        body['user_id'] = enhancedPayload['user_id'];
+      }
+      if (enhancedPayload.containsKey('plan_type')) {
+        body['plan_type'] = enhancedPayload['plan_type'];
+      }
+      if (enhancedPayload.containsKey('minutes')) body['minutes'] = enhancedPayload['minutes'];
+      if (enhancedPayload.containsKey('total_exercises')) body['total_exercises'] = enhancedPayload['total_exercises'];
+      if (enhancedPayload.containsKey('total_days')) body['total_days'] = enhancedPayload['total_days'];
+      if (enhancedPayload.containsKey('user_level')) body['user_level'] = enhancedPayload['user_level'];
+      if (enhancedPayload.containsKey('items')) body['items'] = enhancedPayload['items'];
+      if (enhancedPayload.containsKey('exercises_details')) body['exercises_details'] = enhancedPayload['exercises_details'];
+      
+    print('🔍 TrainingApprovalService - Added required fields to root level');
     }
-    throw Exception('Failed to send plan for approval: ${res.statusMessage}');
+
+    print('🔍 TrainingApprovalService - Enhanced Payload prepared');
+    print('🔍 TrainingApprovalService - Endpoint: ${AppConfig.trainingApprovalsPath}');
+    print('🔍 TrainingApprovalService - Base URL: ${dio.options.baseUrl}');
+    
+    // Try to decode JWT token to check roles
+    try {
+      // Intentionally skip decoding/printing JWT contents to avoid sensitive data leakage
+      final parts = token.split('.');
+      if (parts.length == 3) {
+        print('🔍 TrainingApprovalService - JWT detected (not printing contents)');
+      }
+    } catch (e) {
+      print('🔍 TrainingApprovalService - Could not decode JWT: $e');
+    }
+
+    try {
+      final Response res = await dio.post(AppConfig.trainingApprovalsPath, data: body);
+      print('🔍 TrainingApprovalService - Response status: ${res.statusCode}');
+      print('🔍 TrainingApprovalService - Response data: ${res.data}');
+      
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return Map<String, dynamic>.from(res.data);
+      }
+      throw Exception('Failed to send plan for approval: ${res.statusMessage}');
+    } on DioException catch (e) {
+      print('❌ TrainingApprovalService - DioException occurred:');
+      print('❌   - Status Code: ${e.response?.statusCode}');
+      print('❌   - Response Data: ${e.response?.data}');
+      print('❌   - Response Headers: ${e.response?.headers}');
+      print('❌   - Request Data: ${e.requestOptions.data}');
+      // Redact sensitive headers
+      final redactedHeaders = Map<String, dynamic>.from(e.requestOptions.headers);
+      if (redactedHeaders.containsKey('Authorization')) {
+        redactedHeaders['Authorization'] = 'REDACTED';
+      }
+      print('❌   - Request Headers: $redactedHeaders');
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> sendPlanForApproval(Map<String, dynamic> payload) async {

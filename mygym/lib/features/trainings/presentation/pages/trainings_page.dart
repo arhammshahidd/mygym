@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -57,8 +58,10 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     await _plansController.loadPlansData();
     
     // Refresh data to ensure we have the latest information
+    if (mounted) {
     await _schedulesController.refreshSchedules();
     await _plansController.refreshPlans();
+    }
   }
 
   @override
@@ -111,7 +114,9 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
       
       return RefreshIndicator(
         onRefresh: () async {
+          if (mounted) {
           await _schedulesController.refreshSchedules();
+          }
         },
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -140,7 +145,9 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     return RefreshIndicator(
       onRefresh: () async {
         print('🔄 Refreshing Plans tab...');
+        if (mounted) {
         await _plansController.refreshPlans();
+        }
       },
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -189,9 +196,26 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
                   const Text(
                     'Manual Plans',
                       style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
+            ),
+            TextButton.icon(
+              onPressed: () async {
+                await _plansController.manualRefreshApprovalStatus();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Status refreshed')),
+                  );
+                }
+              },
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Refresh Status'),
+            ),
+          ],
                   ),
                   const SizedBox(height: 12),
                     ...manualPlans.map((plan) => _buildManualPlanCard(plan)).toList(),
@@ -199,6 +223,18 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   ],
                 );
               }
+              return const SizedBox.shrink();
+            }),
+
+          // Active Plan Daily Workouts Section
+          Obx(() {
+            final activePlan = _plansController.activePlan;
+            print('🔍 TrainingsPage - Active plan check: $activePlan');
+            if (activePlan != null) {
+              print('🔍 TrainingsPage - Building active plan daily view for: ${activePlan['name'] ?? activePlan['exercise_plan_category']}');
+              return _buildActivePlanDailyView(activePlan);
+            }
+            print('🔍 TrainingsPage - No active plan, showing empty');
               return const SizedBox.shrink();
             }),
 
@@ -217,12 +253,13 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                         ),
                         TextButton.icon(
-                          onPressed: () {
+                          onPressed: () async {
                             _plansController.clearAiGeneratedPlans();
                             _plansController.refreshAiGeneratedPlans();
+                            await _plansController.manualRefreshApprovalStatus();
                           },
                           icon: const Icon(Icons.refresh, size: 16),
-                          label: const Text('Clear Cache'),
+                          label: const Text('Refresh'),
                         ),
                       ],
                   ),
@@ -257,12 +294,416 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
       );
   }
 
+  Widget _buildActivePlanDailyView(Map<String, dynamic> plan) {
+    final planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;
+    final currentDay = _plansController.getCurrentDay(planId);
+    
+    print('🔍 TrainingsPage - _buildActivePlanDailyView called for plan $planId, day $currentDay');
+    print('🔍 TrainingsPage - Plan data: $plan');
+    
+    final dayWorkouts = _getDayWorkouts(plan, currentDay);
+    print('🔍 TrainingsPage - Day workouts count: ${dayWorkouts.length}');
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        Text(
+          'Active Plan: ${plan['exercise_plan_category'] ?? plan['name'] ?? 'Workout Plan'}',
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: AppTheme.textColor,
+          ),
+        ),
+        const SizedBox(height: 8),
+        
+        // Day Navigation
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Day ${currentDay + 1}',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textColor,
+              ),
+            ),
+            Row(
+              children: [
+                if (currentDay > 0)
+                  IconButton(
+                    onPressed: () {
+                      _plansController.setCurrentDay(planId, currentDay - 1);
+                    },
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                if (currentDay < (_getTotalDays(plan) - 1))
+                  IconButton(
+                    onPressed: () {
+                      _plansController.setCurrentDay(planId, currentDay + 1);
+                    },
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        
+        // Daily Workouts
+        ..._getDayWorkouts(plan, currentDay).map((workout) => _buildPlanWorkoutItem(workout, planId, currentDay)).toList(),
+        
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  int _getTotalDays(Map<String, dynamic> plan) {
+    if (plan['start_date'] != null && plan['end_date'] != null) {
+      final start = DateTime.tryParse(plan['start_date']);
+      final end = DateTime.tryParse(plan['end_date']);
+      if (start != null && end != null) {
+        return max(1, end.difference(start).inDays + 1);
+      }
+    }
+    return max(1, (plan['total_days'] ?? 1) as int);
+  }
+
+  List<Map<String, dynamic>> _getDayWorkouts(Map<String, dynamic> plan, int dayIndex) {
+    try {
+      List<Map<String, dynamic>> workouts = [];
+      
+      print('🔍 TrainingsPage - _getDayWorkouts: plan keys: ${plan.keys.toList()}');
+      print('🔍 TrainingsPage - _getDayWorkouts: plan[items]: ${plan['items']}');
+      print('🔍 TrainingsPage - _getDayWorkouts: plan[exercises_details]: ${plan['exercises_details']}');
+      print('🔍 TrainingsPage - _getDayWorkouts: plan[items] type: ${plan['items'].runtimeType}');
+      print('🔍 TrainingsPage - _getDayWorkouts: plan[exercises_details] type: ${plan['exercises_details'].runtimeType}');
+      
+      // Get items from the plan
+      if (plan['items'] is List) {
+        workouts = (plan['items'] as List).cast<Map<String, dynamic>>();
+        print('🔍 TrainingsPage - Found ${workouts.length} items in plan[items]');
+        if (workouts.isNotEmpty) {
+          print('🔍 TrainingsPage - First item keys: ${workouts.first.keys.toList()}');
+        }
+      } else if (plan['exercises_details'] is List) {
+        workouts = (plan['exercises_details'] as List).cast<Map<String, dynamic>>();
+        print('🔍 TrainingsPage - Found ${workouts.length} items in plan[exercises_details]');
+        if (workouts.isNotEmpty) {
+          print('🔍 TrainingsPage - First exercise keys: ${workouts.first.keys.toList()}');
+        }
+      } else {
+        print('🔍 TrainingsPage - No items or exercises_details found in plan');
+        print('🔍 TrainingsPage - Available keys: ${plan.keys.toList()}');
+        // Check for other possible workout data keys
+        for (String key in plan.keys) {
+          if (plan[key] is List && (plan[key] as List).isNotEmpty) {
+            print('🔍 TrainingsPage - Found list in key "$key": ${(plan[key] as List).length} items');
+            if ((plan[key] as List).first is Map) {
+              print('🔍 TrainingsPage - First item in "$key" keys: ${((plan[key] as List).first as Map).keys.toList()}');
+            }
+          }
+        }
+      }
+      
+      if (workouts.isEmpty) {
+        print('🔍 TrainingsPage - No workouts found, returning empty list');
+        return [];
+      }
+      
+      // Apply distribution logic similar to schedules
+      final distributed = _distributeWorkoutsForPlan(workouts, _getTotalDays(plan), dayIndex);
+      print('🔍 TrainingsPage - After distribution: ${distributed.length} workouts for day $dayIndex');
+      return distributed;
+    } catch (e) {
+      print('❌ Error getting day workouts: $e');
+      return [];
+    }
+  }
+
+  List<Map<String, dynamic>> _distributeWorkoutsForPlan(List<Map<String, dynamic>> workouts, int totalDays, int dayIndex) {
+    if (workouts.isEmpty) return [];
+    
+    print('🔍 Plans Tab Distribution - Day ${dayIndex + 1}:');
+    print('🔍   - Input workouts: ${workouts.length}');
+    
+    // Apply the same 80-minute rule as the controller's _generateDailyPlans method
+    final List<Map<String, dynamic>> workoutsForDay = [];
+    
+    if (workouts.isNotEmpty) {
+      // Add first workout
+      final Map<String, dynamic> first = Map<String, dynamic>.from(workouts[0]);
+      final int m1 = _extractWorkoutMinutes(first);
+      workoutsForDay.add(first);
+      
+      print('🔍   - First workout: ${first['name'] ?? 'Unknown'} (${m1} min)');
+      
+      // Check if we can add a second workout (80-minute rule)
+      if (workouts.length > 1) {
+        final Map<String, dynamic> second = Map<String, dynamic>.from(workouts[1]);
+        final int m2 = _extractWorkoutMinutes(second);
+        final int totalMinutes = m1 + m2;
+        
+        print('🔍   - Second workout: ${second['name'] ?? 'Unknown'} (${m2} min)');
+        print('🔍   - Total minutes: $totalMinutes');
+        print('🔍   - 80-minute rule: ${totalMinutes <= 80 ? 'PASS' : 'FAIL'}');
+        
+        if (totalMinutes <= 80) {
+          workoutsForDay.add(second);
+          print('✅ Added 2 workouts for Day ${dayIndex + 1} (${totalMinutes} min total)');
+        } else {
+          print('⚠️ Skipped second workout for Day ${dayIndex + 1} (would exceed 80 min: ${totalMinutes} min)');
+        }
+      }
+    }
+    
+    print('🔍   - Final workouts for day: ${workoutsForDay.length}');
+    return workoutsForDay;
+  }
+
+  Widget _buildPlanWorkoutItem(Map<String, dynamic> item, int planId, int currentDay) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: AppTheme.cardBackgroundColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Day and Workout Name
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Day ${currentDay + 1}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.textColor,
+                  ),
+                ),
+                if (item['exercise_types'] != null)
+                  Text(
+                    '${item['exercise_types']} Exercises',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.textColor,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            
+            // Workout Name
+            Text(
+              item['name']?.toString() ?? item['workout_name']?.toString() ?? 'Exercise',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textColor,
+              ),
+            ),
+            const SizedBox(height: 12),
+            
+            // Workout Details
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDetailChip('Sets', '${item['sets'] ?? 0}'),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildDetailChip('Reps', '${item['reps'] ?? 0}'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDetailChip('Weight', '${_safeParseDouble(item['weight'] ?? item['weight_kg'] ?? 0)} kg'),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildDetailChip('Minutes', '${item['minutes'] ?? 0}'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            
+            // Start Workout Button
+            Obx(() {
+              final workoutKey = '${planId}_${currentDay}_${item['name']}';
+              final isStarted = _plansController.isWorkoutStarted(workoutKey);
+              final isCompleted = _plansController.isWorkoutCompleted(workoutKey);
+              final remainingMinutes = _plansController.getWorkoutRemainingMinutes(workoutKey);
+              
+              String buttonText;
+              Color buttonColor;
+              VoidCallback? onPressed;
+              
+              if (isCompleted) {
+                buttonText = 'Completed';
+                buttonColor = Colors.green;
+                onPressed = null;
+              } else if (isStarted) {
+                buttonText = 'In Progress - $remainingMinutes minutes remaining';
+                buttonColor = Colors.orange;
+                onPressed = null;
+              } else {
+                buttonText = 'Start Workout';
+                buttonColor = AppTheme.primaryColor;
+                onPressed = () {
+                  final totalMinutes = int.tryParse(item['minutes']?.toString() ?? '0') ?? 0;
+                  _plansController.startWorkout(workoutKey, totalMinutes);
+                };
+              }
+              
+              return SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: onPressed,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: buttonColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: Text(buttonText),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailChip(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.primaryColor.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppTheme.textColor,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: AppTheme.textColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _safeParseDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    final parsed = double.tryParse(value.toString());
+    return parsed ?? 0.0;
+  }
+
+  // Helper function to calculate total days from start_date and end_date
+  int _calculateTotalDays(Map<String, dynamic> plan) {
+    try {
+      final startDateStr = plan['start_date']?.toString();
+      final endDateStr = plan['end_date']?.toString();
+      
+      if (startDateStr == null || endDateStr == null) {
+        print('🔍 Calculate Total Days - Missing dates: start_date=$startDateStr, end_date=$endDateStr');
+        return 0;
+      }
+      
+      // Parse dates - handle different formats
+      DateTime? startDate;
+      DateTime? endDate;
+      
+      // Try parsing start_date
+      try {
+        startDate = DateTime.parse(startDateStr);
+      } catch (e) {
+        // Try alternative formats
+        if (startDateStr.contains('/')) {
+          final parts = startDateStr.split('/');
+          if (parts.length == 3) {
+            startDate = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+          }
+        }
+      }
+      
+      // Try parsing end_date
+      try {
+        endDate = DateTime.parse(endDateStr);
+      } catch (e) {
+        // Try alternative formats
+        if (endDateStr.contains('/')) {
+          final parts = endDateStr.split('/');
+          if (parts.length == 3) {
+            endDate = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+          }
+        }
+      }
+      
+      if (startDate == null || endDate == null) {
+        print('🔍 Calculate Total Days - Failed to parse dates: start_date=$startDateStr, end_date=$endDateStr');
+        return 0;
+      }
+      
+      // Calculate difference in days
+      final difference = endDate.difference(startDate).inDays;
+      final totalDays = difference + 1; // Include both start and end days
+      
+      print('🔍 Calculate Total Days - Start: $startDate, End: $endDate, Total Days: $totalDays');
+      return totalDays;
+    } catch (e) {
+      print('❌ Calculate Total Days - Error: $e');
+      return 0;
+    }
+  }
+
   Widget _buildScheduleCard(Map<String, dynamic> plan) {
     final planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;
     
     // Debug: Print all available fields in the plan
     print('🔍 Schedule Card - Plan data: $plan');
     print('🔍 Schedule Card - Available fields: ${plan.keys.toList()}');
+    
+    // Debug: Check for total days fields specifically
+    print('🔍 Schedule Card - Total Days Debug:');
+    print('🔍   - total_days: ${plan['total_days']}');
+    print('🔍   - days: ${plan['days']}');
+    print('🔍   - duration: ${plan['duration']}');
+    print('🔍   - plan_duration: ${plan['plan_duration']}');
+    print('🔍   - total_duration: ${plan['total_duration']}');
+    print('🔍   - workout_days: ${plan['workout_days']}');
+    print('🔍   - training_days: ${plan['training_days']}');
+    print('🔍   - start_date: ${plan['start_date']}');
+    print('🔍   - end_date: ${plan['end_date']}');
+    print('🔍   - assigned_at: ${plan['assigned_at']}');
+    print('🔍   - created_at: ${plan['created_at']}');
     
     return Obx(() {
       final isStarted = _schedulesController.isScheduleStarted(planId);
@@ -318,16 +759,89 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
               Text('Plan Category: ${plan['plan_category']}', style: const TextStyle(color: AppTheme.textColor))
             else if (plan['workout_name'] != null)
               Text('Plan Category: ${plan['workout_name']}', style: const TextStyle(color: AppTheme.textColor)),
-            // Total Days - try multiple field names
-            if (plan['total_days'] != null)
-              Text('Total Days: ${plan['total_days']}', style: const TextStyle(color: AppTheme.textColor))
-            else if (plan['days'] != null)
-              Text('Total Days: ${plan['days']}', style: const TextStyle(color: AppTheme.textColor))
-            else if (plan['duration'] != null)
-              Text('Total Days: ${plan['duration']}', style: const TextStyle(color: AppTheme.textColor)),
+            // Total Days - calculate from start_date and end_date
+            Builder(
+              builder: (context) {
+                // First try to calculate from plan data
+                int calculatedDays = _calculateTotalDays(plan);
+                
+                if (calculatedDays > 0) {
+                  return Text(
+                    'Total Days: $calculatedDays',
+                    style: const TextStyle(color: AppTheme.textColor)
+                  );
+                }
+                
+                // If no dates in plan data, try to fetch from assignment details
+                return FutureBuilder<Map<String, dynamic>>(
+                  future: _schedulesController.getAssignmentDetails(planId),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Text('Total Days: Loading...', style: TextStyle(color: AppTheme.textColor, fontStyle: FontStyle.italic));
+                    }
+                    
+                    if (snapshot.hasError) {
+                      // Fallback to direct field checking
+                      final totalDays = plan['total_days'] ?? plan['days'] ?? plan['duration'] ?? 
+                                      plan['plan_duration'] ?? plan['total_duration'] ?? 
+                                      plan['workout_days'] ?? plan['training_days'];
+                      return Text(
+                        totalDays != null ? 'Total Days: $totalDays' : 'Total Days: Not specified',
+                        style: const TextStyle(color: AppTheme.textColor, fontStyle: FontStyle.italic)
+                      );
+                    }
+                    
+                    final assignmentDetails = snapshot.data ?? {};
+                    
+                    // Try to calculate from assignment details
+                    int assignmentCalculatedDays = _calculateTotalDays(assignmentDetails);
+                    if (assignmentCalculatedDays > 0) {
+                      return Text(
+                        'Total Days: $assignmentCalculatedDays',
+                        style: const TextStyle(color: AppTheme.textColor)
+                      );
+                    }
+                    
+                    // Fallback to direct field checking
+                    final totalDays = assignmentDetails['total_days'] ?? assignmentDetails['days'] ?? 
+                                    assignmentDetails['duration'] ?? assignmentDetails['plan_duration'] ?? 
+                                    assignmentDetails['total_duration'] ?? assignmentDetails['workout_days'] ?? 
+                                    assignmentDetails['training_days'] ?? plan['total_days'] ?? 
+                                    plan['days'] ?? plan['duration'] ?? plan['plan_duration'] ?? 
+                                    plan['total_duration'] ?? plan['workout_days'] ?? plan['training_days'];
+                    
+                    return Text(
+                      totalDays != null ? 'Total Days: $totalDays' : 'Total Days: Not specified',
+                      style: const TextStyle(color: AppTheme.textColor, fontStyle: FontStyle.italic)
+                    );
+                  },
+                );
+              },
+            ),
             // User Level
             if (plan['user_level'] != null)
               Text('User Level: ${plan['user_level']}', style: const TextStyle(color: AppTheme.textColor)),
+            
+            // Motivational line with icon
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(
+                  Icons.fitness_center,
+                  color: AppTheme.primaryColor,
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'You can do it!',
+                  style: TextStyle(
+                    color: AppTheme.textColor,
+                    fontWeight: FontWeight.w500,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
           OutlinedButton(
             onPressed: () {
@@ -373,7 +887,8 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             children: [
                 Expanded(
                   child: Text(
-                    plan['name']?.toString() ?? 'Manual Plan',
+                    // Use plan category as title instead of generic name
+                    plan['exercise_plan_category']?.toString() ?? 'Manual Plan',
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                   ),
                 ),
@@ -391,13 +906,41 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                 ),
               ],
             ),
-          const SizedBox(height: 8),
-            // Plan Category Name
-            if (plan['exercise_plan_category'] != null)
-              Text('Plan Category: ${plan['exercise_plan_category']}'),
+          const SizedBox(height: 12),
+            
+            // Plan Details Row
+            Row(
+              children: [
             // Total Days
-            if (plan['total_days'] != null)
-              Text('Total Days: ${plan['total_days']}'),
+                Expanded(
+                  child: Row(
+                    children: [
+                      const Icon(Icons.calendar_today, size: 16, color: AppTheme.primaryColor),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Total Days: ${_getTotalDays(plan)}',
+                        style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
+                      ),
+                    ],
+                  ),
+                ),
+                // User Level
+                if (plan['user_level'] != null)
+                  Expanded(
+                    child: Row(
+                      children: [
+                        const Icon(Icons.person, size: 16, color: AppTheme.primaryColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Level: ${plan['user_level']}',
+                          style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
             // User Level
             if (plan['user_level'] != null)
               Text('User Level: ${plan['user_level']}'),
@@ -502,10 +1045,10 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             const SizedBox(height: 12),
             
             // Plan Details Row
-            Row(
-              children: [
-                // Total Days
-                Expanded(
+          Row(
+            children: [
+            // Total Days
+              Expanded(
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
@@ -528,11 +1071,11 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                         ),
                       ],
                     ),
-                  ),
                 ),
-                const SizedBox(width: 8),
+              ),
+              const SizedBox(width: 8),
                 
-                // User Level
+            // User Level
                 Expanded(
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -615,20 +1158,6 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                     child: const Text('View Plan'),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                          builder: (context) => EditPlanPage(plan: plan, isAi: true),
-                    ),
-                  );
-                },
-                    child: const Text('Edit Plan'),
-                ),
-              ),
             ],
           ),
         ],
@@ -643,42 +1172,477 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     switch (approvalStatus) {
       case 'pending':
         return ElevatedButton(
-          onPressed: null,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.cardBackgroundColor,
-            foregroundColor: AppTheme.textColor,
-          ),
-          child: const Text('Pending'),
-        );
-      case 'approved':
-        return ElevatedButton(
-          onPressed: () {
-            _plansController.startPlan(plan);
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.primaryColor,
-            foregroundColor: AppTheme.textColor,
-          ),
-          child: const Text('Start Plan'),
-        );
-      default:
-        return ElevatedButton(
-                  onPressed: () async {
-            // Send plan for approval
-            if (_scaffoldMessenger != null) {
-              _scaffoldMessenger!.showSnackBar(
-                const SnackBar(
-                  content: Text('Plan sent for approval'),
-                  backgroundColor: AppTheme.primaryColor,
-                ),
-              );
+          onPressed: () async {
+            // Allow resending pending plans after editing
+            try {
+              // Determine if this is an AI or manual plan
+              final planType = plan['plan_type']?.toString().toLowerCase();
+              bool isAiPlan = false;
+              
+              // Proper plan type detection - use the same logic as PlansController
+              if (planType == 'ai_generated') {
+                isAiPlan = true;
+              } else if (planType == 'manual') {
+                isAiPlan = false;
+              } else {
+                // Check for explicit AI plan indicators (more specific)
+                final hasExplicitAiIndicators = plan.containsKey('request_id') || // AI plans have request_id
+                                             plan.containsKey('ai_generated') || 
+                                             plan.containsKey('gemini_generated') ||
+                                             plan.containsKey('ai_plan_id');
+                
+                // Check for explicit manual plan indicators
+                final hasExplicitManualIndicators = plan.containsKey('created_by') && 
+                                                 plan['assigned_by'] == null && 
+                                                 plan['assignment_id'] == null && 
+                                                 plan['web_plan_id'] == null &&
+                                                 !plan.containsKey('request_id'); // Manual plans don't have request_id
+                
+                print('🔍 Button Logic - Plan ID: $planId');
+                print('🔍 Button Logic - Plan Type: $planType');
+                print('🔍 Button Logic - Has AI Indicators: $hasExplicitAiIndicators');
+                print('🔍 Button Logic - Has Manual Indicators: $hasExplicitManualIndicators');
+                print('🔍 Button Logic - Has request_id: ${plan.containsKey('request_id')}');
+                print('🔍 Button Logic - Has created_by: ${plan.containsKey('created_by')}');
+                
+                // If we have explicit manual indicators, it's definitely a manual plan
+                if (hasExplicitManualIndicators) {
+                  isAiPlan = false;
+                  print('🔍 Button Logic - Detected as MANUAL plan');
+                }
+                // If we have explicit AI indicators and no manual indicators, it's an AI plan
+                else if (hasExplicitAiIndicators && !hasExplicitManualIndicators) {
+                  isAiPlan = true;
+                  print('🔍 Button Logic - Detected as AI plan');
+                }
+                // Default to manual plan if unclear
+                else {
+                  isAiPlan = false;
+                  print('🔍 Button Logic - Defaulting to MANUAL plan');
+                }
+              }
+              
+              Map<String, dynamic> result;
+              if (isAiPlan) {
+                result = await _plansController.sendAiPlanForApproval(plan);
+              } else {
+                result = await _plansController.sendManualPlanForApproval(plan);
+              }
+              
+              if (mounted && _scaffoldMessenger != null) {
+                _scaffoldMessenger!.showSnackBar(
+                  const SnackBar(
+                    content: Text('Plan resent for approval successfully!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+              
+              // Refresh the plans to update the approval status
+              if (mounted) {
+                await _plansController.refreshPlans();
+              }
+              
+            } catch (e) {
+              if (mounted && _scaffoldMessenger != null) {
+                _scaffoldMessenger!.showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to resend plan for approval: $e'),
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
             }
           },
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.primaryColor,
             foregroundColor: AppTheme.textColor,
           ),
-          child: const Text('Send Plan'),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.refresh, size: 18),
+              const SizedBox(width: 8),
+              const Text('Resend Plan'),
+            ],
+          ),
+        );
+      case 'approved':
+        // Check if plan has been modified since approval
+        final hasBeenModified = _plansController.hasPlanBeenModifiedSinceApproval(planId);
+        
+        // Debug: Check modification status
+        print('🔍 Button Logic - Plan ID: $planId');
+        print('🔍 Button Logic - Approval Status: $approvalStatus');
+        print('🔍 Button Logic - Has Been Modified: $hasBeenModified');
+        print('🔍 Button Logic - Plan Type: ${plan['plan_type']}');
+        print('🔍 Button Logic - Exercise Category: ${plan['exercise_plan_category']}');
+        print('🔍 Button Logic - Modification Map: ${_plansController.planModifiedSinceApproval}');
+        
+        // Determine if this is an AI or manual plan
+        final planType = plan['plan_type']?.toString().toLowerCase();
+        bool isAiPlan = false;
+        
+        // Proper plan type detection - use the same logic as PlansController
+        if (planType == 'ai_generated') {
+          isAiPlan = true;
+        } else if (planType == 'manual') {
+          isAiPlan = false;
+        } else {
+          // Check for explicit AI plan indicators (more specific)
+          final hasExplicitAiIndicators = plan.containsKey('request_id') || // AI plans have request_id
+                                       plan.containsKey('ai_generated') || 
+                                       plan.containsKey('gemini_generated') ||
+                                       plan.containsKey('ai_plan_id');
+          
+          // Check for explicit manual plan indicators
+          final hasExplicitManualIndicators = plan.containsKey('created_by') && 
+                                           plan['assigned_by'] == null && 
+                                           plan['assignment_id'] == null && 
+                                           plan['web_plan_id'] == null &&
+                                           !plan.containsKey('request_id'); // Manual plans don't have request_id
+          
+          // If we have explicit manual indicators, it's definitely a manual plan
+          if (hasExplicitManualIndicators) {
+            isAiPlan = false;
+          }
+          // If we have explicit AI indicators and no manual indicators, it's an AI plan
+          else if (hasExplicitAiIndicators && !hasExplicitManualIndicators) {
+            isAiPlan = true;
+          }
+          // Default to manual plan if unclear
+          else {
+            isAiPlan = false;
+          }
+        }
+        
+        if (isAiPlan) {
+          // For AI plans: Show only one button that changes based on modification status
+          if (hasBeenModified) {
+            // Show only Resend button if AI plan has been modified
+            return ElevatedButton(
+              onPressed: () async {
+                try {
+                  final result = await _plansController.sendAiPlanForApproval(plan);
+                  
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
+                      const SnackBar(
+                        content: Text('AI plan resent for approval successfully!'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                  
+                  // Refresh the plans to update the approval status
+                  if (mounted) {
+                    await _plansController.refreshPlans();
+                  }
+                  
+                } catch (e) {
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
+                      SnackBar(
+                        content: Text('Failed to resend AI plan for approval: $e'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 4),
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.refresh, size: 18),
+                  const SizedBox(width: 8),
+                  const Text('Resend'),
+                ],
+              ),
+            );
+          } else {
+            // Show Start/Stop button if AI plan hasn't been modified
+            final isStarted = _plansController.isPlanStarted(planId);
+            if (isStarted) {
+        return ElevatedButton(
+          onPressed: () {
+                  _plansController.stopPlan(plan);
+                  setState(() {});
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Stop Plan'),
+              );
+            }
+            return ElevatedButton(
+              onPressed: () async {
+            _plansController.startPlan(plan);
+                setState(() {});
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: AppTheme.textColor,
+          ),
+          child: const Text('Start Plan'),
+            );
+          }
+        } else {
+          // For manual plans: Show only Resend button if modified (convert Start Plan to Resend)
+          print('🔍 Button Logic - Manual Plan - Has Been Modified: $hasBeenModified');
+          if (hasBeenModified) {
+            return ElevatedButton(
+              onPressed: () async {
+                try {
+                  final result = await _plansController.sendManualPlanForApproval(plan);
+                  
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
+                      const SnackBar(
+                        content: Text('Manual plan resent for approval successfully!'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                  
+                  // Refresh the plans to update the approval status
+                  if (mounted) {
+                    await _plansController.refreshPlans();
+                  }
+                  
+                } catch (e) {
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
+                      SnackBar(
+                        content: Text('Failed to resend manual plan for approval: $e'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 4),
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.refresh, size: 16),
+                  const SizedBox(width: 4),
+                  const Text('Resend Plan'),
+                ],
+              ),
+            );
+          } else {
+            // Show only Start Plan button if manual plan hasn't been modified
+            final isStarted = _plansController.isPlanStarted(planId);
+            if (isStarted) {
+              return ElevatedButton(
+                onPressed: () {
+                  _plansController.stopPlan(plan);
+                  setState(() {});
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Stop Plan'),
+              );
+            }
+            return ElevatedButton(
+              onPressed: () async {
+                _plansController.startPlan(plan);
+                setState(() {});
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: AppTheme.textColor,
+              ),
+              child: const Text('Start Plan'),
+            );
+          }
+        }
+      case 'rejected':
+        // If the plan was edited after rejection, allow resending
+        final hasBeenModified = _plansController.hasPlanBeenModifiedSinceApproval(planId);
+        if (hasBeenModified) {
+          return ElevatedButton(
+            onPressed: () async {
+              try {
+                // Determine plan type - use the same logic as PlansController
+                final planType = plan['plan_type']?.toString().toLowerCase();
+                bool isAiPlan = false;
+                if (planType == 'ai_generated') {
+                  isAiPlan = true;
+                } else if (planType == 'manual') {
+                  isAiPlan = false;
+                } else {
+                  // Check for explicit AI plan indicators (more specific)
+                  final hasExplicitAiIndicators = plan.containsKey('request_id') || // AI plans have request_id
+                                               plan.containsKey('ai_generated') || 
+                                               plan.containsKey('gemini_generated') ||
+                                               plan.containsKey('ai_plan_id');
+                  
+                  // Check for explicit manual plan indicators
+                  final hasExplicitManualIndicators = plan.containsKey('created_by') && 
+                                                   plan['assigned_by'] == null && 
+                                                   plan['assignment_id'] == null && 
+                                                   plan['web_plan_id'] == null &&
+                                                   !plan.containsKey('request_id'); // Manual plans don't have request_id
+                  
+                  // If we have explicit manual indicators, it's definitely a manual plan
+                  if (hasExplicitManualIndicators) {
+                    isAiPlan = false;
+                  }
+                  // If we have explicit AI indicators and no manual indicators, it's an AI plan
+                  else if (hasExplicitAiIndicators && !hasExplicitManualIndicators) {
+                    isAiPlan = true;
+                  }
+                  // Default to manual plan if unclear
+                  else {
+                    isAiPlan = false;
+                  }
+                }
+                if (isAiPlan) {
+                  await _plansController.sendAiPlanForApproval(plan);
+                } else {
+                  await _plansController.sendManualPlanForApproval(plan);
+                }
+                if (mounted && _scaffoldMessenger != null) {
+                  _scaffoldMessenger!.showSnackBar(
+                    const SnackBar(content: Text('Plan resent for approval'), backgroundColor: Colors.green),
+                  );
+                }
+                if (mounted) await _plansController.refreshPlans();
+              } catch (e) {
+                if (mounted && _scaffoldMessenger != null) {
+                  _scaffoldMessenger!.showSnackBar(
+                    SnackBar(content: Text('Failed to resend: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Resend'),
+          );
+        }
+        // Not modified: show rejected indicator only
+        return ElevatedButton(
+          onPressed: null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.red,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('Rejected'),
+        );
+      default:
+        return ElevatedButton(
+                  onPressed: () async {
+            // Send plan for approval
+            try {
+              // Determine if this is an AI or manual plan
+              final planType = plan['plan_type']?.toString().toLowerCase();
+              bool isAiPlan = false;
+              
+              // Proper plan type detection - use the same logic as PlansController
+              if (planType == 'ai_generated') {
+                isAiPlan = true;
+              } else if (planType == 'manual') {
+                isAiPlan = false;
+              } else {
+                // Check for explicit AI plan indicators (more specific)
+                final hasExplicitAiIndicators = plan.containsKey('request_id') || // AI plans have request_id
+                                             plan.containsKey('ai_generated') || 
+                                             plan.containsKey('gemini_generated') ||
+                                             plan.containsKey('ai_plan_id');
+                
+                // Check for explicit manual plan indicators
+                final hasExplicitManualIndicators = plan.containsKey('created_by') && 
+                                                 plan['assigned_by'] == null && 
+                                                 plan['assignment_id'] == null && 
+                                                 plan['web_plan_id'] == null &&
+                                                 !plan.containsKey('request_id'); // Manual plans don't have request_id
+                
+                // If we have explicit manual indicators, it's definitely a manual plan
+                if (hasExplicitManualIndicators) {
+                  isAiPlan = false;
+                }
+                // If we have explicit AI indicators and no manual indicators, it's an AI plan
+                else if (hasExplicitAiIndicators && !hasExplicitManualIndicators) {
+                  isAiPlan = true;
+                }
+                // Default to manual plan if unclear
+                else {
+                  isAiPlan = false;
+                }
+              }
+              
+              print('🔍 Plan type detection:');
+              print('🔍   - plan_type: $planType');
+              print('🔍   - exercise_plan_category: ${plan['exercise_plan_category']}');
+              print('🔍   - user_level: ${plan['user_level']}');
+              print('🔍   - created_by: ${plan['created_by']}');
+              print('🔍   - assigned_by: ${plan['assigned_by']}');
+              print('🔍   - isAiPlan: $isAiPlan');
+              
+              Map<String, dynamic> result;
+              if (isAiPlan) {
+                print('🔍 Sending AI plan for approval...');
+                result = await _plansController.sendAiPlanForApproval(plan);
+              } else {
+                print('🔍 Sending manual plan for approval...');
+                result = await _plansController.sendManualPlanForApproval(plan);
+              }
+              
+              if (mounted && _scaffoldMessenger != null) {
+              _scaffoldMessenger!.showSnackBar(
+                const SnackBar(
+                    content: Text('Plan sent for approval successfully!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+              
+              // Refresh the plans to update the approval status
+              if (mounted) {
+                await _plansController.refreshPlans();
+              }
+              
+            } catch (e) {
+              if (mounted && _scaffoldMessenger != null) {
+                _scaffoldMessenger!.showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to send plan for approval: $e'),
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
+            }
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: AppTheme.textColor,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.send, size: 18),
+              const SizedBox(width: 8),
+              const Text('Send Plan'),
+            ],
+          ),
         );
     }
   }
@@ -797,7 +1761,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Today\'s Workouts (${dayItems.length} exercises)',
+                      'Today\'s Workouts (${dayItems.length} workouts)',
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textColor),
             ),
             const SizedBox(height: 8),
@@ -833,7 +1797,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
           final workouts = dayPlan['workouts'];
           if (workouts is List) {
             print('🔍 Found ${workouts.length} workouts in daily_plans');
-            return _applyWorkoutDistributionLogic(workouts.cast<Map<String, dynamic>>());
+            return _applySchedulesDistributionLogic(workouts.cast<Map<String, dynamic>>());
           }
         }
       }
@@ -870,7 +1834,7 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
       
       // Apply workout distribution logic
       if (workouts.isNotEmpty) {
-        return _applyWorkoutDistributionLogic(workouts);
+        return _applySchedulesDistributionLogic(workouts);
       }
       
       // If no data found, return empty list
@@ -882,39 +1846,92 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
     }
   }
 
-  List<Map<String, dynamic>> _applyWorkoutDistributionLogic(List<Map<String, dynamic>> workouts) {
+  // SCHEDULES TAB: Assigned plans - limit to 2 workouts per day
+  List<Map<String, dynamic>> _applySchedulesDistributionLogic(List<Map<String, dynamic>> workouts) {
     if (workouts.isEmpty) return workouts;
     
-    print('🔍 DISTRIBUTION LOGIC - Input workouts: ${workouts.length}');
+    print('🔍 SCHEDULES TAB DISTRIBUTION - Input workouts: ${workouts.length}');
     for (int i = 0; i < workouts.length; i++) {
       final workout = workouts[i];
-      print('🔍 Workout $i: ${workout['name']} - ${workout['minutes']} minutes');
+      print('🔍 Schedules Tab Workout $i: ${workout['name']} - ${_extractWorkoutMinutes(workout)} minutes');
     }
     
     // Calculate total minutes for all workouts
     int totalMinutes = 0;
     for (var workout in workouts) {
-      final minutes = int.tryParse(workout['minutes']?.toString() ?? '0') ?? 0;
+      final minutes = _extractWorkoutMinutes(workout);
       totalMinutes += minutes;
-      print('🔍 Adding ${workout['name']}: $minutes minutes (total: $totalMinutes)');
+      print('🔍 Schedules Tab Adding ${workout['name']}: $minutes minutes (total: $totalMinutes)');
     }
     
-    print('🔍 FINAL Total workout minutes: $totalMinutes');
-    print('🔍 FINAL Number of workouts: ${workouts.length}');
+    print('🔍 SCHEDULES TAB Total workout minutes: $totalMinutes');
+    print('🔍 SCHEDULES TAB Number of workouts: ${workouts.length}');
     
+    // SCHEDULES TAB: Per-day pair rule – try 2 consecutive workouts; if combined > 80, show only 1
+    if (workouts.length >= 2) {
+      // Use day 0 pairing here; actual day pairing is handled in controller for active schedule.
+      final int m1 = _extractWorkoutMinutes(workouts[0]);
+      final int m2 = _extractWorkoutMinutes(workouts[1]);
+      final int combined = m1 + m2;
+      if (combined > 80) {
+        print('🔍 SCHEDULES TAB ✅ LIMIT (combined > 80): showing 1');
+        return [workouts[0]];
+      }
+      print('🔍 SCHEDULES TAB ✅ LIMIT (combined <= 80): showing 2');
+      return workouts.take(2).toList();
+    }
     
-    // Apply distribution logic
-    if (totalMinutes > 80 && workouts.length > 2) {
-      // If total minutes > 80 and we have more than 2 workouts, show only 2 workouts
-      print('🔍 ✅ APPLYING LOGIC: Total minutes ($totalMinutes) > 80, showing only 2 workouts');
-      final filteredWorkouts = workouts.take(2).toList();
-      print('🔍 ✅ FILTERED: Showing ${filteredWorkouts.length} workouts: ${filteredWorkouts.map((w) => w['name']).toList()}');
-      return filteredWorkouts;
-    } else {
-      // If total minutes <= 80 or we have 2 or fewer workouts, show all workouts
-      print('🔍 ✅ APPLYING LOGIC: Total minutes ($totalMinutes) <= 80 or <= 2 workouts, showing all ${workouts.length} workouts');
+    print('🔍 SCHEDULES TAB ✅ APPLYING: showing all ${workouts.length} workouts');
       return workouts;
     }
+
+  // PLANS TAB: Manual plans - apply same limiting logic as Schedules
+  List<Map<String, dynamic>> _applyPlansDistributionLogic(List<Map<String, dynamic>> workouts) {
+    if (workouts.isEmpty) return workouts;
+    
+    print('🔍 PLANS TAB DISTRIBUTION - Input workouts: ${workouts.length}');
+    for (int i = 0; i < workouts.length; i++) {
+      final workout = workouts[i];
+      print('🔍 Plans Tab Workout $i: ${workout['name']} - ${_extractWorkoutMinutes(workout)} minutes');
+    }
+    
+    // Calculate total minutes for all workouts
+    int totalMinutes = 0;
+    for (var workout in workouts) {
+      final minutes = _extractWorkoutMinutes(workout);
+      totalMinutes += minutes;
+      print('🔍 Plans Tab Adding ${workout['name']}: $minutes minutes (total: $totalMinutes)');
+    }
+    
+    print('🔍 PLANS TAB Total workout minutes: $totalMinutes');
+    print('🔍 PLANS TAB Number of workouts: ${workouts.length}');
+    
+    // PLANS TAB: Per-day pair rule – try 2; if combined > 80, show only 1
+    if (workouts.length >= 2) {
+      final int m1 = _extractWorkoutMinutes(workouts[0]);
+      final int m2 = _extractWorkoutMinutes(workouts[1]);
+      final int combined = m1 + m2;
+      if (combined > 80) {
+        print('🔍 PLANS TAB ✅ LIMIT (combined > 80): showing 1');
+        return [workouts[0]];
+      }
+      print('🔍 PLANS TAB ✅ LIMIT (combined <= 80): showing 2');
+      return workouts.take(2).toList();
+    }
+    
+    print('🔍 PLANS TAB ✅ APPLYING: showing all ${workouts.length} workouts');
+    return workouts;
+  }
+
+  // Extract minutes from various possible keys safely
+  int _extractWorkoutMinutes(Map<String, dynamic> workout) {
+    final dynamic raw = workout['minutes'] ?? workout['training_minutes'] ?? workout['trainingMinutes'] ?? workout['duration'];
+    if (raw == null) return 0;
+    final String s = raw.toString();
+    final int? i = int.tryParse(s);
+    if (i != null) return i;
+    final double? d = double.tryParse(s);
+    return d?.round() ?? 0;
   }
 
 
@@ -990,13 +2007,13 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
             ],
             
             // Weight
-            if (item['weight_kg'] != null) ...[
+            if (item['weight_kg'] != null || item['weight_min_kg'] != null || item['weight_max_kg'] != null) ...[
               Row(
                 children: [
                   const Icon(Icons.sports_gymnastics, size: 16, color: AppTheme.textColor),
                   const SizedBox(width: 8),
                   Text(
-                    '${item['weight_kg']} kg',
+                    _formatWeightDisplay(item),
                     style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
           ),
         ],
@@ -1108,6 +2125,32 @@ class _TrainingsPageState extends State<TrainingsPage> with TickerProviderStateM
       ),
     );
   }
+
+  String _formatWeightDisplay(Map<String, dynamic> item) {
+    // Safely convert to double, handling both string and numeric inputs
+    final weightMin = _safeParseDouble(item['weight_min_kg']);
+    final weightMax = _safeParseDouble(item['weight_max_kg']);
+    final weight = _safeParseDouble(item['weight_kg']);
+    
+    // If we have min and max, show range
+    if (weightMin != null && weightMax != null) {
+      return '${weightMin.toStringAsFixed(0)}-${weightMax.toStringAsFixed(0)} kg';
+    }
+    // If we only have min or max, show that with a dash
+    else if (weightMin != null) {
+      return '${weightMin.toStringAsFixed(0)}+ kg';
+    }
+    else if (weightMax != null) {
+      return 'up to ${weightMax.toStringAsFixed(0)} kg';
+    }
+    // Fallback to single weight value
+    else if (weight != null) {
+      return '${weight.toStringAsFixed(0)} kg';
+    }
+    
+    return 'N/A';
+  }
+
 
   void _showDeleteConfirmation(Map<String, dynamic> plan, bool isAi) {
     final planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;

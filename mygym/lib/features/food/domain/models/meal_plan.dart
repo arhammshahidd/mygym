@@ -10,6 +10,7 @@ class MealItem {
   final int carbsGrams;
   final int fatGrams;
   final int grams;
+  final String notes;
 
   const MealItem({
     required this.name,
@@ -18,6 +19,7 @@ class MealItem {
     required this.carbsGrams,
     required this.fatGrams,
     this.grams = 0,
+    this.notes = '',
   });
 }
 

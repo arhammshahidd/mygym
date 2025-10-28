@@ -1,17 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/material.dart';
 import '../../../profile/presentation/controllers/profile_controller.dart';
 import '../../../stats/presentation/controllers/stats_controller.dart';
+import 'plans_controller.dart';
 import '../../data/services/manual_training_service.dart';
-import '../../data/services/daily_training_service.dart';
 import '../../../../shared/services/realtime_service.dart';
 import '../../../auth/data/services/auth_service.dart';
 
 class SchedulesController extends GetxController {
   final ManualTrainingService _manualService = ManualTrainingService();
-  final DailyTrainingService _dailyTrainingService = DailyTrainingService();
   final RealtimeService _realtime = RealtimeService();
   final AuthService _authService = AuthService();
   final ProfileController _profileController = Get.find<ProfileController>();
@@ -98,23 +99,126 @@ class SchedulesController extends GetxController {
       // Test API connectivity
       await _manualService.testApiConnectivity();
       
-      // Fetch assigned training plans from assignments table (Schedules-specific)
+      // Fetch ONLY assigned training plans from assignments table (Schedules-specific)
+      // This should NOT include manual plans created by the user
       if (userId != null) {
-        print('📋 Schedules - Fetching assigned training plans for user ID: $userId...');
+        print('📋 Schedules - Fetching ASSIGNED training plans for user ID: $userId...');
+        print('📋 Schedules - API Endpoint: /api/trainingPlans/assignments/user/$userId');
+        print('📋 Schedules - This should show assigned training plans (not manual plans)');
+        print('🔍 DEBUG: Expected to find assignment with user_id: 2 (from database)');
         try {
           final assignmentsRes = await _manualService.getUserAssignments(userId);
           print('📋 Schedules - Assignments result: ${assignmentsRes.length} items');
           
-          // Store assignments for Schedules tab only
-          assignments.assignAll(assignmentsRes.map((e) => Map<String, dynamic>.from(e)));
-          print('✅ Schedules - Assignments list updated: ${assignments.length} items');
+          // DEBUG: Print all assignment data to understand structure
+          print('🔍 DEBUG: Total assignments received: ${assignmentsRes.length}');
+          for (int i = 0; i < assignmentsRes.length; i++) {
+            final assignment = assignmentsRes[i];
+            print('🔍 DEBUG Schedules Assignment $i:');
+            print('🔍   - Keys: ${assignment.keys.toList()}');
+            print('🔍   - Full Data: $assignment');
+            print('🔍   - ID: ${assignment['id']}');
+            print('🔍   - Name: ${assignment['name']}');
+            print('🔍   - Plan Category: ${assignment['exercise_plan_category']}');
+            print('🔍   - User ID: ${assignment['user_id']}');
+            print('🔍   - Trainer ID: ${assignment['trainer_id']}');
+            print('🔍   - Web Plan ID: ${assignment['web_plan_id']}');
+            print('🔍   - Status: ${assignment['status']}');
+            print('🔍   - Plan Type: ${assignment['plan_type']}');
+          }
+          
+          // Filter to show ONLY truly assigned plans (not manual plans)
+          final filteredAssignments = assignmentsRes.where((assignment) {
+            // Check if this is a truly assigned plan
+            final planType = assignment['plan_type']?.toString().toLowerCase();
+            final assignmentId = assignment['assignment_id'];
+            final assignedAt = assignment['assigned_at'];
+            final assignedBy = assignment['assigned_by'];
+            final trainerId = assignment['trainer_id'];
+            final webPlanId = assignment['web_plan_id'];
+            final status = assignment['status']?.toString().toUpperCase();
+            
+            // Enhanced check for assigned plans based on database structure
+            final isAssigned = assignmentId != null || 
+                              assignedAt != null ||
+                              assignedBy != null ||
+                              trainerId != null || // Has trainer_id (assigned by trainer)
+                              webPlanId != null || // Has web_plan_id (from web portal)
+                              planType == 'assigned' ||
+                              planType == 'ai_generated' ||
+                              status == 'PLANNED' || // Status indicates assigned plan
+                              status == 'ACTIVE';
+            
+            // Additional check: exclude manual plans
+            // For assigned plans, user_id is the user the plan is assigned TO, not the creator
+            final isManualPlan = planType == 'manual' || 
+                                (assignment['created_by'] != null && assignment['created_by'] == userId); // Only exclude if created by current user
+            
+            print('🔍 Schedules - Assignment ${assignment['id']}:');
+            print('🔍   - plan_type: $planType');
+            print('🔍   - assignment_id: $assignmentId');
+            print('🔍   - assigned_at: $assignedAt');
+            print('🔍   - assigned_by: $assignedBy');
+            print('🔍   - trainer_id: $trainerId');
+            print('🔍   - web_plan_id: $webPlanId');
+            print('🔍   - status: $status');
+            print('🔍   - created_by: ${assignment['created_by']}');
+            print('🔍   - user_id: ${assignment['user_id']}');
+            print('🔍   - isAssigned: $isAssigned');
+            print('🔍   - isManualPlan: $isManualPlan');
+            print('🔍   - Will include: ${isAssigned && !isManualPlan}');
+            
+            if (!isAssigned) {
+              print('❌ REJECTED: Not identified as assigned plan');
+            }
+            if (isManualPlan) {
+              print('❌ REJECTED: Identified as manual plan');
+            }
+            
+            return isAssigned && !isManualPlan;
+          }).toList();
+          
+          print('📋 Schedules - Filtered assignments: ${filteredAssignments.length} items (removed ${assignmentsRes.length - filteredAssignments.length} manual plans)');
+          
+          // Store ONLY truly assigned plans for Schedules tab
+          assignments.assignAll(filteredAssignments.map((e) => Map<String, dynamic>.from(e)));
+          print('✅ Schedules - Assigned plans list updated: ${assignments.length} items');
         } catch (e) {
           print('❌ Schedules - Error fetching assignments: $e');
           // Fallback: try with user ID 2
           try {
             final fallbackRes = await _manualService.getUserAssignments(2);
-            assignments.assignAll(fallbackRes.map((e) => Map<String, dynamic>.from(e)));
-            print('✅ Schedules - Fallback assignments loaded: ${assignments.length} items');
+            print('🔍 DEBUG: Fallback assignments result: ${fallbackRes.length} items');
+            
+            // DEBUG: Print fallback assignment data
+            for (int i = 0; i < fallbackRes.length; i++) {
+              final assignment = fallbackRes[i];
+              print('🔍 DEBUG Fallback Assignment $i:');
+              print('🔍   - Keys: ${assignment.keys.toList()}');
+              print('🔍   - Values: $assignment');
+            }
+            
+            // Filter fallback assignments the same way
+            final filteredFallback = fallbackRes.where((assignment) {
+              final planType = assignment['plan_type']?.toString().toLowerCase();
+              final assignmentId = assignment['assignment_id'];
+              final assignedAt = assignment['assigned_at'];
+              final assignedBy = assignment['assigned_by'];
+              final isAssigned = assignmentId != null || 
+                                assignedAt != null ||
+                                assignedBy != null ||
+                                planType == 'assigned' ||
+                                planType == 'ai_generated';
+              
+              final isManualPlan = planType == 'manual' || 
+                                  assignment['created_by'] != null ||
+                                  assignment['user_id'] == 2; // Plans created by user 2
+              
+              return isAssigned && !isManualPlan;
+            }).toList();
+            
+            assignments.assignAll(filteredFallback.map((e) => Map<String, dynamic>.from(e)));
+            print('✅ Schedules - Fallback assigned plans loaded: ${assignments.length} items');
           } catch (fallbackError) {
             print('❌ Schedules - Fallback also failed: $fallbackError');
             assignments.clear();
@@ -135,13 +239,99 @@ class SchedulesController extends GetxController {
   }
 
   // Schedules-specific methods
+  
+  /// Create completion data for a single exercise
+  Map<String, dynamic> _createCompletionItem({
+    required int itemId,
+    required int setsCompleted,
+    required int repsCompleted,
+    required double weightUsed,
+    required int minutesSpent,
+    String? notes,
+  }) {
+    return {
+      'item_id': itemId,
+      'sets_completed': setsCompleted,
+      'reps_completed': repsCompleted,
+      'weight_used': weightUsed,
+      'minutes_spent': minutesSpent,
+      if (notes != null) 'notes': notes,
+    };
+  }
+  
+  /// Submit completion data to API
+  Future<void> _submitCompletionToAPI({
+    required int dailyPlanId,
+    required List<Map<String, dynamic>> completionData,
+  }) async {
+    try {
+      final dio = await _manualService.getAuthedDio();
+      
+      final payload = {
+        'daily_plan_id': dailyPlanId,
+        'completion_data': completionData,
+      };
+      
+      print('🔍 Submitting completion to API:');
+      print('Endpoint: /api/trainingPlans/complete');
+      print('Payload: $payload');
+      
+      final res = await dio.post('/api/trainingPlans/complete', data: payload);
+      
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        print('✅ Completion submitted successfully');
+      } else {
+        throw Exception('Failed to submit completion: ${res.statusMessage}');
+      }
+    } catch (e) {
+      print('❌ Failed to submit completion to API: $e');
+      rethrow;
+    }
+  }
+  
   Future<Map<String, dynamic>> getAssignmentDetails(int assignmentId) async {
-    return await _manualService.getAssignmentDetails(assignmentId);
+    try {
+      // Use ManualTrainingService to get the assignment details
+      return await _manualService.getAssignmentDetails(assignmentId);
+    } catch (e) {
+      print('❌ Schedules - Failed to get assignment details for ID $assignmentId: $e');
+      // Return a fallback structure
+      return {
+        'id': assignmentId,
+        'assignment_id': assignmentId,
+        'exercises_details': [],
+        'items': [],
+        'error': 'Failed to fetch assignment details: $e',
+      };
+    }
   }
 
-  void startSchedule(Map<String, dynamic> schedule) {
+  void startSchedule(Map<String, dynamic> schedule) async {
     final int? scheduleId = int.tryParse(schedule['id']?.toString() ?? '');
     if (scheduleId == null) return;
+    
+    // Check if there's already an active plan (from any tab)
+    final existingActivePlan = await _getAnyActivePlan();
+    if (existingActivePlan != null) {
+      final currentPlanId = int.tryParse(existingActivePlan['id']?.toString() ?? '');
+      
+      // If trying to start the same plan, just return
+      if (currentPlanId == scheduleId) {
+        print('ℹ️ SchedulesController - Schedule $scheduleId is already active');
+        return;
+      }
+      
+      // Show confirmation dialog to stop current plan
+      final shouldStopCurrent = await _showStopCurrentPlanDialog(existingActivePlan);
+      if (!shouldStopCurrent) {
+        print('❌ SchedulesController - User cancelled starting new schedule');
+        return;
+      }
+      
+      // Stop the current active plan from any tab
+      print('🛑 SchedulesController - Stopping current active plan $currentPlanId');
+      await _stopAnyActivePlan();
+    }
     
     _startedSchedules[scheduleId] = true;
     _activeSchedule.value = schedule;
@@ -297,7 +487,7 @@ class SchedulesController extends GetxController {
       final totalMinutes = int.tryParse(workout['minutes']?.toString() ?? '0') ?? 0;
       final actualMinutes = totalMinutes - remaining;
 
-      final completionItem = DailyTrainingService.createCompletionItem(
+      final completionItem = _createCompletionItem(
         itemId: int.tryParse(workout['id']?.toString() ?? '0') ?? 0,
         setsCompleted: int.tryParse(workout['sets']?.toString() ?? '0') ?? 0,
         repsCompleted: int.tryParse(workout['reps']?.toString() ?? '0') ?? 0,
@@ -308,7 +498,7 @@ class SchedulesController extends GetxController {
 
       // Try to submit to API first
       try {
-        await _dailyTrainingService.submitCompletion(
+        await _submitCompletionToAPI(
           dailyPlanId: planId,
           completionData: [completionItem],
         );
@@ -382,7 +572,7 @@ class SchedulesController extends GetxController {
         
         if (retryCount < 3) { // Max 3 retries
           try {
-            await _dailyTrainingService.submitCompletion(
+            await _submitCompletionToAPI(
               dailyPlanId: completion['plan_id'] as int,
               completionData: [completion['completion_item'] as Map<String, dynamic>],
             );
@@ -428,114 +618,111 @@ class SchedulesController extends GetxController {
         }
       }
       
-      // Apply day-aware workout distribution logic
-      if (workouts.isNotEmpty) {
-        return _applyDayAwareWorkoutDistributionLogic(workouts, dayIndex);
+      // Calculate total days from start/end date or use provided total_days
+      int totalDays = 1;
+      if (actualPlan['start_date'] != null && actualPlan['end_date'] != null) {
+        final start = DateTime.tryParse(actualPlan['start_date']);
+        final end = DateTime.tryParse(actualPlan['end_date']);
+        if (start != null && end != null) {
+          totalDays = max(1, end.difference(start).inDays + 1);
+        }
+      } else {
+        totalDays = max(1, (actualPlan['total_days'] ?? 1) as int);
       }
       
-      return [];
+      print('🔍 Schedules - _getDayWorkouts: Day $dayIndex of $totalDays total days');
+      print('🔍 Schedules - Total workouts available: ${workouts.length}');
+      
+      if (workouts.isEmpty) {
+        return [];
+      }
+      
+      // Distribute workouts across days properly
+      return _distributeWorkoutsAcrossDays(workouts, totalDays, dayIndex);
+      
     } catch (e) {
+      print('❌ Schedules - Error in _getDayWorkouts: $e');
       return [];
     }
   }
 
-  List<Map<String, dynamic>> _applyDayAwareWorkoutDistributionLogic(List<Map<String, dynamic>> workouts, int dayIndex) {
-    if (workouts.isEmpty) return workouts;
+
+  List<Map<String, dynamic>> _distributeWorkoutsAcrossDays(List<Map<String, dynamic>> workouts, int totalDays, int dayIndex) {
+    if (workouts.isEmpty) return [];
     
-    print('🔍 CONTROLLER DAY-AWARE DISTRIBUTION LOGIC - Day $dayIndex, Input workouts: ${workouts.length}');
-    for (int i = 0; i < workouts.length; i++) {
-      final workout = workouts[i];
-      print('🔍 Controller Workout $i: ${workout['name']} - ${workout['minutes']} minutes');
+    print('🔍 Schedules - _distributeWorkoutsAcrossDays: ${workouts.length} workouts across $totalDays days, requesting day $dayIndex');
+    
+    // Per-day pairing rule:
+    // Pick two consecutive workouts for the given day index. If their combined
+    // minutes exceed 80, show only the first; otherwise show both.
+    if (workouts.length == 1) {
+      final single = Map<String, dynamic>.from(workouts.first);
+      print('🔍 Schedules - Only one workout available: ${single['name']}');
+      return [single];
     }
-    
-    // Calculate total minutes for all workouts
-    int totalMinutes = 0;
-    for (var workout in workouts) {
-      final minutes = int.tryParse(workout['minutes']?.toString() ?? '0') ?? 0;
-      totalMinutes += minutes;
-      print('🔍 Controller Adding ${workout['name']}: $minutes minutes (total: $totalMinutes)');
+
+    final int firstIdx = dayIndex % workouts.length;
+    final int secondIdx = (firstIdx + 1) % workouts.length;
+    final Map<String, dynamic> first = Map<String, dynamic>.from(workouts[firstIdx]);
+    final Map<String, dynamic> second = Map<String, dynamic>.from(workouts[secondIdx]);
+    final int m1 = _extractWorkoutMinutes(first);
+    final int m2 = _extractWorkoutMinutes(second);
+    final int combined = m1 + m2;
+    print('🔍 Schedules - Day $dayIndex candidates: ${first['name']}($m1) + ${second['name']}($m2) = $combined');
+    if (combined > 80) {
+      print('🔍 Schedules - Combined > 80 → show 1 workout');
+      return [first];
     }
-    
-    print('🔍 CONTROLLER FINAL Total workout minutes: $totalMinutes');
-    print('🔍 CONTROLLER FINAL Number of workouts: ${workouts.length}');
-    
-    // Day-aware workout distribution
-    if (workouts.length >= 4) {
-      // If we have 4 or more workouts, alternate between different pairs
-      List<Map<String, dynamic>> dayWorkouts = [];
-      
-      if (dayIndex % 2 == 0) {
-        // Even days (0, 2, 4...): Show first 2 workouts (Chest, Biceps)
-        dayWorkouts = workouts.take(2).toList();
-        print('🔍 CONTROLLER DAY $dayIndex (EVEN): Showing first 2 workouts: ${dayWorkouts.map((w) => w['name']).toList()}');
-      } else {
-        // Odd days (1, 3, 5...): Show next 2 workouts (Triceps, Shoulders)
-        if (workouts.length >= 4) {
-          dayWorkouts = workouts.skip(2).take(2).toList();
-          print('🔍 CONTROLLER DAY $dayIndex (ODD): Showing next 2 workouts: ${dayWorkouts.map((w) => w['name']).toList()}');
-        } else {
-          // Fallback if we don't have enough workouts
-          dayWorkouts = workouts.take(2).toList();
-          print('🔍 CONTROLLER DAY $dayIndex (ODD FALLBACK): Showing first 2 workouts: ${dayWorkouts.map((w) => w['name']).toList()}');
-        }
-      }
-      
-      return dayWorkouts;
-    } else if (workouts.length > 2) {
-      // If we have 3 workouts, alternate between different combinations
-      List<Map<String, dynamic>> dayWorkouts = [];
-      
-      if (dayIndex % 2 == 0) {
-        // Even days: Show first 2 workouts
-        dayWorkouts = workouts.take(2).toList();
-        print('🔍 CONTROLLER DAY $dayIndex (EVEN): Showing first 2 workouts: ${dayWorkouts.map((w) => w['name']).toList()}');
-      } else {
-        // Odd days: Show last 2 workouts
-        dayWorkouts = workouts.skip(1).take(2).toList();
-        print('🔍 CONTROLLER DAY $dayIndex (ODD): Showing last 2 workouts: ${dayWorkouts.map((w) => w['name']).toList()}');
-      }
-      
-      return dayWorkouts;
-    } else {
-      // If we have 2 or fewer workouts, show all workouts
-      print('🔍 CONTROLLER DAY $dayIndex: Showing all ${workouts.length} workouts: ${workouts.map((w) => w['name']).toList()}');
-      return workouts;
-    }
+    print('🔍 Schedules - Combined <= 80 → show 2 workouts');
+    return [first, second];
   }
 
   List<Map<String, dynamic>> _applyWorkoutDistributionLogic(List<Map<String, dynamic>> workouts) {
     if (workouts.isEmpty) return workouts;
     
-    print('🔍 CONTROLLER DISTRIBUTION LOGIC - Input workouts: ${workouts.length}');
+    print('🔍 ASSIGNED PLANS DISTRIBUTION LOGIC - Input workouts: ${workouts.length}');
     for (int i = 0; i < workouts.length; i++) {
       final workout = workouts[i];
-      print('🔍 Controller Workout $i: ${workout['name']} - ${workout['minutes']} minutes');
+      print('🔍 Assigned Workout $i: ${workout['name']} - ${_extractWorkoutMinutes(workout)} minutes');
     }
     
     // Calculate total minutes for all workouts
     int totalMinutes = 0;
     for (var workout in workouts) {
-      final minutes = int.tryParse(workout['minutes']?.toString() ?? '0') ?? 0;
+      final minutes = _extractWorkoutMinutes(workout);
       totalMinutes += minutes;
-      print('🔍 Controller Adding ${workout['name']}: $minutes minutes (total: $totalMinutes)');
+      print('🔍 Assigned Adding ${workout['name']}: $minutes minutes (total: $totalMinutes)');
     }
     
-    print('🔍 CONTROLLER FINAL Total workout minutes: $totalMinutes');
-    print('🔍 CONTROLLER FINAL Number of workouts: ${workouts.length}');
+    print('🔍 ASSIGNED FINAL Total workout minutes: $totalMinutes');
+    print('🔍 ASSIGNED FINAL Number of workouts: ${workouts.length}');
     
-    
-    // Apply distribution logic
-    if (totalMinutes > 80 && workouts.length > 2) {
-      // If total minutes > 80 and we have more than 2 workouts, show only 2 workouts
-      print('🔍 CONTROLLER ✅ APPLYING LOGIC: Total minutes ($totalMinutes) > 80, showing only 2 workouts');
-      final filteredWorkouts = workouts.take(2).toList();
-      print('🔍 CONTROLLER ✅ FILTERED: Showing ${filteredWorkouts.length} workouts: ${filteredWorkouts.map((w) => w['name']).toList()}');
+    // ASSIGNED PLANS: Apply limiting logic (limit to 2 workouts when total >= 80 minutes)
+    if (((totalMinutes >= 80) || (workouts.length > 2)) && workouts.length > 1) {
+      // If total minutes >= 80 or we have many workouts, show only 1 workout
+      print('🔍 ASSIGNED ✅ APPLYING LOGIC: Total minutes ($totalMinutes) >= 80 or >2 workouts, showing only 1 workout');
+      final filteredWorkouts = workouts.take(1).toList();
+      print('🔍 ASSIGNED ✅ FILTERED: Showing ${filteredWorkouts.length} workouts: ${filteredWorkouts.map((w) => w['name']).toList()}');
       return filteredWorkouts;
     } else {
-      // If total minutes <= 80 or we have 2 or fewer workouts, show all workouts
-      print('🔍 CONTROLLER ✅ APPLYING LOGIC: Total minutes ($totalMinutes) <= 80 or <= 2 workouts, showing all ${workouts.length} workouts');
+      // If total minutes < 80 or we have 2 or fewer workouts, show all workouts
+      print('🔍 ASSIGNED ✅ APPLYING LOGIC: Total minutes ($totalMinutes) < 80 or <= 2 workouts, showing all ${workouts.length} workouts');
       return workouts;
     }
+  }
+
+  // Extract minutes value from varied backend keys; defaults to 0 on failure
+  int _extractWorkoutMinutes(Map<String, dynamic> workout) {
+    final dynamic raw = workout['minutes'] ?? workout['training_minutes'] ?? workout['trainingMinutes'];
+    if (raw == null) return 0;
+    final String asString = raw.toString();
+    // Handle double/int strings safely
+    final double? asDouble = double.tryParse(asString);
+    if (asDouble != null) {
+      return asDouble.round();
+    }
+    final int? asInt = int.tryParse(asString);
+    return asInt ?? 0;
   }
 
   bool isWorkoutStarted(String workoutKey) {
@@ -691,7 +878,7 @@ class SchedulesController extends GetxController {
         final totalMinutes = int.tryParse(workout['minutes']?.toString() ?? '0') ?? 0;
         final actualMinutes = totalMinutes - remainingMinutes;
         
-        final completionItem = DailyTrainingService.createCompletionItem(
+        final completionItem = _createCompletionItem(
           itemId: int.tryParse(workout['id']?.toString() ?? '0') ?? 0,
           setsCompleted: int.tryParse(workout['sets']?.toString() ?? '0') ?? 0,
           repsCompleted: int.tryParse(workout['reps']?.toString() ?? '0') ?? 0,
@@ -704,8 +891,8 @@ class SchedulesController extends GetxController {
       }
       
       if (completionData.isNotEmpty) {
-        // Submit to daily training API
-        await _dailyTrainingService.submitCompletion(
+        // Submit to API
+        await _submitCompletionToAPI(
           dailyPlanId: planId,
           completionData: completionData,
         );
@@ -729,5 +916,83 @@ class SchedulesController extends GetxController {
   // Refresh schedules data
   Future<void> refreshSchedules() async {
     await loadSchedulesData();
+  }
+
+  /// Check for active plans from any tab (Plans, Schedules, etc.)
+  Future<Map<String, dynamic>?> _getAnyActivePlan() async {
+    // Check Schedules tab active plan
+    if (_activeSchedule.value != null) {
+      print('🔍 SchedulesController - Found active plan in Schedules tab: ${_activeSchedule.value!['id']}');
+      return _activeSchedule.value;
+    }
+    
+    // Check Plans tab active plan
+    try {
+      if (Get.isRegistered<PlansController>()) {
+        final plansController = Get.find<PlansController>();
+        if (plansController.activePlan != null) {
+          print('🔍 SchedulesController - Found active plan in Plans tab: ${plansController.activePlan!['id']}');
+          return plansController.activePlan;
+        }
+      }
+    } catch (e) {
+      print('⚠️ SchedulesController - Could not check PlansController: $e');
+    }
+    
+    print('🔍 SchedulesController - No active plans found in any tab');
+    return null;
+  }
+
+  /// Stop active plan from any tab
+  Future<void> _stopAnyActivePlan() async {
+    // Stop Schedules tab active plan
+    if (_activeSchedule.value != null) {
+      print('🛑 SchedulesController - Stopping active plan from Schedules tab');
+      stopSchedule(_activeSchedule.value!);
+    }
+    
+    // Stop Plans tab active plan
+    try {
+      if (Get.isRegistered<PlansController>()) {
+        final plansController = Get.find<PlansController>();
+        if (plansController.activePlan != null) {
+          print('🛑 SchedulesController - Stopping active plan from Plans tab');
+          plansController.stopPlan(plansController.activePlan!);
+        }
+      }
+    } catch (e) {
+      print('⚠️ SchedulesController - Could not stop PlansController plan: $e');
+    }
+  }
+
+  /// Show confirmation dialog to stop current plan
+  Future<bool> _showStopCurrentPlanDialog(Map<String, dynamic> currentPlan) async {
+    final planName = currentPlan['exercise_plan_category'] ?? 
+                    currentPlan['name'] ?? 
+                    'Current Plan';
+    
+    return await Get.dialog<bool>(
+      AlertDialog(
+        title: const Text('Stop Current Plan?'),
+        content: Text(
+          'You already have an active plan: "$planName"\n\n'
+          'Only one plan can be active at a time. Do you want to stop the current plan and start the new one?'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Get.back(result: true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('Stop & Start New'),
+          ),
+        ],
+      ),
+      barrierDismissible: false,
+    ) ?? false;
   }
 }

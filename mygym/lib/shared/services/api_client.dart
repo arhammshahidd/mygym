@@ -33,7 +33,7 @@ class ApiClient {
       BaseOptions(
         baseUrl: _computeBaseUrl(),
         connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(seconds: 60), // Increased for AI requests
         headers: {
           'Content-Type': 'application/json',
         },
@@ -48,7 +48,7 @@ class ApiClient {
     dio.interceptors.add(InterceptorsWrapper(
       onError: (error, handler) async {
         if (error.response?.statusCode == 401) {
-          print('🔐 401 Unauthorized received - validating token before logout');
+          print('🔐 401 Unauthorized received');
           try {
             final authService = AuthService();
             final stillValid = await authService.validateTokenWithBackend();
@@ -57,14 +57,14 @@ class ApiClient {
               await authService.handleSessionExpiration();
               // Avoid named routes; leave navigation to controllers/flows
             } else {
-              print('🔐 Token validated as still valid after 401 - ignoring');
+              print('🔐 Token validated as still valid after 401');
             }
           } catch (e) {
             // Network or other transient errors - don't logout to avoid accidental sign-outs
-            print('🔐 Token revalidation failed after 401 (non-fatal): $e');
+            print('🔐 Token revalidation failed after 401 (non-fatal)');
           }
         } else if (error.response?.statusCode == 403) {
-          print('🔐 403 Forbidden received - checking token validity');
+          print('🔐 403 Forbidden received');
           try {
             final authService = AuthService();
             final stillValid = await authService.validateTokenWithBackend();
@@ -73,10 +73,10 @@ class ApiClient {
               await authService.handleSessionExpiration();
             } else {
               // Token is valid but access denied - this might be a permissions issue
-              print('🔐 Token valid but access denied - possible permissions issue');
+              print('🔐 Token valid but access denied');
             }
           } catch (e) {
-            print('🔐 Token validation failed after 403 (non-fatal): $e');
+            print('🔐 Token validation failed after 403 (non-fatal)');
           }
         }
         handler.next(error);

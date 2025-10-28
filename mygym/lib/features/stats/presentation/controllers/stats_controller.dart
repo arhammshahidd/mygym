@@ -99,15 +99,55 @@ class StatsController extends GetxController {
         print('📊 Stats - Fetching training statistics...');
         final statsData = await _dailyTrainingService.getTrainingStats();
         print('📊 Stats - Training stats result: $statsData');
+        print('📊 Stats - Training stats type: ${statsData.runtimeType}');
         
-        trainingStats.value = TrainingStats.fromJson(statsData);
-        _cachedStats.assignAll(statsData);
-        print('✅ Stats - Training stats updated');
+        if (statsData is Map<String, dynamic>) {
+          trainingStats.value = TrainingStats.fromJson(statsData);
+          _cachedStats.assignAll(statsData);
+          print('✅ Stats - Training stats updated');
+        } else {
+          print('⚠️ Stats - Invalid stats data format: ${statsData.runtimeType}');
+          // Create default stats if data format is invalid
+          trainingStats.value = TrainingStats(
+            totalWorkoutsCompleted: 0,
+            totalMinutesSpent: 0,
+            totalWeightLifted: 0.0,
+            currentStreak: 0,
+            longestStreak: 0,
+            workoutsByCategory: {},
+            recentWorkouts: [],
+          );
+        }
       } catch (e) {
         print('⚠️ Stats - Failed to load training stats: $e');
         // Use cached data if available
         if (_cachedStats.isNotEmpty) {
-          trainingStats.value = TrainingStats.fromJson(_cachedStats);
+          try {
+            trainingStats.value = TrainingStats.fromJson(_cachedStats);
+          } catch (parseError) {
+            print('❌ Stats - Failed to parse cached stats: $parseError');
+            // Create default stats as fallback
+            trainingStats.value = TrainingStats(
+              totalWorkoutsCompleted: 0,
+              totalMinutesSpent: 0,
+              totalWeightLifted: 0.0,
+              currentStreak: 0,
+              longestStreak: 0,
+              workoutsByCategory: {},
+              recentWorkouts: [],
+            );
+          }
+        } else {
+          // Create default stats if no cached data
+          trainingStats.value = TrainingStats(
+            totalWorkoutsCompleted: 0,
+            totalMinutesSpent: 0,
+            totalWeightLifted: 0.0,
+            currentStreak: 0,
+            longestStreak: 0,
+            workoutsByCategory: {},
+            recentWorkouts: [],
+          );
         }
       }
 

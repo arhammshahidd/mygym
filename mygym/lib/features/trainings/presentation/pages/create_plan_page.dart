@@ -167,7 +167,9 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
       'end_date': endDate,
       'total_workouts': totalWorkouts,
       'training_minutes': totalMinutes,
+      'total_exercises': totalWorkouts, // Add total_exercises field
       'items': items,
+      'exercises_details': items, // Add exercises_details field for backend storage
     };
 
     print('🔍 Create Plan - Payload: $payload');

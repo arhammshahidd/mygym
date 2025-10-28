@@ -145,9 +145,9 @@ class ManualTrainingService {
   Future<void> testApiConnectivity() async {
     try {
       final dio = await _authedDio();
-      print('🔍 Testing API connectivity...');
-      print('🔍 Base URL: ${dio.options.baseUrl}');
-      print('🔍 Auth header: ${dio.options.headers['Authorization']}');
+    print('🔍 Testing API connectivity...');
+    print('🔍 Base URL: ${dio.options.baseUrl}');
+    // Do not print Authorization header
       
       // Test with user ID 2 (from database screenshot)
       final res = await dio.get('/api/trainingPlans/assignments/user/2');

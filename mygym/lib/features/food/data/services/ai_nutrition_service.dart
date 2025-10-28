@@ -4,6 +4,36 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../shared/services/api_client.dart';
 import '../../../auth/data/services/auth_service.dart';
 
+/// Custom exception for Gemini AI errors with structured error handling
+class GeminiAIException implements Exception {
+  final String errorCode;
+  final String errorMessage;
+  final int? retryAfter; // seconds
+
+  const GeminiAIException({
+    required this.errorCode,
+    required this.errorMessage,
+    this.retryAfter,
+  });
+
+  @override
+  String toString() {
+    return 'GeminiAIException: $errorCode - $errorMessage${retryAfter != null ? ' (retry after ${retryAfter}s)' : ''}';
+  }
+
+  /// Check if this is a service unavailable error
+  bool get isServiceUnavailable => errorCode == 'SERVICE_UNAVAILABLE';
+
+  /// Check if this is a generation failed error
+  bool get isGenerationFailed => errorCode == 'GENERATION_FAILED';
+
+  /// Check if this is a payload too large error
+  bool get isPayloadTooLarge => errorCode == 'PAYLOAD_TOO_LARGE';
+  
+  /// Check if this is a timeout error
+  bool get isTimeout => errorCode == 'TIMEOUT';
+}
+
 class AiNutritionService {
   final AuthService _auth = AuthService();
 
@@ -34,11 +64,108 @@ class AiNutritionService {
     throw Exception('AI request failed: ${data ?? lastError?.message ?? 'unknown error'}');
   }
 
-  // Create generated meal plan (store plan + items)
+  // Create generated meal plan using Gemini AI (NEW ENDPOINT)
   Future<Map<String, dynamic>> createGeneratedPlan(Map<String, dynamic> payload) async {
     final dio = await _authedDio();
+    
+    // Set longer timeout for AI requests
+    dio.options.receiveTimeout = const Duration(seconds: 90);
+    
     try {
-      // If no items provided, generate via OpenAI first to create a full plan
+      print('🤖 Using Gemini AI for meal plan generation via new endpoint');
+      print('🤖 Payload: $payload');
+      
+      // Use the new Gemini AI endpoint
+      final res = await dio.post('/api/appAIMeals/generated/ai', data: payload);
+      
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        print('✅ Gemini AI meal plan creation successful - Status: ${res.statusCode}');
+        print('🔍 Raw response data: ${res.data}');
+        print('🔍 Response data type: ${res.data.runtimeType}');
+        
+        final result = Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
+        
+        // Check for structured error response from backend
+        if (result['success'] == false) {
+          final errorCode = result['error_code'] ?? 'UNKNOWN_ERROR';
+          final errorMessage = result['error'] ?? 'Unknown error occurred';
+          print('❌ Backend returned error: $errorCode - $errorMessage');
+          
+          // Create structured error for the controller to handle
+          throw GeminiAIException(
+            errorCode: errorCode,
+            errorMessage: errorMessage,
+            retryAfter: result['retry_after'],
+          );
+        }
+        
+        print('✅ Gemini AI meal plan created successfully');
+        print('🔍 Processed result: $result');
+        print('🔍 Result keys: ${result.keys.toList()}');
+        
+        // Check if we have a plan ID
+        final planId = result['id'] ?? result['data']?['id'];
+        print('🔍 Created plan ID: $planId');
+        
+        return result;
+      }
+      throw Exception('Failed to create Gemini AI meal plan: HTTP ${res.statusCode}');
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      final data = e.response?.data;
+      print('❌ Gemini AI meal plan creation failed: $e');
+      print('❌ Status: $status, Data: $data');
+      
+      // Handle structured error responses from backend
+      if (data is Map && data.containsKey('success') && data['success'] == false) {
+        final errorCode = data['error_code'] ?? 'UNKNOWN_ERROR';
+        final errorMessage = data['error'] ?? 'Unknown error occurred';
+        print('❌ Structured error from backend: $errorCode - $errorMessage');
+        
+        throw GeminiAIException(
+          errorCode: errorCode,
+          errorMessage: errorMessage,
+          retryAfter: data['retry_after'],
+        );
+      }
+      
+      // Handle HTTP status codes
+      if (status == 413) {
+        throw GeminiAIException(
+          errorCode: 'PAYLOAD_TOO_LARGE',
+          errorMessage: 'Request payload is too large. Please reduce the data size.',
+        );
+      } else if (status == 502 || status == 503 || status == 504) {
+        throw GeminiAIException(
+          errorCode: 'SERVICE_UNAVAILABLE',
+          errorMessage: 'Try again later. Server is under repair.',
+          retryAfter: 300,
+        );
+      }
+      
+      // Handle timeout specifically
+      if (e.type == DioExceptionType.receiveTimeout || e.type == DioExceptionType.connectionTimeout) {
+        throw GeminiAIException(
+          errorCode: 'TIMEOUT',
+          errorMessage: 'AI meal plan generation is taking longer than expected. Please try again in a few minutes.',
+          retryAfter: 300, // 5 minutes
+        );
+      }
+      
+      // Generic error handling
+      final errorMessage = data is String ? data : (data is Map ? data['message'] ?? data['error'] ?? data.toString() : e.message);
+      throw GeminiAIException(
+        errorCode: 'GENERATION_FAILED',
+        errorMessage: 'Failed to generate AI meal plan: $errorMessage',
+      );
+    }
+  }
+
+  // Legacy method for backward compatibility (now uses Gemini AI)
+  Future<Map<String, dynamic>> createGeneratedPlanLegacy(Map<String, dynamic> payload) async {
+    final dio = await _authedDio();
+    try {
+      // If no items provided, generate via local AI first to create a full plan
       Map<String, dynamic> toSend = payload;
       final items = (payload['items'] is List) ? payload['items'] as List : const [];
       if (items.isEmpty) {
@@ -47,7 +174,7 @@ class AiNutritionService {
         final trainingData = preferences['training_data'] as Map<String, dynamic>? ?? {};
         
         // Use local AI for meal plan generation
-        print('🤖 Using local AI for meal plan generation');
+        print('🤖 Using local AI for meal plan generation (legacy)');
         final gen = await _generateMealPlanWithLocalAI(
               userId: payload['user_id'] ?? 0,
               mealPlan: payload['meal_plan_category']?.toString() ?? payload['meal_category']?.toString() ?? 'Weight Loss',
@@ -114,13 +241,33 @@ class AiNutritionService {
   Future<Map<String, dynamic>> getGeneratedPlan(dynamic id) async {
     final dio = await _authedDio();
     print('🔍 Fetching plan details for ID: $id');
-    final res = await dio.get('/api/appAIMeals/generated/$id');
+    
+    // Try to get plan with items included
+    final res = await dio.get('/api/appAIMeals/generated/$id', queryParameters: {
+      'include_items': true,
+      'include_meals': true,
+    });
     print('🔍 Backend response status: ${res.statusCode}');
     print('🔍 Backend response data: ${res.data}');
     
     if (res.statusCode == 200) {
       final result = Map<String, dynamic>.from(res.data is Map ? res.data : {'data': res.data});
       print('🔍 Processed result keys: ${result.keys.toList()}');
+      
+      // If no items found, try alternative endpoint
+      if (!result.containsKey('items') && !result.containsKey('data')) {
+        print('🔍 No items found in main response, trying alternative endpoint...');
+        try {
+          final itemsRes = await dio.get('/api/appAIMeals/generated/$id/items');
+          if (itemsRes.statusCode == 200) {
+            print('🔍 Items response: ${itemsRes.data}');
+            result['items'] = itemsRes.data;
+          }
+        } catch (e) {
+          print('⚠️ Alternative items endpoint failed: $e');
+        }
+      }
+      
       return result;
     }
     throw Exception('Failed to fetch generated meal plan: HTTP ${res.statusCode}');
@@ -128,16 +275,38 @@ class AiNutritionService {
 
   Future<List<dynamic>> listGeneratedPlans({int? userId}) async {
     final dio = await _authedDio();
+    print('🔍 AI Service - Listing generated plans for user: $userId');
+    print('🔍 AI Service - Endpoint: /api/appAIMeals/generated');
+    
     final res = await dio.get('/api/appAIMeals/generated', queryParameters: {
       if (userId != null) 'user_id': userId,
     });
+    
+    print('🔍 AI Service - Response status: ${res.statusCode}');
+    print('🔍 AI Service - Response data: ${res.data}');
+    
     if (res.statusCode == 200) {
       final data = res.data;
-      if (data is List) return data;
-      if (data is Map && data['data'] is List) return List<dynamic>.from(data['data']);
-      if (data is Map && data['items'] is List) return List<dynamic>.from(data['items']);
+      print('🔍 AI Service - Data type: ${data.runtimeType}');
+      
+      if (data is List) {
+        print('🔍 AI Service - Data is List with ${data.length} items');
+        return data;
+      }
+      if (data is Map && data['data'] is List) {
+        final list = List<dynamic>.from(data['data']);
+        print('🔍 AI Service - Data is Map with data key containing ${list.length} items');
+        return list;
+      }
+      if (data is Map && data['items'] is List) {
+        final list = List<dynamic>.from(data['items']);
+        print('🔍 AI Service - Data is Map with items key containing ${list.length} items');
+        return list;
+      }
+      print('⚠️ AI Service - No valid list found in response, returning empty list');
       return [];
     }
+    print('❌ AI Service - Request failed with status: ${res.statusCode}');
     throw Exception('Failed to list generated meal plans');
   }
 

@@ -31,14 +31,64 @@ class NutritionController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    
+    // First restore cached data to show immediately
+    _loadCachedSchedules();
+    _loadCachedAiPlan();
+    
+    // Then load fresh data from backend
     loadAssignedFromBackend();
-    // Clear any cached dummy data and load real plans from backend
-    aiGeneratedPlan.value = null;
-    aiStatus.value = AIPlanStatus.draft;
     loadGeneratedPlansFromBackend();
 
     // Load persisted meal plan state and advance day if past midnight
     _restoreMealPlanState().then((_) => _maybeAdvanceMealDayForToday());
+  }
+
+  /// Show service unavailable dialog with retry information
+  void _showServiceUnavailableDialog(String message, int? retryAfter) {
+    final retryMinutes = retryAfter != null ? (retryAfter / 60).ceil() : 5;
+    
+    Get.dialog(
+      AlertDialog(
+        title: const Text('Service Temporarily Unavailable'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message),
+            const SizedBox(height: 12),
+            Text(
+              'Please try again in $retryMinutes minutes.',
+              style: const TextStyle(
+                fontWeight: FontWeight.w500,
+                color: Colors.orange,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+      barrierDismissible: false,
+    );
+  }
+
+  /// Show error snackbar with user-friendly message
+  void _showErrorSnackBar(String message) {
+    Get.snackbar(
+      'Error',
+      message,
+      snackPosition: SnackPosition.BOTTOM,
+      backgroundColor: Colors.red,
+      colorText: Colors.white,
+      duration: const Duration(seconds: 4),
+      margin: const EdgeInsets.all(16),
+      borderRadius: 8,
+    );
   }
 
   // Removed _seedDemoData() - now using real AI-generated plans from backend
@@ -189,7 +239,10 @@ class NutritionController extends GetxController {
       await profile.loadUserProfileIfNeeded();
       final userId = profile.user?.id;
       final list = await _food.listAssignments(userId: userId);
-      if (list.isEmpty) return;
+      if (list.isEmpty) {
+        _saveSchedulesCache(); // Save empty state
+        return;
+      }
       final latest = list.first; // assume latest or server sorted
 
       List<Map<String, dynamic>> parseMeal(dynamic raw) {
@@ -260,8 +313,9 @@ class NutritionController extends GetxController {
               ? (m['fats'] as num).round()
               : int.tryParse('${m['fats'] ?? m['fat'] ?? m['fat_g']}') ?? 0,
           grams: (m['grams'] is num) ? (m['grams'] as num).round() : int.tryParse('${m['grams']}') ?? 0,
+          notes: (m['notes'] ?? '').toString(),
         );
-        print('✅ DEBUG: Created MealItem: ${item.name} - ${item.calories} cal, ${item.proteinGrams}g protein, ${item.carbsGrams}g carbs, ${item.fatGrams}g fat');
+        print('✅ DEBUG: Created MealItem: ${item.name} - ${item.calories} cal, ${item.proteinGrams}g protein, ${item.carbsGrams}g carbs, ${item.fatGrams}g fat, notes: ${item.notes}');
         return item;
       }
 
@@ -295,52 +349,82 @@ class NutritionController extends GetxController {
       addItems(lunch, MealType.lunch);
       addItems(dinner, MealType.dinner);
 
-      // Compute total days from assignment dates; fill missing days
+      // Compute total days from assignment dates; create all days in range
       int totalDays = 0;
       try {
         final String? sd = latest['start_date']?.toString();
         final String? ed = latest['end_date']?.toString();
+        print('🔍 DEBUG: Assignment dates - Start: $sd, End: $ed');
         if (sd != null && ed != null && sd.isNotEmpty && ed.isNotEmpty) {
           final start = DateTime.parse(sd);
           final end = DateTime.parse(ed);
           // Use exclusive end difference to avoid off-by-one; minimum 1 day span
           totalDays = end.difference(start).inDays;
           if (totalDays <= 0) totalDays = 1;
+          print('🔍 DEBUG: Calculated total days from dates: $totalDays');
         }
-      } catch (_) {
+      } catch (e) {
+        print('⚠️ DEBUG: Error calculating total days: $e');
         totalDays = 0;
       }
 
-      // Ensure day entries exist for the whole span
-      if (totalDays > 0) {
-        final existingDaysSorted = dayMap.keys.toList()..sort();
-        // If no template days exist, keep empty placeholders
-        for (int d = 1; d <= totalDays; d++) {
-          if (!dayMap.containsKey(d)) {
-            if (existingDaysSorted.isNotEmpty) {
-              // Repeat templates in order and shuffle items deterministically per day
-              final int templateIndex = (d - 1) % existingDaysSorted.length;
-              final DayMeals template = dayMap[existingDaysSorted[templateIndex]]!;
-              List<MealItem> shuffledCopy(List<MealItem> src, int seed) {
-                final list = List<MealItem>.from(src);
-                list.shuffle(Random(seed));
-                return list;
-              }
-              dayMap[d] = DayMeals(
-                dayNumber: d,
-                breakfast: shuffledCopy(template.breakfast, d * 31 + 1),
-                lunch: shuffledCopy(template.lunch, d * 31 + 2),
-                dinner: shuffledCopy(template.dinner, d * 31 + 3),
-              );
-            } else {
-              dayMap[d] = DayMeals(dayNumber: d, breakfast: <MealItem>[], lunch: <MealItem>[], dinner: <MealItem>[]);
-            }
+      // Collect all meal items for distribution across all days
+      final allMealItems = <String, List<MealItem>>{
+        'breakfast': [],
+        'lunch': [],
+        'dinner': [],
+      };
+      
+      // Collect all meal items from existing days
+      for (final day in dayMap.values) {
+        allMealItems['breakfast']!.addAll(day.breakfast);
+        allMealItems['lunch']!.addAll(day.lunch);
+        allMealItems['dinner']!.addAll(day.dinner);
+      }
+      
+      print('🔍 DEBUG: Collected meal items for distribution - Breakfast: ${allMealItems['breakfast']!.length}, Lunch: ${allMealItems['lunch']!.length}, Dinner: ${allMealItems['dinner']!.length}');
+
+      // Create all days from 1 to totalDays with distributed meals
+      final builtDays = <DayMeals>[];
+      for (int dayNum = 1; dayNum <= totalDays; dayNum++) {
+        final existingDay = dayMap[dayNum];
+        if (existingDay != null) {
+          // Use existing day with meal data
+          builtDays.add(existingDay);
+          print('🔍 DEBUG: Day $dayNum - Using existing day with ${existingDay.breakfast.length + existingDay.lunch.length + existingDay.dinner.length} meals');
+        } else {
+          // Create day with distributed meals using rotation strategy
+          final breakfast = <MealItem>[];
+          final lunch = <MealItem>[];
+          final dinner = <MealItem>[];
+          
+          // Distribute meals using rotation strategy
+          if (allMealItems['breakfast']!.isNotEmpty) {
+            final breakfastIndex = (dayNum - 1) % allMealItems['breakfast']!.length;
+            breakfast.add(allMealItems['breakfast']![breakfastIndex]);
           }
+          
+          if (allMealItems['lunch']!.isNotEmpty) {
+            final lunchIndex = (dayNum - 1) % allMealItems['lunch']!.length;
+            lunch.add(allMealItems['lunch']![lunchIndex]);
+          }
+          
+          if (allMealItems['dinner']!.isNotEmpty) {
+            final dinnerIndex = (dayNum - 1) % allMealItems['dinner']!.length;
+            dinner.add(allMealItems['dinner']![dinnerIndex]);
+          }
+          
+          builtDays.add(DayMeals(
+            dayNumber: dayNum,
+            breakfast: breakfast,
+            lunch: lunch,
+            dinner: dinner,
+          ));
+          print('🔍 DEBUG: Day $dayNum - Created with distributed meals: ${breakfast.length} breakfast, ${lunch.length} lunch, ${dinner.length} dinner');
         }
       }
-
-      final days = dayMap.keys.toList()..sort();
-      final builtDays = days.map((d) => dayMap[d]!).toList();
+      
+      print('🔍 DEBUG: Final built days count: ${builtDays.length}');
 
       final title = (latest['menu_plan_category']?.toString().trim().isNotEmpty == true)
           ? latest['menu_plan_category'].toString()
@@ -356,6 +440,7 @@ class NutritionController extends GetxController {
 
       assignedPlan.value = plan;
       activeDayIndex.value = 0;
+      _saveSchedulesCache(); // Save cache after loading from backend
     } catch (e) {
       // silent fail; page can still show local plans
     }
@@ -363,6 +448,7 @@ class NutritionController extends GetxController {
   void assignPlan(MealPlan plan) {
     assignedPlan.value = plan;
     activeDayIndex.value = 0;
+    _saveSchedulesCache(); // Save cache when plan is assigned
   }
 
   void startPlan() {
@@ -372,6 +458,7 @@ class NutritionController extends GetxController {
       mealPlanActive.value = true;
       _activeMealSource.value = 'assigned';
       _persistMealPlanState();
+      _saveSchedulesCache(); // Save cache when plan is started
     }
   }
 
@@ -487,6 +574,48 @@ class NutritionController extends GetxController {
       mealPlanActive.value = prefs.getBool('nutrition_meal_active_user_$userId') ?? false;
       _activeMealSource.value = prefs.getString('nutrition_active_source_user_$userId') ?? 'none';
       activeDayIndex.value = prefs.getInt('nutrition_active_day_index_user_$userId') ?? 0;
+      
+      // If we have an active meal plan, ensure the assigned plan is restored
+      if (mealPlanActive.value && _activeMealSource.value == 'assigned') {
+        // The assigned plan should already be loaded from cache in _loadCachedSchedules
+        // But we need to make sure it's properly set
+        final assignedRaw = prefs.getString('assigned_plan_cache_user_$userId');
+        if (assignedRaw != null && assignedRaw.isNotEmpty && assignedPlan.value == null) {
+          // If assigned plan is not loaded, load it from cache
+          final assignedData = jsonDecode(assignedRaw);
+          final days = List<DayMeals>.from((assignedData['days'] as List).map((d) => DayMeals(
+                dayNumber: d['day'] ?? 1,
+                breakfast: List<MealItem>.from((d['breakfast'] as List).map((m) => MealItem(
+                      name: m['name'],
+                      calories: m['calories'],
+                      proteinGrams: m['protein'],
+                      carbsGrams: m['carbs'],
+                      fatGrams: m['fats'],
+                    ))),
+                lunch: List<MealItem>.from((d['lunch'] as List).map((m) => MealItem(
+                      name: m['name'],
+                      calories: m['calories'],
+                      proteinGrams: m['protein'],
+                      carbsGrams: m['carbs'],
+                      fatGrams: m['fats'],
+                    ))),
+                dinner: List<MealItem>.from((d['dinner'] as List).map((m) => MealItem(
+                      name: m['name'],
+                      calories: m['calories'],
+                      proteinGrams: m['protein'],
+                      carbsGrams: m['carbs'],
+                      fatGrams: m['fats'],
+                    ))),
+              )));
+          assignedPlan.value = MealPlan(
+            id: assignedData['id'],
+            title: assignedData['title'],
+            category: categoryFromString(assignedData['category'] ?? ''),
+            note: assignedData['note'] ?? '',
+            days: days,
+          );
+        }
+      }
     } catch (_) {}
   }
 
@@ -758,6 +887,7 @@ class NutritionController extends GetxController {
       print('Daily Carbs: ${dailyCarbs.toStringAsFixed(1)}g');
       print('Total Items: ${items.length}');
       
+      // Build payload for Gemini AI backend (NEW ENDPOINT: /api/appAIMeals/generated/ai)
       final payload = {
         if (requestId != null) 'request_id': requestId,
         'user_id': userId,
@@ -778,7 +908,7 @@ class NutritionController extends GetxController {
         'total_carbs': totalCarbs,
         'total_days': totalDays,
         'approval_status': 'PENDING',
-        // Let AI generate all meal items - no hardcoded items
+        // Let Gemini AI generate all meal items - no hardcoded items
         // 'items': items,
         // Gym-specific requirements
         'activity_level': 'high',
@@ -816,9 +946,46 @@ class NutritionController extends GetxController {
       lastAiPayload.value = payload;
       Map<String, dynamic> res;
       try {
+        print('🤖 Starting Gemini AI meal plan generation...');
+        print('🤖 This may take up to 90 seconds for complex meal plans...');
         res = await _ai.createGeneratedPlan(payload);
+        print('✅ Gemini AI meal plan generation completed successfully');
+      } on GeminiAIException catch (e) {
+        print('❌ Gemini AI Exception: ${e.errorCode} - ${e.errorMessage}');
+        
+        // Handle different error types with user-friendly messages
+        if (e.isServiceUnavailable) {
+          _showServiceUnavailableDialog(e.errorMessage, e.retryAfter);
+          return; // Don't continue processing
+        } else if (e.isTimeout) {
+          _showServiceUnavailableDialog(
+            'AI meal plan generation is taking longer than expected. This usually happens when the AI is processing complex meal plans. Please try again in a few minutes.',
+            e.retryAfter,
+          );
+          return; // Don't continue processing
+        } else if (e.isPayloadTooLarge) {
+          // Try with minimal payload
+          print('🔄 Trying with minimal payload due to size limit');
+          final minimal = Map<String, dynamic>.from(payload);
+          minimal.remove('total_calories');
+          minimal.remove('total_proteins');
+          minimal.remove('total_fats');
+          minimal.remove('total_carbs');
+          minimal.remove('description'); // Remove long description
+          try {
+            res = await _ai.createGeneratedPlan(minimal);
+          } catch (retryError) {
+            _showErrorSnackBar('Failed to generate meal plan: ${e.errorMessage}');
+            return;
+          }
+        } else {
+          // Show error message for other types
+          _showErrorSnackBar(e.errorMessage);
+          return;
+        }
       } on Exception catch (e) {
         final msg = e.toString();
+        print('❌ General Exception: $msg');
         if (msg.contains('413') || msg.contains('request entity too large')) {
           // Fallback: try creating plan with minimized payload (no totals either)
           final minimal = Map<String, dynamic>.from(payload);
@@ -826,9 +993,15 @@ class NutritionController extends GetxController {
           minimal.remove('total_proteins');
           minimal.remove('total_fats');
           minimal.remove('total_carbs');
-          res = await _ai.createGeneratedPlan(minimal);
+          try {
+            res = await _ai.createGeneratedPlan(minimal);
+          } catch (retryError) {
+            _showErrorSnackBar('Failed to generate meal plan. Please try again.');
+            return;
+          }
         } else {
-          rethrow;
+          _showErrorSnackBar('Failed to generate meal plan: $msg');
+          return;
         }
       }
       
@@ -836,37 +1009,23 @@ class NutritionController extends GetxController {
       final Map<String, dynamic> root = Map<String, dynamic>.from(res);
       final Map<String, dynamic> data = Map<String, dynamic>.from(root['data'] ?? root);
       
-      // AI will generate all meal items automatically via OpenAI
+      // Gemini AI will generate all meal items automatically
       final createdId = data['id'] ?? root['id'];
       if (createdId != null) {
         print('AI plan created with ID: $createdId');
         print('AI plan created: ${height}cm, ${weight}kg, ${targetDailyCalories.toStringAsFixed(0)} cal/day');
         print('Training: ${trainingData['has_training'] ? '${trainingData['training_intensity']} intensity' : 'none'}');
         
-        // Show user notification about OpenAI status
-        if (AppConfig.openAIApiKey.isEmpty) {
-          Get.snackbar(
-            'Plan Created',
-            'Basic meal plan created. For AI-generated personalized meals, configure OpenAI API key.',
-            snackPosition: SnackPosition.BOTTOM,
-            backgroundColor: Colors.orange,
-            colorText: Colors.white,
-            duration: const Duration(seconds: 4),
-          );
-        } else {
-          Get.snackbar(
-            'AI Plan Created',
-            'Personalized meal plan generated with AI!',
-            snackPosition: SnackPosition.BOTTOM,
-            backgroundColor: Colors.green,
-            colorText: Colors.white,
-          );
-        }
+        // Success notification is now handled in the UI layer
+        print('✅ AI meal plan created successfully - UI will show success message');
       }
       aiGeneratedPlan.value = null;
       aiStatus.value = AIPlanStatus.draft;
+      
       // Refresh the list of generated plans from backend
+      print('🔄 Refreshing generated plans list after AI creation...');
       await loadGeneratedPlansFromBackend();
+      print('🔄 Generated plans list refreshed. Current count: ${generatedPlans.length}');
     } finally {
       aiLoading.value = false;
     }
@@ -932,6 +1091,99 @@ class NutritionController extends GetxController {
     return PlanCategory.weightLoss;
   }
 
+  Future<void> _saveSchedulesCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = Get.find<ProfileController>().user?.id ?? 0;
+      
+      if (schedules.isNotEmpty) {
+        final schedulesJson = schedules.map((schedule) => {
+          'id': schedule.id,
+          'title': schedule.title,
+          'category': schedule.category.name,
+          'note': schedule.note,
+          'days': schedule.days
+              .map((d) => {
+                    'day': d.dayNumber,
+                    'breakfast': d.breakfast
+                        .map((m) => {
+                              'name': m.name,
+                              'calories': m.calories,
+                              'protein': m.proteinGrams,
+                              'carbs': m.carbsGrams,
+                              'fats': m.fatGrams,
+                            })
+                        .toList(),
+                    'lunch': d.lunch
+                        .map((m) => {
+                              'name': m.name,
+                              'calories': m.calories,
+                              'protein': m.proteinGrams,
+                              'carbs': m.carbsGrams,
+                              'fats': m.fatGrams,
+                            })
+                        .toList(),
+                    'dinner': d.dinner
+                        .map((m) => {
+                              'name': m.name,
+                              'calories': m.calories,
+                              'protein': m.proteinGrams,
+                              'carbs': m.carbsGrams,
+                              'fats': m.fatGrams,
+                            })
+                        .toList(),
+                  })
+              .toList(),
+        }).toList();
+        
+        await prefs.setString('schedules_cache_user_$userId', jsonEncode(schedulesJson));
+        
+        // Also cache the assigned plan if it exists
+        if (assignedPlan.value != null) {
+          final assignedJson = {
+            'id': assignedPlan.value!.id,
+            'title': assignedPlan.value!.title,
+            'category': assignedPlan.value!.category.name,
+            'note': assignedPlan.value!.note,
+            'days': assignedPlan.value!.days
+                .map((d) => {
+                      'day': d.dayNumber,
+                      'breakfast': d.breakfast
+                          .map((m) => {
+                                'name': m.name,
+                                'calories': m.calories,
+                                'protein': m.proteinGrams,
+                                'carbs': m.carbsGrams,
+                                'fats': m.fatGrams,
+                              })
+                          .toList(),
+                      'lunch': d.lunch
+                          .map((m) => {
+                                'name': m.name,
+                                'calories': m.calories,
+                                'protein': m.proteinGrams,
+                                'carbs': m.carbsGrams,
+                                'fats': m.fatGrams,
+                              })
+                          .toList(),
+                      'dinner': d.dinner
+                          .map((m) => {
+                                'name': m.name,
+                                'calories': m.calories,
+                                'protein': m.proteinGrams,
+                                'carbs': m.carbsGrams,
+                                'fats': m.fatGrams,
+                              })
+                          .toList(),
+                    })
+                .toList(),
+          };
+          await prefs.setString('assigned_plan_cache_user_$userId', jsonEncode(assignedJson));
+        }
+      }
+    } catch (_) {}
+  }
+
   Future<void> _saveAiCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -977,6 +1229,90 @@ class NutritionController extends GetxController {
               .toList(),
         };
         await prefs.setString('ai_meal_plan_cache', jsonEncode({'plan': json, 'status': status}));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadCachedSchedules() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = Get.find<ProfileController>().user?.id ?? 0;
+      
+      // Load cached schedules
+      final schedulesRaw = prefs.getString('schedules_cache_user_$userId');
+      if (schedulesRaw != null && schedulesRaw.isNotEmpty) {
+        final schedulesJson = jsonDecode(schedulesRaw) as List;
+        final cachedSchedules = schedulesJson.map((scheduleData) {
+          final days = List<DayMeals>.from((scheduleData['days'] as List).map((d) => DayMeals(
+                dayNumber: d['day'] ?? 1,
+                breakfast: List<MealItem>.from((d['breakfast'] as List).map((m) => MealItem(
+                      name: m['name'],
+                      calories: m['calories'],
+                      proteinGrams: m['protein'],
+                      carbsGrams: m['carbs'],
+                      fatGrams: m['fats'],
+                    ))),
+                lunch: List<MealItem>.from((d['lunch'] as List).map((m) => MealItem(
+                      name: m['name'],
+                      calories: m['calories'],
+                      proteinGrams: m['protein'],
+                      carbsGrams: m['carbs'],
+                      fatGrams: m['fats'],
+                    ))),
+                dinner: List<MealItem>.from((d['dinner'] as List).map((m) => MealItem(
+                      name: m['name'],
+                      calories: m['calories'],
+                      proteinGrams: m['protein'],
+                      carbsGrams: m['carbs'],
+                      fatGrams: m['fats'],
+                    ))),
+              )));
+          return MealPlan(
+            id: scheduleData['id'],
+            title: scheduleData['title'],
+            category: categoryFromString(scheduleData['category'] ?? ''),
+            note: scheduleData['note'] ?? '',
+            days: days,
+          );
+        }).toList();
+        schedules.assignAll(cachedSchedules);
+      }
+      
+      // Load cached assigned plan
+      final assignedRaw = prefs.getString('assigned_plan_cache_user_$userId');
+      if (assignedRaw != null && assignedRaw.isNotEmpty) {
+        final assignedData = jsonDecode(assignedRaw);
+        final days = List<DayMeals>.from((assignedData['days'] as List).map((d) => DayMeals(
+              dayNumber: d['day'] ?? 1,
+              breakfast: List<MealItem>.from((d['breakfast'] as List).map((m) => MealItem(
+                    name: m['name'],
+                    calories: m['calories'],
+                    proteinGrams: m['protein'],
+                    carbsGrams: m['carbs'],
+                    fatGrams: m['fats'],
+                  ))),
+              lunch: List<MealItem>.from((d['lunch'] as List).map((m) => MealItem(
+                    name: m['name'],
+                    calories: m['calories'],
+                    proteinGrams: m['protein'],
+                    carbsGrams: m['carbs'],
+                    fatGrams: m['fats'],
+                  ))),
+              dinner: List<MealItem>.from((d['dinner'] as List).map((m) => MealItem(
+                    name: m['name'],
+                    calories: m['calories'],
+                    proteinGrams: m['protein'],
+                    carbsGrams: m['carbs'],
+                    fatGrams: m['fats'],
+                  ))),
+            )));
+        assignedPlan.value = MealPlan(
+          id: assignedData['id'],
+          title: assignedData['title'],
+          category: categoryFromString(assignedData['category'] ?? ''),
+          note: assignedData['note'] ?? '',
+          days: days,
+        );
       }
     } catch (_) {}
   }
@@ -1029,32 +1365,45 @@ class NutritionController extends GetxController {
 
   Future<void> loadGeneratedPlansFromBackend() async {
     try {
-      print('Loading generated plans from backend...');
+      print('🔄 Loading generated plans from backend...');
       final profile = Get.find<ProfileController>();
       await profile.loadUserProfileIfNeeded();
       final user = profile.user;
-      print('User ID: ${user?.id}');
+      print('🔄 User ID: ${user?.id}');
       if (user?.id == null) {
-        print('No user ID found - using default user ID');
+        print('⚠️ No user ID found - using default user ID');
         // Use a default user ID if profile is not loaded
         final defaultUserId = 1;
         final plans = await _ai.listGeneratedPlans(userId: defaultUserId);
+        print('🔄 Fetched ${plans.length} plans from backend (default user)');
         // Convert backend format to frontend format for each plan
         final convertedPlans = plans.map((plan) => _convertBackendToFrontendFormat(plan)).toList();
         generatedPlans.assignAll(convertedPlans.cast<Map<String, dynamic>>());
+        print('🔄 Updated generatedPlans list with ${generatedPlans.length} items (default user)');
         return;
       }
 
       final plans = await _ai.listGeneratedPlans(userId: user!.id);
-      print('Fetched ${plans.length} plans from backend');
-      print('Plans data: $plans');
+      print('🔄 Fetched ${plans.length} plans from backend for user ${user.id}');
+      print('🔄 Raw plans data: $plans');
       
       // Convert backend format to frontend format for each plan
       final convertedPlans = plans.map((plan) => _convertBackendToFrontendFormat(plan)).toList();
+      print('🔄 Converted ${convertedPlans.length} plans to frontend format');
       generatedPlans.value = List<Map<String, dynamic>>.from(convertedPlans);
-      print('Updated generatedPlans list with ${generatedPlans.length} items');
+      print('✅ Updated generatedPlans list with ${generatedPlans.length} items');
+      
+      // Debug: Print each plan's details
+      for (int i = 0; i < generatedPlans.length; i++) {
+        final plan = generatedPlans[i];
+        final actualDays = plan['days']?.length ?? 0;
+        final backendDays = plan['total_days'] ?? 'N/A';
+        print('🔄 Plan $i: ID=${plan['id']}, Title=${plan['title']}, Actual Days=$actualDays, Backend Days=$backendDays');
+      }
     } catch (e) {
-      print('Error loading generated plans: $e');
+      print('❌ Error loading generated plans: $e');
+      print('❌ Error type: ${e.runtimeType}');
+      print('❌ Error details: ${e.toString()}');
     }
   }
 
@@ -1104,85 +1453,163 @@ class NutritionController extends GetxController {
       // Check for different possible data structures
       List<dynamic> dailyPlans = [];
       
-      if (backendData.containsKey('daily_plans')) {
-        dailyPlans = backendData['daily_plans'] as List? ?? [];
-        print('🔍 DEBUG: Found daily_plans with ${dailyPlans.length} items');
-      } else if (backendData.containsKey('items')) {
-        // If items are directly in the root, group them by date
-        final items = backendData['items'] as List? ?? [];
-        print('🔍 DEBUG: Found items directly in root with ${items.length} items');
+      // First check if data is nested under 'data' key
+      Map<String, dynamic> dataToProcess = backendData;
+      if (backendData.containsKey('data') && backendData['data'] is Map) {
+        dataToProcess = backendData['data'] as Map<String, dynamic>;
+        print('🔍 DEBUG: Using nested data section with keys: ${dataToProcess.keys.toList()}');
+      }
+      
+      // Check for meal items directly in the response (most likely structure)
+      if (dataToProcess.containsKey('items') && dataToProcess['items'] is List) {
+        final items = dataToProcess['items'] as List;
+        print('🔍 DEBUG: Found items directly with ${items.length} entries');
         
-        // Group items by date
-        final Map<String, List<dynamic>> groupedByDate = {};
+        // Group items by date and meal type
+        final Map<String, Map<String, List<dynamic>>> groupedByDate = {};
+        
         for (final item in items) {
-          final date = item['date']?.toString() ?? 'unknown';
-          if (!groupedByDate.containsKey(date)) {
-            groupedByDate[date] = [];
+          if (item is Map<String, dynamic>) {
+            final date = item['date']?.toString() ?? 'unknown';
+            final mealType = item['meal_type']?.toString() ?? 'Breakfast';
+            
+            if (!groupedByDate.containsKey(date)) {
+              groupedByDate[date] = {'Breakfast': [], 'Lunch': [], 'Dinner': []};
+            }
+            
+            // Normalize meal type to standard format
+            String normalizedMealType = 'Breakfast';
+            if (mealType.toLowerCase().contains('lunch')) {
+              normalizedMealType = 'Lunch';
+            } else if (mealType.toLowerCase().contains('dinner')) {
+              normalizedMealType = 'Dinner';
+            }
+            
+            groupedByDate[date]![normalizedMealType]!.add(item);
           }
-          groupedByDate[date]!.add(item);
         }
         
         // Convert grouped items to daily_plans format
         for (final entry in groupedByDate.entries) {
           dailyPlans.add({
             'date': entry.key,
-            'items': entry.value,
+            'items': [
+              ...entry.value['Breakfast']!,
+              ...entry.value['Lunch']!,
+              ...entry.value['Dinner']!,
+            ],
           });
         }
         print('🔍 DEBUG: Grouped items into ${dailyPlans.length} daily plans');
-      } else if (backendData.containsKey('days')) {
+      } else if (dataToProcess.containsKey('daily_plans')) {
+        dailyPlans = dataToProcess['daily_plans'] as List? ?? [];
+        print('🔍 DEBUG: Found daily_plans with ${dailyPlans.length} items');
+      } else if (dataToProcess.containsKey('days')) {
         // If already in frontend format, return as is
         print('🔍 DEBUG: Data already in frontend format');
+        return dataToProcess;
+      } else if (backendData.containsKey('days')) {
+        // Check root level for days
+        print('🔍 DEBUG: Data already in frontend format at root level');
         return backendData;
+      } else {
+        // Check for other possible structures
+        print('🔍 DEBUG: No daily_plans or items found, checking for other structures...');
+        print('🔍 DEBUG: Available keys in dataToProcess: ${dataToProcess.keys.toList()}');
+        
+        // Check if there are any list-like structures that might contain meal data
+        for (final key in dataToProcess.keys) {
+          final value = dataToProcess[key];
+          if (value is List && value.isNotEmpty) {
+            print('🔍 DEBUG: Found list structure under key "$key" with ${value.length} items');
+            print('🔍 DEBUG: First item in "$key": ${value.first}');
+            
+            // Check if this looks like meal items
+            if (value.first is Map) {
+              final firstItem = value.first as Map<String, dynamic>;
+              if (firstItem.containsKey('food_item_name') || firstItem.containsKey('meal_type')) {
+                print('🔍 DEBUG: Key "$key" appears to contain meal items');
+                dailyPlans = value;
+                break;
+              }
+            }
+          }
+        }
       }
+      
+      // Process daily plans and create ALL days (including empty ones)
+      final totalDays = backendData['total_days'] ?? 90; // Use actual total_days from database
+      print('🔍 DEBUG: Processing ${dailyPlans.length} daily plans, creating ${totalDays} total days');
       
       final days = <Map<String, dynamic>>[];
       
+      // Create a map of existing daily plans for quick lookup
+      final existingPlans = <int, Map<String, dynamic>>{};
       for (int i = 0; i < dailyPlans.length; i++) {
         final dayPlan = dailyPlans[i];
-        print('🔍 DEBUG: Processing day plan $i: $dayPlan');
-        
+        final dayNumber = dayPlan['day'] ?? (i + 1);
+        existingPlans[dayNumber] = dayPlan;
+      }
+      
+      // Collect all meal items for distribution
+      final allMealItems = <String, List<Map<String, dynamic>>>{
+        'breakfast': [],
+        'lunch': [],
+        'dinner': [],
+      };
+      
+      // First, collect all meal items from existing plans
+      for (final dayPlan in dailyPlans) {
         final items = dayPlan['items'] as List? ?? [];
-        final breakfast = <Map<String, dynamic>>[];
-        final lunch = <Map<String, dynamic>>[];
-        final dinner = <Map<String, dynamic>>[];
-        
-        print('🔍 DEBUG: Day $i has ${items.length} items');
-        
         for (final item in items) {
           final mealType = item['meal_type']?.toString().toLowerCase() ?? '';
           final mealItem = {
             'name': item['food_item_name'] ?? item['name'] ?? 'Food',
             'calories': item['calories'] ?? 0,
-            'protein': item['protein'] ?? 0,
+            'protein': item['proteins'] ?? item['protein'] ?? 0,
             'carbs': item['carbs'] ?? 0,
-            'fats': item['fat'] ?? item['fats'] ?? 0,
+            'fats': item['fats'] ?? item['fat'] ?? 0,
             'grams': item['grams'] ?? 0,
           };
           
-          print('🔍 DEBUG: Adding $mealType item: ${mealItem['name']}');
-          
-          switch (mealType) {
-            case 'breakfast':
-              breakfast.add(mealItem);
-              break;
-            case 'lunch':
-              lunch.add(mealItem);
-              break;
-            case 'dinner':
-              dinner.add(mealItem);
-              break;
+          if (allMealItems.containsKey(mealType)) {
+            allMealItems[mealType]!.add(mealItem);
           }
+        }
+      }
+      
+      print('🔍 DEBUG: Collected meal items - Breakfast: ${allMealItems['breakfast']!.length}, Lunch: ${allMealItems['lunch']!.length}, Dinner: ${allMealItems['dinner']!.length}');
+      
+      // Create all days from 1 to totalDays with distributed meals
+      for (int dayNum = 1; dayNum <= totalDays; dayNum++) {
+        final breakfast = <Map<String, dynamic>>[];
+        final lunch = <Map<String, dynamic>>[];
+        final dinner = <Map<String, dynamic>>[];
+        
+        // Distribute meals using rotation strategy
+        if (allMealItems['breakfast']!.isNotEmpty) {
+          final breakfastIndex = (dayNum - 1) % allMealItems['breakfast']!.length;
+          breakfast.add(allMealItems['breakfast']![breakfastIndex]);
+        }
+        
+        if (allMealItems['lunch']!.isNotEmpty) {
+          final lunchIndex = (dayNum - 1) % allMealItems['lunch']!.length;
+          lunch.add(allMealItems['lunch']![lunchIndex]);
+        }
+        
+        if (allMealItems['dinner']!.isNotEmpty) {
+          final dinnerIndex = (dayNum - 1) % allMealItems['dinner']!.length;
+          dinner.add(allMealItems['dinner']![dinnerIndex]);
         }
         
         days.add({
-          'day': days.length + 1,
+          'day': dayNum,
           'breakfast': breakfast,
           'lunch': lunch,
           'dinner': dinner,
         });
         
-        print('🔍 DEBUG: Day ${days.length} created with ${breakfast.length} breakfast, ${lunch.length} lunch, ${dinner.length} dinner items');
+        print('🔍 DEBUG: Day $dayNum created with ${breakfast.length} breakfast, ${lunch.length} lunch, ${dinner.length} dinner items');
       }
       
       // Create frontend format

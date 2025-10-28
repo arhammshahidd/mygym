@@ -223,6 +223,7 @@ class _EditPlanPageState extends State<EditPlanPage> {
             'user_level': _userLevelCtrl.text.trim(),
             'start_date': _start.toIso8601String().split('T').first,
             'end_date': _end.toIso8601String().split('T').first,
+            'total_exercises': _items.length, // Add total_exercises field
             'items': _items.map((e) => {
                   'workout_name': e['workout_name']?.toString() ?? '',
                   'exercise_types': e['exercise_types']?.toString() ?? '',
@@ -233,6 +234,16 @@ class _EditPlanPageState extends State<EditPlanPage> {
                   'user_level': _userLevelCtrl.text.trim(),
                   'exercise_plan_category': _categoryCtrl.text.trim(),
                 }).toList(),
+            'exercises_details': _items.map((e) => {
+                  'workout_name': e['workout_name']?.toString() ?? '',
+                  'exercise_types': e['exercise_types']?.toString() ?? '',
+                  'sets': int.tryParse(e['sets']?.toString() ?? '') ?? 0,
+                  'reps': int.tryParse(e['reps']?.toString() ?? '') ?? 0,
+                  'weight_kg': double.tryParse(e['weight_kg']?.toString() ?? '') ?? 0,
+                  'minutes': int.tryParse(e['minutes']?.toString() ?? '') ?? 0,
+                  'user_level': _userLevelCtrl.text.trim(),
+                  'exercise_plan_category': _categoryCtrl.text.trim(),
+                }).toList(), // Add exercises_details field for backend storage
           };
     
     print('🔍 Edit Plan - Save payload:');

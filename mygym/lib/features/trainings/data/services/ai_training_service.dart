@@ -34,16 +34,12 @@ class AiTrainingService {
   Future<List<dynamic>> listGenerated({int? userId}) async {
     final dio = await _authedDio();
     print('🤖 AI Training Service - Fetching AI generated plans...');
-    print('🤖 User ID: $userId');
-    print('🤖 Endpoint: /api/appAIPlans/generated');
     
     final res = await dio.get('/api/appAIPlans/generated', queryParameters: {
       if (userId != null) 'user_id': userId,
     });
     
     print('🤖 AI Training Service - Response status: ${res.statusCode}');
-    print('🤖 AI Training Service - Response data: ${res.data}');
-    print('🤖 AI Training Service - Response data type: ${res.data.runtimeType}');
     
     if (res.statusCode == 200) {
       final data = res.data;
@@ -53,11 +49,11 @@ class AiTrainingService {
           print('🤖 AI Training Service - List is empty, returning empty list');
           return [];
         }
-        print('🤖 AI Training Service - First item: ${data.first}');
+        // Do not print full items
         return List<dynamic>.from(data.map((e) => _normalizeGenerated(e)));
       }
       if (data is Map<String, dynamic>) {
-        print('🤖 AI Training Service - Data is Map with keys: ${data.keys.toList()}');
+        print('🤖 AI Training Service - Data is Map');
         if (data['data'] is List) {
           final list = data['data'] as List;
           print('🤖 AI Training Service - Found data.data with ${list.length} items');
@@ -85,15 +81,24 @@ class AiTrainingService {
 
   Future<Map<String, dynamic>> getGenerated(int id) async {
     final dio = await _authedDio();
+    print('🔍 AI Training Service - Fetching AI plan $id...');
+    
     final res = await dio.get('/api/appAIPlans/generated/$id');
+    print('🔍 AI Training Service - Response status: ${res.statusCode}');
+    print('🔍 AI Training Service - Response data keys: ${res.data is Map ? (res.data as Map).keys.toList() : 'Not a Map'}');
+    
     if (res.statusCode == 200) {
       final planData = _normalizeGenerated(res.data);
+      print('🔍 AI Training Service - Normalized plan data keys: ${planData.keys.toList()}');
+      print('🔍 AI Training Service - Items count after normalization: ${(planData['items'] as List?)?.length ?? 0}');
+      print('🔍 AI Training Service - Exercises details count after normalization: ${(planData['exercises_details'] as List?)?.length ?? 0}');
       
       // If the plan doesn't have items, try to fetch them separately
       if (planData['items'] == null || (planData['items'] as List).isEmpty) {
         print('🔍 AI Training Service - Plan has no items, trying to fetch items separately...');
         try {
           final itemsRes = await dio.get('/api/appAIPlans/generated/$id/items');
+          print('🔍 AI Training Service - Items response status: ${itemsRes.statusCode}');
           if (itemsRes.statusCode == 200) {
             final itemsData = itemsRes.data;
             List<Map<String, dynamic>> items = [];
@@ -107,8 +112,10 @@ class AiTrainingService {
             }
             
             if (items.isNotEmpty) {
-              print('🔍 AI Training Service - Fetched ${items.length} items separately');
+              print('🔍 AI Training Service - Fetched items separately: ${items.length} items');
               planData['items'] = items;
+            } else {
+              print('⚠️ AI Training Service - No items found in separate fetch');
             }
           }
         } catch (e) {
@@ -116,6 +123,7 @@ class AiTrainingService {
         }
       }
       
+      print('🔍 AI Training Service - Final plan data items count: ${(planData['items'] as List?)?.length ?? 0}');
       return planData;
     }
     throw Exception('Failed to fetch AI generated plan');
@@ -124,16 +132,14 @@ class AiTrainingService {
   Future<Map<String, dynamic>> createGenerated(Map<String, dynamic> payload) async {
     final dio = await _authedDio();
     try {
-      print('🤖 createGenerated called with payload: $payload');
+      print('🤖 createGenerated called');
       // If no items provided, generate via Gemini first to create a full plan (only if frontend has API key)
       Map<String, dynamic> toSend = payload;
       final items = (payload['items'] is List) ? payload['items'] as List : const [];
-      print('🤖 Items in payload: ${items.length}');
+      // Don't print items
       if (items.isEmpty) {
         // Check if frontend has Gemini API key
         print('🤖 Checking frontend Gemini API key...');
-        print('🤖 AppConfig.geminiApiKey.isNotEmpty: ${AppConfig.geminiApiKey.isNotEmpty}');
-        print('🤖 AppConfig.geminiApiKey length: ${AppConfig.geminiApiKey.length}');
         if (AppConfig.geminiApiKey.isNotEmpty) {
           print('🤖 Frontend has Gemini key, generating client-side...');
           // Use Gemini as the AI generator
@@ -190,18 +196,12 @@ class AiTrainingService {
     final dio = await _authedDio();
     
     print('🤖 Backend generation: Sending payload to backend for AI generation...');
-    print('🤖 Backend generation: Payload: $payload');
-    print('🤖 Backend generation: Payload keys: ${payload.keys.toList()}');
-    print('🤖 Backend generation: Items in payload: ${payload['items']}');
-    print('🤖 Backend generation: Exercise plan category: ${payload['exercise_plan_category']}');
-    print('🤖 Backend generation: User level: ${payload['user_level']}');
-    print('🤖 Backend generation: Future goal: ${payload['future_goal']}');
     
     // Send the payload directly to backend - let backend handle Gemini API calls
     // Use the generate endpoint which creates the plan with items
     final res = await dio.post('/api/appAIPlans/generate', data: payload);
     print('🤖 Backend generation: Response status: ${res.statusCode}');
-    print('🤖 Backend generation: Response data: ${res.data}');
+    // Do not print full response data
     
     if (res.statusCode == 200 || res.statusCode == 201) {
       print('✅ Backend generation: Successfully created plan via backend');
@@ -210,13 +210,7 @@ class AiTrainingService {
       // Check if the response contains items
       if (responseData.containsKey('data') && responseData['data'] is Map) {
         final planData = responseData['data'] as Map<String, dynamic>;
-        final items = planData['items'] as List?;
-        print('🤖 Backend generation: Plan created with ${items?.length ?? 0} items');
-        if (items != null && items.isNotEmpty) {
-          print('🤖 Backend generation: Sample item: ${items.first}');
-        } else {
-          print('⚠️ Backend generation: No items generated by backend!');
-        }
+        // Do not print items
       }
       
       return responseData;
@@ -243,20 +237,51 @@ class AiTrainingService {
         final m = Map<String, dynamic>.from(e as Map);
         // Use only AI-generated workout names, no hardcoded fallbacks
         final rawName = (m['workout_name'] ?? m['name'] ?? '').toString().trim();
-        m['workout_name'] = rawName.isEmpty ? 'AI Generated Workout' : rawName;
-        m['minutes'] = m['minutes'] ?? m['training_minutes'];
-        m['weight_kg'] = m['weight_kg'] ?? m['weight'];
-        // Ensure exercise_types is numeric count (for GIF selection)
-        final types = m['exercise_types'];
-        if (types is String) {
-          final parsed = int.tryParse(types);
-          if (parsed != null) m['exercise_types'] = parsed;
-        }
+              m['workout_name'] = rawName.isEmpty ? 'AI Generated Workout' : rawName;
+              m['minutes'] = m['minutes'] ?? m['training_minutes'];
+              m['weight_kg'] = m['weight_kg'] ?? m['weight'];
+              // Handle new weight range fields
+              m['weight_min_kg'] = m['weight_min_kg'] ?? m['weight_min'];
+              m['weight_max_kg'] = m['weight_max_kg'] ?? m['weight_max'];
+              // Ensure exercise_types is numeric count (for GIF selection)
+              final types = m['exercise_types'];
+              if (types is String) {
+                final parsed = int.tryParse(types);
+                if (parsed != null) m['exercise_types'] = parsed;
+              }
         return m;
       }).toList();
     } else {
       // If no items array, initialize as empty
       actualData['items'] = <Map<String, dynamic>>[];
+    }
+    
+    // Handle exercises_details array (same normalization as items)
+    if (actualData['exercises_details'] is List) {
+      actualData['exercises_details'] = (actualData['exercises_details'] as List).map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        // Use only AI-generated workout names, no hardcoded fallbacks
+        final rawName = (m['workout_name'] ?? m['name'] ?? '').toString().trim();
+              m['workout_name'] = rawName.isEmpty ? 'AI Generated Workout' : rawName;
+              m['minutes'] = m['minutes'] ?? m['training_minutes'];
+              m['weight_kg'] = m['weight_kg'] ?? m['weight'];
+              // Handle new weight range fields
+              m['weight_min_kg'] = m['weight_min_kg'] ?? m['weight_min'];
+              m['weight_max_kg'] = m['weight_max_kg'] ?? m['weight_max'];
+              // Ensure exercise_types is numeric count (for GIF selection)
+              final types = m['exercise_types'];
+              if (types is String) {
+                final parsed = int.tryParse(types);
+                if (parsed != null) m['exercise_types'] = parsed;
+              }
+        return m;
+      }).toList();
+    } else if (actualData['items'] is List && actualData['items'].isNotEmpty) {
+      // If no exercises_details but we have items, use items as exercises_details
+      actualData['exercises_details'] = actualData['items'];
+    } else {
+      // If no exercises_details array, initialize as empty
+      actualData['exercises_details'] = <Map<String, dynamic>>[];
     }
     
     return actualData;
@@ -291,13 +316,22 @@ class AiTrainingService {
       'exercise_plan_category': input['exercise_plan_category']?.toString() ?? input['exercise_plan']?.toString() ?? 'Strength',
       'total_workouts': input['total_workouts'] ?? totalWorkouts,
       'training_minutes': input['training_minutes'] ?? input['total_training_minutes'] ?? totalMinutes,
+      'total_exercises': input['total_exercises'] ?? totalWorkouts, // Add total_exercises field
       'items': mappedItems,
+      'exercises_details': mappedItems, // Add exercises_details field for backend storage
     };
   }
 
   Future<Map<String, dynamic>> updateGenerated(int id, Map<String, dynamic> payload) async {
+    print('🤖 AI Training Service - Updating AI plan $id');
+    print('🤖 Payload: $payload');
+    
     final dio = await _authedDio();
     final res = await dio.put('/api/appAIPlans/generated/$id', data: payload);
+    
+    print('🤖 AI Training Service - Update response status: ${res.statusCode}');
+    print('🤖 AI Training Service - Update response data: ${res.data}');
+    
     if (res.statusCode == 200) return Map<String, dynamic>.from(res.data);
     throw Exception('Failed to update AI generated plan');
   }
