@@ -151,13 +151,12 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
       'sets': e['sets'],
       'reps': e['reps'],
       'weight_kg': e['weight_kg'],
-      'minutes': e['minutes'],
-      'exercise_plan_category': planCategory,
-      'user_level': _userLevelCtrl.text.trim(),
+      'training_minutes': e['minutes'], // backend stores this in exercises_details
+      'minutes': e['minutes'], // ensure items table gets minutes column
     }).toList();
 
     final int totalWorkouts = items.length;
-    final int totalMinutes = items.fold<int>(0, (sum, it) => sum + (it['minutes'] as int? ?? 0));
+    final int totalMinutes = items.fold<int>(0, (sum, it) => sum + (it['training_minutes'] as int? ?? it['minutes'] as int? ?? 0));
 
     // Top-level payload for app_manual_training_plans
     final payload = {
@@ -169,7 +168,7 @@ class _CreatePlanPageState extends State<CreatePlanPage> {
       'training_minutes': totalMinutes,
       'total_exercises': totalWorkouts, // Add total_exercises field
       'items': items,
-      'exercises_details': items, // Add exercises_details field for backend storage
+      'exercises_details': items, // mirror items for backend storage
     };
 
     print('🔍 Create Plan - Payload: $payload');

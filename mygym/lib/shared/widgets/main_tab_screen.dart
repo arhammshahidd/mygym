@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
-import '../../features/trainings/presentation/pages/trainings_page.dart';
+import '../../features/trainings/presentation/pages/trainings_page_new.dart';
 import '../../features/stats/presentation/pages/stats_page.dart';
 import '../../features/food/presentation/pages/nutrition_page.dart';
 import '../../features/profile/presentation/pages/profile_page.dart';

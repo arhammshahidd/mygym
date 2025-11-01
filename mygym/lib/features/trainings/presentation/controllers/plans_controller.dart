@@ -35,13 +35,17 @@ class PlansController extends GetxController {
   final RxMap<int, bool> _startedPlans = <int, bool>{}.obs;
   final Rx<Map<String, dynamic>?> _activePlan = Rx<Map<String, dynamic>?>(null);
   final Map<String, bool> _completedWorkouts = {};
-  final Map<String, int> _currentDay = {};
+  final RxMap<String, int> _currentDay = <String, int>{}.obs; // Make reactive like schedules
   
   // Plans-specific approval tracking
   final RxMap<int, String> planApprovalStatus = <int, String>{}.obs;
   final RxMap<int, int> planToApprovalId = <int, int>{}.obs;
   final RxMap<int, bool> planModifiedSinceApproval = <int, bool>{}.obs;
   bool _approvalCacheLoaded = false;
+
+  final RxInt uiTick = 0.obs;
+  final RxMap<String, int> _workoutRemainingMinutes = <String, int>{}.obs;
+  final RxMap<String, Timer> _workoutTimers = <String, Timer>{}.obs;
 
   @override
   void onInit() {
@@ -240,6 +244,11 @@ class PlansController extends GetxController {
           }
         }
         
+        // Normalize items to ensure minutes field is properly set BEFORE assigning
+        for (final plan in uniquePlans) {
+          _normalizePlanItemsForMinutes(plan);
+        }
+        
         if (!isClosed) manualPlans.assignAll(uniquePlans);
         print('✅ Plans - Manual plans list updated: ${manualPlans.length} unique manual items (removed ${manualRes.length - uniquePlans.length} assigned/duplicate plans)');
         
@@ -247,6 +256,10 @@ class PlansController extends GetxController {
         if (uniquePlans.isEmpty && manualRes.isNotEmpty) {
           print('🔍 DEBUG: No plans passed filtering, showing ALL plans for debugging:');
           final allPlans = manualRes.map((e) => Map<String, dynamic>.from(e)).toList();
+          // Normalize all plans too
+          for (final plan in allPlans) {
+            _normalizePlanItemsForMinutes(plan);
+          }
           if (!isClosed) manualPlans.assignAll(allPlans);
           print('🔍 DEBUG: Temporarily showing ${allPlans.length} plans without filtering');
         }
@@ -479,18 +492,40 @@ class PlansController extends GetxController {
       final List<Map<String, dynamic>> items = (completePlan['items'] as List? ?? [])
           .map<Map<String, dynamic>>((e) {
         final m = Map<String, dynamic>.from(e as Map);
+        // Normalize weight fields
         m['weight_min_kg'] = m['weight_min_kg'] ?? m['weight_min'] ?? m['min_weight'] ?? m['min_weight_kg'];
         m['weight_max_kg'] = m['weight_max_kg'] ?? m['weight_max'] ?? m['max_weight'] ?? m['max_weight_kg'];
+        // Normalize minutes: ensure both minutes and training_minutes are set
+        final int minutes = int.tryParse(m['minutes']?.toString() ?? '') ?? 
+                           int.tryParse(m['training_minutes']?.toString() ?? '') ?? 0;
+        m['minutes'] = minutes;
+        m['training_minutes'] = minutes;
+        print('🔍 PlansController - Normalized item ${m['workout_name'] ?? 'Unknown'}: minutes=$minutes');
         return m;
       }).toList();
       List<Map<String, dynamic>> exercisesDetails = [];
       if (completePlan['exercises_details'] is List) {
-        exercisesDetails = List<Map<String, dynamic>>.from(
-            (completePlan['exercises_details'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+        exercisesDetails = (completePlan['exercises_details'] as List).map((e) {
+          final itemMap = Map<String, dynamic>.from(e as Map);
+          // Normalize minutes in exercises_details too
+          final int minutes = int.tryParse(itemMap['minutes']?.toString() ?? '') ?? 
+                             int.tryParse(itemMap['training_minutes']?.toString() ?? '') ?? 0;
+          itemMap['minutes'] = minutes;
+          itemMap['training_minutes'] = minutes;
+          return itemMap;
+        }).toList();
       } else if (completePlan['exercises_details'] is String) {
         try {
           final parsed = jsonDecode(completePlan['exercises_details'] as String) as List<dynamic>;
-          exercisesDetails = parsed.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          exercisesDetails = parsed.map((e) {
+            final itemMap = Map<String, dynamic>.from(e as Map);
+            // Normalize minutes in exercises_details too
+            final int minutes = int.tryParse(itemMap['minutes']?.toString() ?? '') ?? 
+                               int.tryParse(itemMap['training_minutes']?.toString() ?? '') ?? 0;
+            itemMap['minutes'] = minutes;
+            itemMap['training_minutes'] = minutes;
+            return itemMap;
+          }).toList();
         } catch (_) {}
       }
       
@@ -517,8 +552,14 @@ class PlansController extends GetxController {
 
       final normalizedPlan = Map<String, dynamic>.from(completePlan);
       normalizedPlan['items'] = items;
+      // Always use normalized exercisesDetails if available
       if (exercisesDetails.isNotEmpty) {
         normalizedPlan['exercises_details'] = exercisesDetails;
+      } else if (items.isNotEmpty) {
+        // If exercisesDetails is empty, create it from items (mirror items structure)
+        normalizedPlan['exercises_details'] = items.map((item) {
+          return Map<String, dynamic>.from(item);
+        }).toList();
       }
       
       // Ensure normalizedPlan doesn't contain null values that could cause issues
@@ -575,8 +616,8 @@ class PlansController extends GetxController {
         'total_days': safeTotalDays,
         'user_level': safeUserLevel,
         'items': safeItems,
-        if (normalizedPlan['exercises_details'] != null && normalizedPlan['exercises_details'] is List) 
-          'exercises_details': normalizedPlan['exercises_details'],
+        if (exercisesDetails.isNotEmpty) 
+          'exercises_details': exercisesDetails,
         'daily_plans': safeDailyPlans,
         'plan_data': normalizedPlan,
         'requested_at': DateTime.now().toIso8601String(),
@@ -595,6 +636,18 @@ class PlansController extends GetxController {
       print('🔍   - total_days: ${payload['total_days']} (type: ${payload['total_days'].runtimeType})');
       print('🔍   - user_level: ${payload['user_level']} (type: ${payload['user_level'].runtimeType})');
       print('🔍   - items count: ${(payload['items'] as List).length}');
+      // Debug: Log minutes for each item
+      for (int i = 0; i < (payload['items'] as List).length; i++) {
+        final item = (payload['items'] as List)[i];
+        print('🔍   - item[$i] (${item['workout_name'] ?? 'Unknown'}): minutes=${item['minutes']}, training_minutes=${item['training_minutes']}');
+      }
+      print('🔍   - exercises_details count: ${exercisesDetails.length}');
+      if (exercisesDetails.isNotEmpty) {
+        for (int i = 0; i < exercisesDetails.length; i++) {
+          final item = exercisesDetails[i];
+          print('🔍   - exercises_details[$i] (${item['workout_name'] ?? 'Unknown'}): minutes=${item['minutes']}, training_minutes=${item['training_minutes']}');
+        }
+      }
       print('🔍   - daily_plans count: ${(payload['daily_plans'] as List).length}');
       print('🔍   - requested_at: ${payload['requested_at']} (type: ${payload['requested_at'].runtimeType})');
       print('🔍   - plan_data keys: ${normalizedPlan.keys.toList()}');
@@ -639,6 +692,30 @@ class PlansController extends GetxController {
     print('🚀 PlansController - Original plan keys: ${plan.keys.toList()}');
     print('🚀 PlansController - Original plan items: ${plan['items']}');
     print('🚀 PlansController - Original plan exercises_details: ${plan['exercises_details']}');
+    
+    // Normalize items/exercises_details to Lists to avoid type errors from String JSON
+    try {
+      List<Map<String, dynamic>> normItems = [];
+      if (plan['items'] is List) {
+        normItems = List<Map<String, dynamic>>.from((plan['items'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+      } else if (plan['items'] is String && (plan['items'] as String).trim().isNotEmpty) {
+        try {
+          final parsed = jsonDecode(plan['items'] as String) as List<dynamic>;
+          normItems = parsed.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        } catch (_) {}
+      }
+      List<Map<String, dynamic>> normExercises = [];
+      if (plan['exercises_details'] is List) {
+        normExercises = List<Map<String, dynamic>>.from((plan['exercises_details'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+      } else if (plan['exercises_details'] is String && (plan['exercises_details'] as String).trim().isNotEmpty) {
+        try {
+          final parsed = jsonDecode(plan['exercises_details'] as String) as List<dynamic>;
+          normExercises = parsed.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        } catch (_) {}
+      }
+      if (normItems.isNotEmpty) plan['items'] = normItems;
+      if (normExercises.isNotEmpty) plan['exercises_details'] = normExercises;
+    } catch (_) {}
     
     // Check if there's already an active plan (from any tab)
     final existingActivePlan = await _getAnyActivePlan();
@@ -701,8 +778,9 @@ class PlansController extends GetxController {
     
     // First, check if the original plan already has workout data
     bool hasWorkoutData = false;
-    if ((plan['items'] != null && (plan['items'] as List).isNotEmpty) || 
-        (plan['exercises_details'] != null && (plan['exercises_details'] as List).isNotEmpty)) {
+    final List? itemsList = plan['items'] is List ? plan['items'] as List : null;
+    final List? exList = plan['exercises_details'] is List ? plan['exercises_details'] as List : null;
+    if ((itemsList != null && itemsList.isNotEmpty) || (exList != null && exList.isNotEmpty)) {
       hasWorkoutData = true;
       print('✅ PlansController - Original plan already has workout data');
     }
@@ -711,6 +789,19 @@ class PlansController extends GetxController {
       // Use the original plan data directly
       print('🚀 PlansController - Using original plan data with workout items');
     _startedPlans[planId] = true;
+    // Ensure daily_plans present on active plan using client rotation if backend didn't provide
+    try {
+      final List<Map<String, dynamic>> workoutItems = (plan['items'] as List? ?? []).cast<Map<String, dynamic>>();
+      if ((plan['daily_plans'] as List?) == null || (plan['daily_plans'] as List?)!.isEmpty) {
+        final generatedDays = _generateDailyPlans(
+          workoutItems,
+          startDate: plan['start_date'] != null ? DateTime.tryParse(plan['start_date'].toString()) : null,
+          totalDays: _getTotalDays(plan),
+        );
+        plan['daily_plans'] = generatedDays;
+        print('🗓️ PlansController - Attached generated daily_plans (${generatedDays.length} days) to active plan');
+      }
+    } catch (_) {}
     _activePlan.value = plan;
     _currentDay[planId.toString()] = 0;
     
@@ -722,6 +813,8 @@ class PlansController extends GetxController {
         print('🚀 PlansController - Active plan items: ${_activePlan.value?['items']?.length ?? 0}');
         print('🚀 PlansController - Active plan exercises_details: ${_activePlan.value?['exercises_details']?.length ?? 0}');
       }
+      // Debug: print all days distribution to console
+      _debugPrintAllDaysForActivePlan();
       return;
     }
     
@@ -784,23 +877,97 @@ class PlansController extends GetxController {
       final workoutItems = (fullPlanData['items'] as List? ?? []).cast<Map<String, dynamic>>();
       if (workoutItems.isNotEmpty) {
         try {
-          final dailyPlans = _generateDailyPlans(
-            workoutItems,
-            startDate: fullPlanData['start_date'] != null 
-                ? DateTime.tryParse(fullPlanData['start_date'].toString())
-                : null,
-            totalDays: _getTotalDays(fullPlanData),
-          );
+          // Prefer backend-approved daily plan structure when available
+          List<Map<String, dynamic>> dailyPlans = [];
+          final int? approvalId = planToApprovalId[planId];
+          // Get plan_category from the plan (will get from approval if available)
+          String planCategory = fullPlanData['exercise_plan_category']?.toString() ?? 
+                               fullPlanData['plan_category']?.toString() ??
+                               plan['exercise_plan_category']?.toString() ?? 
+                               plan['plan_category']?.toString() ??
+                               plan['name']?.toString() ?? 
+                               (isAiPlan ? 'AI Generated Plan' : 'Manual Plan');
+          String userLevel = fullPlanData['user_level']?.toString() ?? 
+                           plan['user_level']?.toString() ?? 
+                           'Beginner';
+          
+          if (approvalId != null) {
+            try {
+              final approval = await _approvalService.getApproval(approvalId);
+              // Use approval's plan_category and user_level if available
+              planCategory = approval['exercise_plan_category']?.toString() ?? 
+                           approval['plan_category']?.toString() ?? 
+                           planCategory;
+              userLevel = approval['user_level']?.toString() ?? userLevel;
+              dailyPlans = _buildDailyPlansFromApproval(
+                approval, 
+                workoutItems,
+                planCategory: planCategory,
+                userLevel: userLevel,
+              );
+              print('🔍 PlansController - Built ${dailyPlans.length} daily plans from approval');
+            } catch (e) {
+              print('⚠️ PlansController - Could not build daily plans from approval: $e');
+            }
+          }
+
+          // Fallback to client-generated rotation if approval has no per-day plan
+          if (dailyPlans.isEmpty) {
+            dailyPlans = _generateDailyPlans(
+              workoutItems,
+              startDate: fullPlanData['start_date'] != null 
+                  ? DateTime.tryParse(fullPlanData['start_date'].toString())
+                  : null,
+              totalDays: _getTotalDays(fullPlanData),
+            );
+          }
           
           if (dailyPlans.isNotEmpty) {
-            await _dailyTrainingService.storeDailyTrainingPlan(
-              planId: planId,
-              planType: isAiPlan ? 'ai_generated' : 'manual',
-              dailyPlans: dailyPlans,
-              userId: userId ?? 0,
-            );
+            // Attach to in-memory plan so UI uses backend distribution immediately
+            fullPlanData['daily_plans'] = dailyPlans;
+            // Get plan_category from the plan (API expects plan_category not exercise_plan_category)
+            final String planCategory = fullPlanData['exercise_plan_category']?.toString() ?? 
+                                       fullPlanData['plan_category']?.toString() ??
+                                       plan['exercise_plan_category']?.toString() ?? 
+                                       plan['plan_category']?.toString() ??
+                                       plan['name']?.toString() ?? 
+                                       (isAiPlan ? 'AI Generated Plan' : 'Manual Plan');
             
-            print('✅ PlansController - Daily training plan data stored successfully');
+            // Get user_level from the plan
+            final String userLevel = fullPlanData['user_level']?.toString() ?? 
+                                   plan['user_level']?.toString() ?? 
+                                   'Beginner';
+            
+            // Ensure plan_category and user_level are included in each daily plan
+            for (final dailyPlan in dailyPlans) {
+              dailyPlan['plan_category'] = dailyPlan['plan_category'] ?? 
+                                          dailyPlan['exercise_plan_category'] ?? 
+                                          planCategory;
+              dailyPlan['user_level'] = dailyPlan['user_level'] ?? userLevel;
+            }
+            
+            print('📤 PlansController - Storing ${dailyPlans.length} daily plans for plan $planId');
+            print('📤 PlansController - First day workouts: ${dailyPlans.isNotEmpty ? dailyPlans[0]['workouts']?.length ?? 0 : 0}');
+            print('📤 PlansController - Plan category: $planCategory');
+            print('📤 PlansController - User level: $userLevel');
+            
+            try {
+              final result = await _dailyTrainingService.storeDailyTrainingPlan(
+                planId: planId,
+                planType: isAiPlan ? 'ai_generated' : 'manual',
+                dailyPlans: dailyPlans,
+                userId: userId ?? 0,
+                planCategory: planCategory,
+                userLevel: userLevel,
+              );
+              
+              print('✅ PlansController - Daily training plan data stored successfully');
+              print('✅ PlansController - Storage result: $result');
+            } catch (e, stackTrace) {
+              print('❌ PlansController - Failed to store daily training plan data: $e');
+              print('❌ PlansController - Stack trace: $stackTrace');
+              // Continue anyway - plan can still be started without stored daily plans
+            }
           } else {
             print('⚠️ PlansController - No daily plans generated, skipping storage');
           }
@@ -822,6 +989,8 @@ class PlansController extends GetxController {
       } else {
         print('❌ PlansController - Controller is closed, cannot update UI');
       }
+      // Debug: print all days distribution to console
+      _debugPrintAllDaysForActivePlan();
     } catch (e) {
       print('❌ PlansController - Error fetching full plan data: $e');
       print('❌ PlansController - Using original plan data as fallback');
@@ -838,6 +1007,30 @@ class PlansController extends GetxController {
       if (!isClosed) {
         update();
       }
+      // Debug: print all days distribution to console
+      _debugPrintAllDaysForActivePlan();
+    }
+  }
+
+  // Debug helper: print all days' workouts for the active plan
+  void _debugPrintAllDaysForActivePlan() {
+    try {
+      final active = _activePlan.value;
+      if (active == null) {
+        print('⚠️ PlansController - _debugPrintAllDaysForActivePlan: No active plan');
+        return;
+      }
+      final int planId = int.tryParse(active['id']?.toString() ?? '') ?? 0;
+      final int totalDays = _getTotalDays(active);
+      print('🗓️ PlansController - Printing all days for plan $planId (totalDays=$totalDays)');
+      for (int d = 0; d < totalDays; d++) {
+        final dayWorkouts = _getDayWorkouts(active, d);
+        final names = dayWorkouts.map((w) => (w['name'] ?? w['workout_name'] ?? w['exercise_name'] ?? 'Unknown').toString()).toList();
+        print('📅 Day ${d + 1}: ${names.join(', ')}');
+      }
+      print('🗓️ PlansController - End of plan days print');
+    } catch (e) {
+      print('❌ PlansController - Error printing all days: $e');
     }
   }
 
@@ -966,13 +1159,27 @@ class PlansController extends GetxController {
   void setCurrentDay(int planId, int day) {
     _currentDay[planId.toString()] = day;
     _persistCurrentDayToCache(planId, day);
+    _currentDay.refresh(); // Refresh reactive map (same as schedules)
+    uiTick.value++;
+    if (!isClosed) update();
+  }
+
+  // Public: return today's workouts for the active plan (same as schedules controller)
+  List<Map<String, dynamic>> getActiveDayWorkouts() {
+    final active = _activePlan.value;
+    if (active == null) return [];
+    final planId = int.tryParse(active['id']?.toString() ?? '') ?? 0;
+    // Access reactive _currentDay to trigger rebuilds
+    final currentDay = _currentDay[planId.toString()] ?? 0;
+    print('🔍 PlansController - getActiveDayWorkouts: planId=$planId, currentDay=$currentDay');
+    final workouts = _getDayWorkouts(active, currentDay);
+    print('🔍 PlansController - getActiveDayWorkouts: returning ${workouts.length} workouts for day ${currentDay + 1}');
+    return workouts;
   }
 
   // Workout tracking methods (similar to SchedulesController)
   final RxMap<String, bool> _workoutStarted = <String, bool>{}.obs;
   final RxMap<String, bool> _workoutCompleted = <String, bool>{}.obs;
-  final RxMap<String, int> _workoutRemainingMinutes = <String, int>{}.obs;
-  final RxMap<String, Timer> _workoutTimers = <String, Timer>{}.obs;
 
   void startWorkout(String workoutKey, int totalMinutes) {
     _workoutStarted[workoutKey] = true;
@@ -982,6 +1189,16 @@ class PlansController extends GetxController {
     // Start timer
     _startWorkoutTimer(workoutKey);
     if (!isClosed) update();
+  }
+
+  void forceCompleteWorkout(String workoutKey) {
+    // Manually mark a workout as completed immediately (useful when API errors or for quick progression)
+    _workoutStarted[workoutKey] = true;
+    _workoutRemainingMinutes[workoutKey] = 0;
+    _workoutCompleted[workoutKey] = true;
+    if (!isClosed) update();
+    // Store completion and advance day
+    _storeWorkoutCompletion(workoutKey);
   }
 
   void _startWorkoutTimer(String workoutKey) {
@@ -998,7 +1215,6 @@ class PlansController extends GetxController {
         _workoutStarted[workoutKey] = false;
         _workoutRemainingMinutes[workoutKey] = 0;
         timer.cancel();
-        _workoutTimers.remove(workoutKey);
         
         // Store completion data
         _storeWorkoutCompletion(workoutKey);
@@ -1026,29 +1242,366 @@ class PlansController extends GetxController {
     }
   }
 
+  void _checkDayCompletionAndAdvance(int planId, int day) {
+    // Get the active plan first (same approach as schedules controller)
+    final activePlan = _activePlan.value;
+    if (activePlan == null) {
+      print('⚠️ PlansController - No active plan found for plan $planId');
+      return;
+    }
+    
+    // Verify the plan ID matches
+    final activePlanId = int.tryParse(activePlan['id']?.toString() ?? '') ?? 0;
+    if (activePlanId != planId) {
+      print('⚠️ PlansController - Active plan ID ($activePlanId) does not match plan ID ($planId)');
+      return;
+    }
+    
+    // Get all workouts for current day using the same approach as schedules controller
+    final dayWorkouts = _getDayWorkouts(activePlan, day);
+    if (dayWorkouts.isEmpty) {
+      print('⚠️ PlansController - No workouts found for plan $planId day ${day + 1}');
+      return;
+    }
+    
+    // Build workout key prefix and match actual started/completed keys.
+    // UI keys include minutes and normalized names, so use prefix match: planId_day_
+    final String keyPrefix = '${planId}_${day}_';
+    final List<String> keysForDay = _workoutCompleted.keys
+        .where((k) => k.startsWith(keyPrefix))
+        .toList();
+    final int expectedCount = dayWorkouts.length; // honors 80-min rule already applied
+    final int completedCount = keysForDay.where((k) => _workoutCompleted[k] == true).length;
+    
+    print('🔍 PlansController - Checking day completion for plan $planId, day ${day + 1}');
+    print('🔍 PlansController - Day workouts: ${dayWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+    print('🔍 PlansController - Keys for day (prefix $keyPrefix): $keysForDay');
+    print('🔍 PlansController - Completed count: $completedCount / expected: $expectedCount');
+    
+    // Check if all workouts (for this day) are completed
+    final bool allCompleted = completedCount >= expectedCount && expectedCount > 0;
+    print('🔍 PlansController - All workouts completed: $allCompleted');
+    
+    if (!allCompleted) return;
+    
+    final int newDay = day + 1;
+    _currentDay[planId.toString()] = newDay;
+    _persistCurrentDayToCache(planId, newDay);
+    
+    // Clear state for completed day (remove all keys with the day prefix)
+    for (final key in List<String>.from(_workoutCompleted.keys)) {
+      if (key.startsWith(keyPrefix)) {
+        _workoutCompleted.remove(key);
+        _workoutStarted.remove(key);
+        _workoutRemainingMinutes.remove(key);
+        final timer = _workoutTimers.remove(key);
+        timer?.cancel();
+      }
+    }
+    
+    print('🎉 PlansController - Advanced from day ${day + 1} to ${newDay + 1} for plan $planId');
+    print('🔍 PlansController - Day progression: $day → $newDay for plan $planId');
+    print('🔍 PlansController - Current day state: ${_currentDay}');
+    
+    // Debug: Check what workouts will be shown for the new day (same as schedules controller)
+    final newDayWorkouts = _getDayWorkouts(activePlan, newDay);
+    print('🔍 PlansController - New day $newDay workouts: ${newDayWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+    
+    // Force UI refresh (same approach as schedules controller)
+    refreshUI();
+    
+    // Also refresh stats after day advancement
+    Future.microtask(() => _refreshStatsSafe());
+    
+    print('✅ PlansController - Day advancement complete, UI should refresh');
+  }
+  
+  // Get workouts for a specific day (EXACT same approach as schedules controller)
+  List<Map<String, dynamic>> _getDayWorkouts(Map<String, dynamic> plan, int dayIndex) {
+    // This should match the logic in _getDayItems (same as schedules)
+    try {
+      Map<String, dynamic> actualPlan = plan;
+      if (plan.containsKey('success') && plan.containsKey('data')) {
+        actualPlan = plan['data'] ?? {};
+      }
+      
+      // 1) If backend provided daily_plans, use that as source of truth per day
+      final dailyPlansRaw = actualPlan['daily_plans'];
+      print('🔍 PlansController - Checking daily_plans for day ${dayIndex + 1}: type=${dailyPlansRaw.runtimeType}');
+
+      List<Map<String, dynamic>>? dailyPlansList;
+      if (dailyPlansRaw is List) {
+        if (dailyPlansRaw.isNotEmpty) {
+          dailyPlansList = dailyPlansRaw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        }
+      } else if (dailyPlansRaw is String && dailyPlansRaw.trim().isNotEmpty) {
+        try {
+          final parsed = jsonDecode(dailyPlansRaw);
+          if (parsed is List) {
+            dailyPlansList = parsed.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          }
+        } catch (e) {
+          print('⚠️ PlansController - Failed to parse daily_plans JSON string: $e');
+        }
+      }
+
+      if (dailyPlansList != null && dailyPlansList.isNotEmpty) {
+        try {
+          final List<Map<String, dynamic>> dailyPlans = dailyPlansList;
+          print('🔍 PlansController - Found ${dailyPlans.length} daily plans in backend data');
+          
+          // try find by day field first (1-based), fallback to index
+          Map<String, dynamic>? dayEntry = dailyPlans.firstWhereOrNull((dp) {
+            final d = int.tryParse(dp['day']?.toString() ?? '');
+            return d != null && d == dayIndex + 1;
+          });
+          dayEntry ??= (dayIndex < dailyPlans.length ? dailyPlans[dayIndex] : null);
+          
+          List<Map<String, dynamic>>? resultList;
+          if (dayEntry != null && dayEntry['workouts'] is List) {
+            resultList = (dayEntry['workouts'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          } else if (dayEntry != null && dayEntry['workouts'] is String) {
+            try {
+              final parsedW = jsonDecode(dayEntry['workouts'] as String);
+              if (parsedW is List) {
+                resultList = parsedW.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+              }
+            } catch (e) {
+              print('⚠️ PlansController - Failed to parse workouts JSON for day ${dayIndex + 1}: $e');
+            }
+          }
+
+          if (resultList != null) {
+            final result = resultList;
+            print('✅ PlansController - Using backend daily_plans for day ${dayIndex + 1}: ${result.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+            return result;
+          } else {
+            print('⚠️ PlansController - daily_plans[${dayIndex}] found but no workouts, falling back to rotation');
+          }
+        } catch (e) {
+          print('⚠️ PlansController - Error parsing daily_plans: $e, falling back to rotation');
+        }
+      } else {
+        print('⚠️ PlansController - No daily_plans in backend data, using client-side rotation for day ${dayIndex + 1}');
+      }
+
+      List<Map<String, dynamic>> workouts = [];
+      
+      final exercisesDetails = actualPlan['exercises_details'];
+      if (exercisesDetails is List && exercisesDetails.isNotEmpty) {
+        workouts = exercisesDetails.cast<Map<String, dynamic>>();
+      } else if (exercisesDetails is String) {
+        try {
+          final List<dynamic> parsed = jsonDecode(exercisesDetails);
+          workouts = parsed.cast<Map<String, dynamic>>();
+        } catch (e) {
+          return [];
+        }
+      }
+      
+      // Also check items if exercises_details is empty
+      if (workouts.isEmpty && actualPlan['items'] is List) {
+        workouts = (actualPlan['items'] as List).cast<Map<String, dynamic>>();
+      }
+      
+      // Calculate total days from start/end date or use provided total_days (same as schedules)
+      int totalDays = 1;
+      if (actualPlan['start_date'] != null && actualPlan['end_date'] != null) {
+        final start = DateTime.tryParse(actualPlan['start_date']);
+        final end = DateTime.tryParse(actualPlan['end_date']);
+        if (start != null && end != null) {
+          totalDays = max(1, end.difference(start).inDays + 1);
+        }
+      } else {
+        totalDays = max(1, (actualPlan['total_days'] ?? 1) as int);
+      }
+      
+      print('🔍 PlansController - _getDayWorkouts: Day $dayIndex of $totalDays total days');
+      print('🔍 PlansController - Total workouts available: ${workouts.length}');
+      
+      if (workouts.isEmpty) {
+        return [];
+      }
+      
+      // 2) Fallback: Distribute workouts across days properly (same as schedules)
+      return _distributeWorkoutsAcrossDays(workouts, totalDays, dayIndex);
+      
+    } catch (e) {
+      print('❌ PlansController - Error in _getDayWorkouts: $e');
+      return [];
+    }
+  }
+  
+  // Distribute workouts across days (EXACT same logic as schedules controller)
+  List<Map<String, dynamic>> _distributeWorkoutsAcrossDays(List<Map<String, dynamic>> workouts, int totalDays, int dayIndex) {
+    if (workouts.isEmpty) return [];
+    
+    print('🔍 PlansController - _distributeWorkoutsAcrossDays: ${workouts.length} workouts across $totalDays days, requesting day $dayIndex');
+    
+    // If only one workout, return it for all days (same as schedules)
+    if (workouts.length == 1) {
+      final single = Map<String, dynamic>.from(workouts.first);
+      print('🔍 PlansController - Only one workout available: ${single['name'] ?? single['workout_name'] ?? 'Unknown'}');
+      return [single];
+    }
+
+    // Day-based distribution using rotation offset for ALL cases (same as backend)
+    // Backend: dayRotationOffset = ((day - 1) * workoutsPerDay) % exercises.length
+    // Frontend: dayRotationOffset = (dayIndex * workoutsPerDay) % workouts.length (0-based dayIndex)
+    // Rotation always applies for all cases (as per backend fix)
+    const int workoutsPerDay = 2;
+    final int dayRotationOffset = (dayIndex * workoutsPerDay) % workouts.length;
+    final int firstIdx = dayRotationOffset;
+    final int secondIdx = (dayRotationOffset + 1) % workouts.length;
+    
+    final Map<String, dynamic> first = Map<String, dynamic>.from(workouts[firstIdx]);
+    final Map<String, dynamic> second = Map<String, dynamic>.from(workouts[secondIdx]);
+    final int m1 = _extractWorkoutMinutesFromMap(first);
+    final int m2 = _extractWorkoutMinutesFromMap(second);
+    final int combined = m1 + m2;
+    
+    print('🔍 PlansController - dayRotationOffset: $dayRotationOffset (dayIndex: $dayIndex, workoutsPerDay: $workoutsPerDay, totalWorkouts: ${workouts.length})');
+    print('🔍 PlansController - Pair indices: $firstIdx & $secondIdx → ${first['name'] ?? first['workout_name'] ?? 'Unknown'}($m1) + ${second['name'] ?? second['workout_name'] ?? 'Unknown'}($m2) = $combined');
+    
+    List<Map<String, dynamic>> selectedWorkouts = [];
+    
+    // Apply 80-minute rule: if pair exceeds 80 minutes, show only first
+    selectedWorkouts = combined > 80 ? [first] : [first, second];
+
+    print('🔍 PlansController - Day $dayIndex selected workouts: ${selectedWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+    return selectedWorkouts;
+  }
+  
+  // Force UI refresh (same approach as schedules controller)
+  void refreshUI() {
+    print('🔄 PlansController - Refreshing UI...');
+    _currentDay.refresh(); // Refresh current day to trigger UI updates (same as schedules)
+    _workoutStarted.refresh();
+    _workoutCompleted.refresh();
+    _workoutRemainingMinutes.refresh();
+    _activePlan.refresh(); // Also refresh active plan to trigger UI updates
+    uiTick.value++;
+    if (!isClosed) update();
+    print('🔄 PlansController - UI refresh completed');
+  }
+
   Future<void> _storeDailyTrainingData(int planId, int day, String workoutName) async {
     try {
-      print('✅ Workout completed: Plan $planId, Day $day, Workout $workoutName');
+      print('✅ Workout completed: Plan $planId, Day ${day + 1}, Workout $workoutName');
       
-      // Store completion data using the correct API
+      // First, try to get the daily_plan_id from stored daily plans
+      int? dailyPlanId;
+      try {
+        final dailyPlans = await _dailyTrainingService.getDailyTrainingPlans();
+        final planDate = DateTime.now().add(Duration(days: day)).toIso8601String().split('T').first;
+        final matchingDay = dailyPlans.firstWhereOrNull((dp) {
+          final dpPlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+          final dpDate = dp['plan_date']?.toString().split('T').first;
+          return dpPlanId == planId && dpDate == planDate;
+        });
+        if (matchingDay != null) {
+          dailyPlanId = int.tryParse(matchingDay['id']?.toString() ?? matchingDay['daily_plan_id']?.toString() ?? '');
+          print('🔍 PlansController - Found daily_plan_id: $dailyPlanId for day ${day + 1}');
+        }
+      } catch (e) {
+        print('⚠️ PlansController - Could not fetch daily plan ID: $e');
+      }
+      
+      // If we couldn't find daily_plan_id, use planId as fallback (backend might handle it)
+      final int targetPlanId = dailyPlanId ?? planId;
+      
+      // Get workout details from active plan to build proper completion data
+      final activePlan = _activePlan.value;
+      List<Map<String, dynamic>> workouts = [];
+      if (activePlan != null && activePlan['id']?.toString() == planId.toString()) {
+        if (activePlan['items'] is List) {
+          workouts = (activePlan['items'] as List).cast<Map<String, dynamic>>();
+        } else if (activePlan['exercises_details'] is List) {
+          workouts = (activePlan['exercises_details'] as List).cast<Map<String, dynamic>>();
+        }
+      }
+      
+      // Find the matching workout
+      final workout = workouts.firstWhereOrNull((w) {
+        final wName = (w['workout_name'] ?? w['name'] ?? '').toString();
+        return wName.toLowerCase() == workoutName.toLowerCase();
+      });
+      
+      // Build completion data with item-based format
       final completionData = [
         {
-          'plan_id': planId,
+          'item_id': workout != null ? (int.tryParse(workout['id']?.toString() ?? '0') ?? 0) : 0,
+          'sets_completed': workout != null ? (int.tryParse(workout['sets']?.toString() ?? '0') ?? 0) : 0,
+          'reps_completed': workout != null ? (int.tryParse(workout['reps']?.toString() ?? '0') ?? 0) : 0,
+          'weight_used': workout != null ? (double.tryParse(workout['weight_kg']?.toString() ?? workout['weight']?.toString() ?? '0') ?? 0.0) : 0.0,
+          'minutes_spent': workout != null ? _extractWorkoutMinutesFromMap(workout) : 0,
+          'notes': 'Completed via Plans tab - Day ${day + 1}',
           'day': day,
           'workout_name': workoutName,
-          'completed_at': DateTime.now().toIso8601String(),
-          'status': 'completed',
         }
       ];
       
       await _dailyTrainingService.submitDailyTrainingCompletion(
-        planId: planId,
+        planId: targetPlanId,
         completionData: completionData,
       );
       
       print('✅ Workout completion stored successfully');
     } catch (e) {
       print('❌ Error storing workout completion: $e');
+      // Even if remote store fails (e.g., 404 on some servers), still advance the day locally
+      await _recordLocalCompletion(planId: planId, day: day, workoutName: workoutName);
+      _checkDayCompletionAndAdvance(planId, day);
+      _refreshStatsSafe();
+      return;
+    }
+    // Record completion locally first, then check and advance day
+    await _recordLocalCompletion(planId: planId, day: day, workoutName: workoutName);
+    _checkDayCompletionAndAdvance(planId, day);
+    _refreshStatsSafe();
+    
+    // Force UI update after completion and advancement
+    Future.microtask(() {
+      if (!isClosed) {
+        uiTick.value++;
+        update();
+        print('✅ PlansController - Forced UI refresh after workout completion');
+      }
+    });
+  }
+
+  Future<void> _recordLocalCompletion({
+    required int planId,
+    required int day,
+    required String workoutName,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = _profileController.user?.id ?? 0;
+      final key = 'local_workout_completions_user_$userId';
+      final String today = DateTime.now().toIso8601String().split('T').first;
+      final String existing = prefs.getString(key) ?? '[]';
+      final List<dynamic> list = jsonDecode(existing);
+      list.add({
+        'date': today,
+        'plan_id': planId,
+        'day': day,
+        'workout_name': workoutName,
+        'source': 'plans',
+      });
+      await prefs.setString(key, jsonEncode(list));
+      print('📊 PlansController - Recorded local completion for stats');
+    } catch (e) {
+      print('⚠️ PlansController - Failed to record local completion: $e');
+    }
+  }
+
+  void _refreshStatsSafe() {
+    try {
+      final statsController = Get.find<StatsController>();
+      statsController.refreshStats();
+    } catch (e) {
+      print('⚠️ PlansController - StatsController not available to refresh: $e');
     }
   }
 
@@ -1172,6 +1725,108 @@ class PlansController extends GetxController {
     if (i != null) return i;
     final double? d = double.tryParse(s);
     return d?.round() ?? 0;
+  }
+
+  // Build daily plans using the structure stored in training approvals
+  List<Map<String, dynamic>> _buildDailyPlansFromApproval(
+    Map<String, dynamic> approval,
+    List<Map<String, dynamic>> fallbackItems, {
+    String? planCategory,
+    String? userLevel,
+  }) {
+    try {
+      final List<Map<String, dynamic>> result = [];
+      // Parse daily_plans
+      List<dynamic> daily = [];
+      if (approval['daily_plans'] is List) {
+        daily = approval['daily_plans'] as List;
+      } else if (approval['daily_plans'] is String) {
+        try { daily = jsonDecode(approval['daily_plans'] as String) as List<dynamic>; } catch (_) {}
+      }
+      // Parse exercises_details as global catalog
+      List<dynamic> catalog = [];
+      if (approval['exercises_details'] is List) {
+        catalog = approval['exercises_details'] as List;
+      } else if (approval['exercises_details'] is String) {
+        try { catalog = jsonDecode(approval['exercises_details'] as String) as List<dynamic>; } catch (_) {}
+      }
+      Map<String, Map<String, dynamic>> byIdOrName = {};
+      for (final e in catalog) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final String id = (m['id']?.toString() ?? '').trim();
+        final String name = (m['workout_name'] ?? m['name'] ?? '').toString().trim();
+        if (id.isNotEmpty) byIdOrName[id] = m;
+        if (name.isNotEmpty) byIdOrName[name.toLowerCase()] = m;
+      }
+
+      for (int i = 0; i < daily.length; i++) {
+        final Map<String, dynamic> day = Map<String, dynamic>.from(daily[i] as Map);
+        final List<dynamic> dayWorkouts = (day['workouts'] ?? []) as List<dynamic>;
+        final List<Map<String, dynamic>> workouts = [];
+        int totalMinutes = 0, totalSets = 0, totalReps = 0; double totalWeight = 0.0;
+
+        // Cap to 2 workouts per day (matching UI view distribution)
+        final int maxWorkoutsPerDay = 2;
+        int workoutsAdded = 0;
+        
+        for (final w in dayWorkouts) {
+          // Stop if we've already added 2 workouts for this day
+          if (workoutsAdded >= maxWorkoutsPerDay) {
+            print('🔍 PlansController - Capped day ${i + 1} to $maxWorkoutsPerDay workouts (view distribution)');
+            break;
+          }
+          
+          final wm = Map<String, dynamic>.from(w as Map);
+          final String keyId = (wm['id']?.toString() ?? '').trim();
+          final String keyName = (wm['workout_name'] ?? wm['name'] ?? '').toString().trim();
+          Map<String, dynamic>? src = byIdOrName[keyId];
+          src ??= byIdOrName[keyName.toLowerCase()];
+          src ??= fallbackItems.firstWhereOrNull((it) => (it['name'] ?? it['workout_name'] ?? '').toString().trim().toLowerCase() == keyName.toLowerCase());
+          final String exerciseName = keyName.isNotEmpty ? keyName : (src?['workout_name'] ?? src?['name'] ?? 'Workout').toString();
+          final int sets = int.tryParse(src?['sets']?.toString() ?? '0') ?? 0;
+          final int reps = int.tryParse(src?['reps']?.toString() ?? '0') ?? 0;
+          final double weight = double.tryParse(src?['weight_kg']?.toString() ?? '0') ?? 0.0;
+          final int minutes = _extractWorkoutMinutesFromMap(src ?? {});
+          final int exerciseType = int.tryParse(src?['exercise_types']?.toString() ?? '0') ?? 0;
+          
+          // For second workout, check 80-minute rule
+          if (workoutsAdded == 1 && totalMinutes + minutes > 80) {
+            print('🔍 PlansController - Skipped second workout for day ${i + 1} (would exceed 80 min: ${totalMinutes + minutes} min)');
+            break;
+          }
+          
+          workouts.add({
+            'exercise_name': exerciseName,
+            'sets': sets,
+            'reps': reps,
+            'weight_kg': weight,
+            'minutes': minutes,
+            'exercise_type': exerciseType,
+            // Note: plan_category and user_level are at the day level, not individual workout level
+          });
+          totalMinutes += minutes; totalSets += sets; totalReps += reps; totalWeight += weight;
+          workoutsAdded++;
+        }
+
+        final String date = (day['date'] ?? day['plan_date'])?.toString() ?? '';
+        final String workoutName = (day['workout_name'] ?? 'Daily Workout').toString();
+        result.add({
+          if (date.isNotEmpty) 'date': date,
+          'workouts': workouts,
+          'workout_name': workoutName,
+          'plan_category': planCategory ?? 'Training Plan',
+          'user_level': userLevel ?? 'Beginner',
+          'training_minutes': totalMinutes,
+          'total_sets': totalSets,
+          'total_reps': totalReps,
+          'total_weight_kg': totalWeight,
+        });
+      }
+      return result;
+    } catch (e) {
+      print('⚠️ PlansController - _buildDailyPlansFromApproval failed: $e');
+      return [];
+    }
   }
 
   /// Get the approval status for a specific plan
@@ -1716,9 +2371,19 @@ class PlansController extends GetxController {
       updatedPlan.addAll(result);
       updatedPlan['id'] = id; // Ensure ID is preserved
       
+      // Normalize items to ensure minutes field is properly set
+      _normalizePlanItemsForMinutes(updatedPlan);
+      
       // Add it back to the list
       manualPlans.add(updatedPlan);
       print('✅ PlansController - Restored plan $id to manual plans list');
+    }
+    
+    // Also normalize the updated plan if it exists in the list
+    final updatedPlanInList = manualPlans.firstWhereOrNull((plan) => plan['id'] == id);
+    if (updatedPlanInList != null) {
+      _normalizePlanItemsForMinutes(updatedPlanInList);
+      print('✅ PlansController - Normalized items for updated plan $id');
     }
     
     // Force UI update
@@ -1858,6 +2523,11 @@ class PlansController extends GetxController {
         }
       }
       
+      // Normalize items to ensure minutes field is properly set
+      for (final plan in uniquePlans) {
+        _normalizePlanItemsForMinutes(plan);
+      }
+      
       if (!isClosed) {
         manualPlans.assignAll(uniquePlans);
         update(); // Force UI refresh
@@ -1892,10 +2562,31 @@ class PlansController extends GetxController {
   Future<void> deleteManualPlan(int planId) async {
     try {
       print('🗑️ Plans - Deleting manual plan ID: $planId');
+      try {
       await _manualService.deletePlan(planId);
+      } on Exception catch (e) {
+        final msg = e.toString();
+        if (msg.contains('not found') || msg.contains('404')) {
+          // Try fallback using plan_id if available in list
+          final alt = manualPlans.firstWhereOrNull((p) => int.tryParse(p['plan_id']?.toString() ?? '') == planId);
+          final int? altId = alt != null ? int.tryParse(alt['id']?.toString() ?? '') : null;
+          if (altId != null && altId != planId) {
+            print('🗑️ Plans - Retrying delete using alt id $altId for plan_id $planId');
+            await _manualService.deletePlan(altId);
+          } else {
+            rethrow;
+          }
+        } else {
+          rethrow;
+        }
+      }
       
       // Remove from local list
-      manualPlans.removeWhere((plan) => plan['id'] == planId);
+      manualPlans.removeWhere((plan) {
+        final int id = int.tryParse(plan['id']?.toString() ?? '') ?? -1;
+        final int pid = int.tryParse(plan['plan_id']?.toString() ?? '') ?? -1;
+        return id == planId || pid == planId;
+      });
       
       // Remove from started plans if it was started
       if (_startedPlans.containsKey(planId)) {
@@ -2013,6 +2704,91 @@ class PlansController extends GetxController {
       }
     } catch (e) {
       print('❌ Plans - Error loading modification flags from cache: $e');
+    }
+  }
+
+  Future<void> resetManualPlanCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = _profileController.user?.id ?? 0;
+      // Keys
+      final startedKey = 'startedPlans_user_$userId';
+      final activeKey = 'activePlan_user_$userId';
+      final approvalKey = 'planApprovalIds_user_$userId';
+      await prefs.remove(startedKey);
+      await prefs.remove(activeKey);
+      await prefs.remove(approvalKey);
+      // Remove per-plan day indexes
+      for (final plan in manualPlans) {
+        final int id = int.tryParse(plan['id']?.toString() ?? '') ?? -1;
+        if (id > 0) {
+          await prefs.remove('plan_day_${id}_user_$userId');
+        }
+        final int pid = int.tryParse(plan['plan_id']?.toString() ?? '') ?? -1;
+        if (pid > 0) {
+          await prefs.remove('plan_day_${pid}_user_$userId');
+        }
+      }
+      // Clear in-memory state
+      _startedPlans.clear();
+      _activePlan.value = null;
+      _currentDay.clear();
+      planToApprovalId.clear();
+      planApprovalStatus.clear();
+      if (!isClosed) update();
+      print('🧹 Plans - Manual plan cache reset for user $userId');
+    } catch (e) {
+      print('❌ Plans - Error resetting manual plan cache: $e');
+      rethrow;
+    }
+  }
+
+  /// Normalize plan items to ensure minutes field is properly synced
+  void _normalizePlanItemsForMinutes(Map<String, dynamic> plan) {
+    try {
+      if (plan['items'] is List) {
+        final items = (plan['items'] as List).map((item) {
+          final itemMap = Map<String, dynamic>.from(item as Map);
+          // Sync minutes and training_minutes: prefer minutes, fallback to training_minutes
+          final int minutes = int.tryParse(itemMap['minutes']?.toString() ?? '') ?? 
+                             int.tryParse(itemMap['training_minutes']?.toString() ?? '') ?? 0;
+          // Ensure both fields are set
+          itemMap['minutes'] = minutes;
+          itemMap['training_minutes'] = minutes;
+          return itemMap;
+        }).toList();
+        plan['items'] = items;
+      }
+      
+      // Also normalize exercises_details if present
+      if (plan['exercises_details'] is List) {
+        final exercisesDetails = (plan['exercises_details'] as List).map((item) {
+          final itemMap = Map<String, dynamic>.from(item as Map);
+          final int minutes = int.tryParse(itemMap['minutes']?.toString() ?? '') ?? 
+                             int.tryParse(itemMap['training_minutes']?.toString() ?? '') ?? 0;
+          itemMap['minutes'] = minutes;
+          itemMap['training_minutes'] = minutes;
+          return itemMap;
+        }).toList();
+        plan['exercises_details'] = exercisesDetails;
+      } else if (plan['exercises_details'] is String) {
+        try {
+          final parsed = jsonDecode(plan['exercises_details'] as String) as List<dynamic>;
+          final normalized = parsed.map((item) {
+            final itemMap = Map<String, dynamic>.from(item as Map);
+            final int minutes = int.tryParse(itemMap['minutes']?.toString() ?? '') ?? 
+                               int.tryParse(itemMap['training_minutes']?.toString() ?? '') ?? 0;
+            itemMap['minutes'] = minutes;
+            itemMap['training_minutes'] = minutes;
+            return itemMap;
+          }).toList();
+          plan['exercises_details'] = normalized;
+        } catch (e) {
+          print('⚠️ Plans - Could not parse exercises_details JSON: $e');
+        }
+      }
+    } catch (e) {
+      print('⚠️ Plans - Error normalizing plan items for minutes: $e');
     }
   }
 }

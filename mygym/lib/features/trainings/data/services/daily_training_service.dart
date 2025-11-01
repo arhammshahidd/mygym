@@ -228,9 +228,36 @@ class DailyTrainingService {
     try {
       final dio = await _authedDio();
       
+      // Transform any lightweight completion entries into the expected schema
+      final List<Map<String, dynamic>> normalizedItems = completionData.map((e) {
+        final int itemId = int.tryParse((e['item_id'] ?? '0').toString()) ?? 0;
+        final int sets = int.tryParse((e['sets_completed'] ?? e['sets'] ?? '0').toString()) ?? 0;
+        final int reps = int.tryParse((e['reps_completed'] ?? e['reps'] ?? '0').toString()) ?? 0;
+        final double weight = double.tryParse((e['weight_used'] ?? e['weight'] ?? '0').toString()) ?? 0.0;
+        final int minutes = int.tryParse((e['minutes_spent'] ?? e['minutes'] ?? '0').toString()) ?? 0;
+        final dynamic day = e['day'];
+        final String workoutName = (e['workout_name'] ?? e['name'] ?? '').toString();
+        final String? notes = e['notes']?.toString();
+        final String composedNotes = [
+          if (notes != null && notes.isNotEmpty) notes,
+          if (workoutName.isNotEmpty) 'Workout: $workoutName',
+          if (day != null) 'Day: ${int.tryParse(day.toString()) != null ? (int.parse(day.toString()) + 1) : day}',
+          'Source: Plans tab'
+        ].where((s) => s.isNotEmpty).join(' | ');
+        return {
+          'item_id': itemId,
+          'sets_completed': sets,
+          'reps_completed': reps,
+          'weight_used': weight,
+          'minutes_spent': minutes,
+          if (composedNotes.isNotEmpty) 'notes': composedNotes,
+        };
+      }).toList();
+      
       final payload = {
-        'plan_id': planId,
-        'completion_data': completionData,
+        // Backend expects daily_plan_id here
+        'daily_plan_id': planId,
+        'completion_data': normalizedItems,
         'completed_at': DateTime.now().toIso8601String(),
       };
       
@@ -254,30 +281,84 @@ class DailyTrainingService {
     required String planType, // 'manual' or 'ai_generated'
     required List<Map<String, dynamic>> dailyPlans,
     required int userId,
+    String? planCategory,
+    String? userLevel,
   }) async {
     try {
-      print('🔍 DailyTrainingService - Storing daily training plan data:');
-      print('🔍   - Plan ID: $planId');
-      print('🔍   - Plan Type: $planType');
-      print('🔍   - User ID: $userId');
-      print('🔍   - Daily Plans Count: ${dailyPlans.length}');
-      
-      // For now, we'll skip the API call since the completion endpoint
-      // is meant for completing workouts, not storing daily plans
-      // The daily plans will be stored when workouts are actually completed
-      
-      print('✅ DailyTrainingService - Daily training plan data prepared (API call skipped)');
-      print('💡 Note: Daily plans will be stored when workouts are completed');
-      
-      // Return a success response without making the API call
-      return {
-        'success': true,
-        'message': 'Daily training plan data prepared successfully',
-        'plan_id': planId,
-        'daily_plans_count': dailyPlans.length,
+      final dio = await _authedDio();
+
+      // Normalize daily plans to backend schema
+      List<Map<String, dynamic>> normalizedDays = [];
+      final DateTime baseDate = DateTime.now();
+      for (int i = 0; i < dailyPlans.length; i++) {
+        final day = dailyPlans[i];
+        final List rawWorkouts = (day['workouts'] ?? day['items'] ?? []) as List;
+        final List<Map<String, dynamic>> exercises = [];
+        int totalMinutes = 0;
+        int totalSets = 0;
+        int totalReps = 0;
+        double totalWeight = 0.0;
+
+        for (final w in rawWorkouts) {
+          final Map<String, dynamic> m = Map<String, dynamic>.from(w as Map);
+          final String exerciseName = (m['name'] ?? m['workout_name'] ?? m['muscle_group'] ?? 'Workout').toString();
+          final int sets = int.tryParse(m['sets']?.toString() ?? '0') ?? 0;
+          final int reps = int.tryParse(m['reps']?.toString() ?? '0') ?? 0;
+          final double weight = double.tryParse(m['weight_kg']?.toString() ?? m['weight']?.toString() ?? '0') ?? 0.0;
+          final int minutes = int.tryParse(m['minutes']?.toString() ?? m['training_minutes']?.toString() ?? '0') ?? 0;
+          final int exerciseType = int.tryParse(m['exercise_types']?.toString() ?? m['exercise_type']?.toString() ?? '0') ?? 0;
+
+          exercises.add({
+            'exercise_name': exerciseName,
+            'sets': sets,
+            'reps': reps,
+            'weight_kg': weight,
+            'minutes': minutes,
+            'exercise_type': exerciseType,
+          });
+
+          totalMinutes += minutes;
+          totalSets += sets;
+          totalReps += reps;
+          totalWeight += weight;
+        }
+
+        final String dayName = (day['workout_name']?.toString()) ?? 'Day ${day['day'] ?? (i + 1)}';
+        final String planDate = (day['date'] ?? day['plan_date'])?.toString() ?? baseDate.add(Duration(days: i)).toIso8601String().split('T').first;
+        final String dayCategory = day['plan_category'] ?? day['exercise_plan_category'] ?? planCategory ?? 'Training Plan';
+        final String dayUserLevel = day['user_level'] ?? userLevel ?? 'Beginner';
+        
+        normalizedDays.add({
+          'plan_date': planDate,
+          'workout_name': dayName,
+          'plan_category': dayCategory,
+          'user_level': dayUserLevel,
+          'exercises_details': exercises,
+          // Note: Server computes these totals from exercises_details
+          // We include them for reference, but backend will recalculate
+          'training_minutes': totalMinutes,
+          'total_exercises': exercises.length,
+          'total_sets': totalSets,
+          'total_reps': totalReps,
+          'total_weight_kg': totalWeight,
+        });
+      }
+
+      final payload = {
+        'plan_type': planType,
+        'user_id': userId,
+        'source_plan_id': planId,
+        'daily_plans': normalizedDays,
+        // Note: plan_category and user_level are now in each daily_plan entry
       };
+
+      final res = await dio.post('/api/dailyTraining/mobile/plans/store', data: payload);
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return Map<String, dynamic>.from(res.data is Map ? res.data : {'success': true, 'data': res.data});
+      }
+      throw Exception('Failed to store daily training plans: HTTP ${res.statusCode}');
     } catch (e) {
-      print('❌ DailyTrainingService - Error preparing daily training plan: $e');
+      print('❌ DailyTrainingService - Error storing daily training plan: $e');
       rethrow;
     }
   }

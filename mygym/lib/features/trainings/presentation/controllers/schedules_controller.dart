@@ -8,11 +8,13 @@ import '../../../profile/presentation/controllers/profile_controller.dart';
 import '../../../stats/presentation/controllers/stats_controller.dart';
 import 'plans_controller.dart';
 import '../../data/services/manual_training_service.dart';
+import '../../data/services/daily_training_service.dart';
 import '../../../../shared/services/realtime_service.dart';
 import '../../../auth/data/services/auth_service.dart';
 
 class SchedulesController extends GetxController {
   final ManualTrainingService _manualService = ManualTrainingService();
+  final DailyTrainingService _dailyTrainingService = DailyTrainingService();
   final RealtimeService _realtime = RealtimeService();
   final AuthService _authService = AuthService();
   final ProfileController _profileController = Get.find<ProfileController>();
@@ -265,24 +267,12 @@ class SchedulesController extends GetxController {
     required List<Map<String, dynamic>> completionData,
   }) async {
     try {
-      final dio = await _manualService.getAuthedDio();
-      
-      final payload = {
-        'daily_plan_id': dailyPlanId,
-        'completion_data': completionData,
-      };
-      
-      print('🔍 Submitting completion to API:');
-      print('Endpoint: /api/trainingPlans/complete');
-      print('Payload: $payload');
-      
-      final res = await dio.post('/api/trainingPlans/complete', data: payload);
-      
-      if (res.statusCode == 200 || res.statusCode == 201) {
-        print('✅ Completion submitted successfully');
-      } else {
-        throw Exception('Failed to submit completion: ${res.statusMessage}');
-      }
+      print('🔍 Submitting completion to API via DailyTrainingService');
+      await _dailyTrainingService.submitCompletion(
+        dailyPlanId: dailyPlanId,
+        completionData: completionData,
+      );
+      print('✅ Completion submitted successfully');
     } catch (e) {
       print('❌ Failed to submit completion to API: $e');
       rethrow;
@@ -427,8 +417,12 @@ class SchedulesController extends GetxController {
       _submitDailyTrainingCompletion(activeSchedule, currentDay, dayWorkouts);
       
       // Move to next day
-      _currentDay[planId.toString()] = currentDay + 1;
-      _persistCurrentDayToCache(planId, currentDay + 1);
+      final newDay = currentDay + 1;
+      _currentDay[planId.toString()] = newDay;
+      _persistCurrentDayToCache(planId, newDay);
+      
+      print('🔍 Day progression: $currentDay → $newDay for plan $planId');
+      print('🔍 Current day state: ${_currentDay.value}');
       
       // Clear completed workouts for next day
       for (String key in workoutKeys) {
@@ -437,10 +431,14 @@ class SchedulesController extends GetxController {
         _workoutRemainingMinutes.remove(key);
       }
       
-      print('🔍 Moved to day ${currentDay + 1}, cleared workout states');
+      print('🔍 Moved to day $newDay, cleared workout states');
       
       // Force UI update
       refreshUI();
+      
+      // Debug: Check what workouts will be shown for the new day
+      final newDayWorkouts = _getDayWorkouts(activeSchedule, newDay);
+      print('🔍 New day $newDay workouts: ${newDayWorkouts.map((w) => w['name']).toList()}');
     }
   }
 
@@ -652,29 +650,38 @@ class SchedulesController extends GetxController {
     
     print('🔍 Schedules - _distributeWorkoutsAcrossDays: ${workouts.length} workouts across $totalDays days, requesting day $dayIndex');
     
-    // Per-day pairing rule:
-    // Pick two consecutive workouts for the given day index. If their combined
-    // minutes exceed 80, show only the first; otherwise show both.
+    // If only one workout, return it for all days
     if (workouts.length == 1) {
       final single = Map<String, dynamic>.from(workouts.first);
       print('🔍 Schedules - Only one workout available: ${single['name']}');
       return [single];
     }
 
-    final int firstIdx = dayIndex % workouts.length;
-    final int secondIdx = (firstIdx + 1) % workouts.length;
+    // Day-based distribution using rotation offset for ALL cases (same as backend)
+    // Backend: dayRotationOffset = ((day - 1) * workoutsPerDay) % exercises.length
+    // Frontend: dayRotationOffset = (dayIndex * workoutsPerDay) % workouts.length (0-based dayIndex)
+    // Rotation always applies for all cases (as per backend fix)
+    const int workoutsPerDay = 2;
+    final int dayRotationOffset = (dayIndex * workoutsPerDay) % workouts.length;
+    final int firstIdx = dayRotationOffset;
+    final int secondIdx = (dayRotationOffset + 1) % workouts.length;
+    
     final Map<String, dynamic> first = Map<String, dynamic>.from(workouts[firstIdx]);
     final Map<String, dynamic> second = Map<String, dynamic>.from(workouts[secondIdx]);
     final int m1 = _extractWorkoutMinutes(first);
     final int m2 = _extractWorkoutMinutes(second);
     final int combined = m1 + m2;
-    print('🔍 Schedules - Day $dayIndex candidates: ${first['name']}($m1) + ${second['name']}($m2) = $combined');
-    if (combined > 80) {
-      print('🔍 Schedules - Combined > 80 → show 1 workout');
-      return [first];
-    }
-    print('🔍 Schedules - Combined <= 80 → show 2 workouts');
-    return [first, second];
+    
+    print('🔍 Schedules - dayRotationOffset: $dayRotationOffset (dayIndex: $dayIndex, workoutsPerDay: $workoutsPerDay, totalWorkouts: ${workouts.length})');
+    print('🔍 Schedules - Pair indices: $firstIdx & $secondIdx → ${first['name']}($m1) + ${second['name']}($m2) = $combined');
+    
+    List<Map<String, dynamic>> selectedWorkouts = [];
+    
+    // Apply 80-minute rule: if pair exceeds 80 minutes, show only first
+    selectedWorkouts = combined > 80 ? [first] : [first, second];
+
+    print('🔍 Schedules - Day $dayIndex selected workouts: ${selectedWorkouts.map((w) => w['name']).toList()}');
+    return selectedWorkouts;
   }
 
   List<Map<String, dynamic>> _applyWorkoutDistributionLogic(List<Map<String, dynamic>> workouts) {
@@ -739,10 +746,13 @@ class SchedulesController extends GetxController {
 
   // Force UI refresh
   void refreshUI() {
+    print('🔄 SchedulesController - Refreshing UI...');
     _currentDay.refresh();
     _workoutStarted.refresh();
     _workoutCompleted.refresh();
     _workoutRemainingMinutes.refresh();
+    _activeSchedule.refresh(); // Also refresh active schedule to trigger UI updates
+    print('🔄 SchedulesController - UI refresh completed');
   }
 
   void setCurrentDay(int scheduleId, int day) {

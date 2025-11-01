@@ -18,12 +18,17 @@ class DailyTrainingPlan {
   });
 
   factory DailyTrainingPlan.fromJson(Map<String, dynamic> json) {
+    // API uses 'plan_category', but we also support 'exercise_plan_category' for backward compatibility
+    final String planCategory = json['plan_category']?.toString() ?? 
+                                json['exercise_plan_category']?.toString() ?? 
+                                'Training Plan';
+    
     return DailyTrainingPlan(
       id: json['id'] as int,
       userId: json['user_id'] as int,
       planDate: json['plan_date'] as String,
-      planCategory: json['plan_category'] as String,
-      workoutName: json['workout_name'] as String,
+      planCategory: planCategory,
+      workoutName: json['workout_name'] as String? ?? 'Daily Workout',
       isCompleted: json['is_completed'] as bool? ?? false,
       items: (json['items'] as List<dynamic>?)
           ?.map((item) => DailyTrainingItem.fromJson(item as Map<String, dynamic>))
@@ -182,15 +187,40 @@ class TrainingStats {
   });
 
   factory TrainingStats.fromJson(Map<String, dynamic> json) {
+    // API returns stats nested in 'stats' object, or directly at root
+    final Map<String, dynamic> statsData = json['stats'] as Map<String, dynamic>? ?? json;
+    
+    // Parse plans_by_category - can be nested or flat
+    Map<String, int> categoryMap = {};
+    final plansByCategory = statsData['plans_by_category'] as Map<String, dynamic>?;
+    if (plansByCategory != null) {
+      plansByCategory.forEach((key, value) {
+        if (value is Map) {
+          // If it's nested like {"total": 20, "completed": 17}
+          categoryMap[key] = value['total'] as int? ?? value['completed'] as int? ?? 0;
+        } else if (value is num) {
+          categoryMap[key] = value.toInt();
+        }
+      });
+    }
+    
+    // Get recent plans from nested 'recent_plans' or 'recent_workouts'
+    final List<dynamic>? recentData = json['recent_plans'] as List<dynamic>? ?? 
+                                      json['recent_workouts'] as List<dynamic>? ??
+                                      statsData['recent_plans'] as List<dynamic>? ??
+                                      statsData['recent_workouts'] as List<dynamic>?;
+    
     return TrainingStats(
-      totalWorkoutsCompleted: json['total_workouts_completed'] as int? ?? 0,
-      totalMinutesSpent: json['total_minutes_spent'] as int? ?? 0,
-      totalWeightLifted: (json['total_weight_lifted'] as num?)?.toDouble() ?? 0.0,
-      currentStreak: json['current_streak'] as int? ?? 0,
-      longestStreak: json['longest_streak'] as int? ?? 0,
-      workoutsByCategory: Map<String, int>.from(json['workouts_by_category'] as Map<String, dynamic>? ?? {}),
-      recentWorkouts: (json['recent_workouts'] as List<dynamic>?)
-          ?.cast<Map<String, dynamic>>() ?? [],
+      totalWorkoutsCompleted: statsData['completed_plans'] as int? ?? 
+                               statsData['total_workouts_completed'] as int? ?? 0,
+      totalMinutesSpent: statsData['total_training_minutes'] as int? ?? 
+                         statsData['total_minutes_spent'] as int? ?? 0,
+      totalWeightLifted: (statsData['total_weight_kg'] as num?)?.toDouble() ?? 
+                         (statsData['total_weight_lifted'] as num?)?.toDouble() ?? 0.0,
+      currentStreak: statsData['current_streak'] as int? ?? 0,
+      longestStreak: statsData['longest_streak'] as int? ?? 0,
+      workoutsByCategory: categoryMap,
+      recentWorkouts: recentData?.cast<Map<String, dynamic>>() ?? [],
     );
   }
 

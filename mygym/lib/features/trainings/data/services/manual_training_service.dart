@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'dart:convert'; // Added for jsonEncode
 import '../../../../core/constants/app_constants.dart';
 import '../../../../shared/services/api_client.dart';
 import '../../../auth/data/services/auth_service.dart';
@@ -184,6 +185,18 @@ class ManualTrainingService {
         print('📋 total_exercises value: ${plan['total_exercises']}');
         print('📋 total_workouts value: ${plan['total_workouts']}');
         print('📋 training_minutes value: ${plan['training_minutes']}');
+        
+        // Log daily_plans if present (backend now returns this)
+        if (plan['daily_plans'] is List) {
+          final dpCount = (plan['daily_plans'] as List).length;
+          print('📋 daily_plans found: $dpCount days');
+          if (dpCount > 0) {
+            final firstDay = (plan['daily_plans'] as List).first;
+            print('📋 Day 1 workouts count: ${firstDay is Map ? (firstDay['workouts'] as List?)?.length ?? 0 : 0}');
+          }
+        } else {
+          print('📋 daily_plans: not found or not a List');
+        }
 
         // Normalize items list under 'items'
         List<dynamic>? items;
@@ -229,8 +242,33 @@ class ManualTrainingService {
     print('🔍 Service - Payload being sent: $payload');
     print('🔍 Service - total_exercises in payload: ${payload['total_exercises']}');
     
+    // Normalize payload: backend may expect exercises_details as JSON string
+    final Map<String, dynamic> body = Map<String, dynamic>.from(payload);
     try {
-      final res = await dio.post('/api/appManualTraining', data: payload);
+      if (body['items'] is List) {
+        body['items'] = (body['items'] as List).map((e) {
+          final m = Map<String, dynamic>.from(e as Map);
+          if (!(m.containsKey('minutes')) || m['minutes'] == null) {
+            m['minutes'] = m['training_minutes'] ?? 0;
+          }
+          return m;
+        }).toList();
+      }
+      if (body['exercises_details'] is List) {
+        body['exercises_details'] = jsonEncode(body['exercises_details']);
+      }
+    } catch (_) {}
+
+    // Build daily_plans from items using the same rotation logic used by the app view
+    try {
+      body['daily_plans'] = _buildDailyPlansFromItems(body);
+      print('📦 Service - Built daily_plans with ${(body['daily_plans'] as List).length} days');
+    } catch (e) {
+      print('⚠️ Service - Failed to build daily_plans: $e');
+    }
+    
+    try {
+      final res = await dio.post('/api/appManualTraining', data: body);
       
       print('🔍 Service - Create response status: ${res.statusCode}');
       print('🔍 Service - Create response data: ${res.data}');
@@ -262,7 +300,31 @@ class ManualTrainingService {
     print('🔍 Service - Payload being sent: $payload');
     print('🔍 Service - total_exercises in payload: ${payload['total_exercises']}');
     
-    final res = await dio.put('/api/appManualTraining/$id', data: payload);
+    final Map<String, dynamic> body = Map<String, dynamic>.from(payload);
+    try {
+      if (body['items'] is List) {
+        body['items'] = (body['items'] as List).map((e) {
+          final m = Map<String, dynamic>.from(e as Map);
+          if (!(m.containsKey('minutes')) || m['minutes'] == null) {
+            m['minutes'] = m['training_minutes'] ?? 0;
+          }
+          return m;
+        }).toList();
+      }
+      if (body['exercises_details'] is List) {
+        body['exercises_details'] = jsonEncode(body['exercises_details']);
+      }
+    } catch (_) {}
+
+    // Build daily_plans from items using the same rotation logic used by the app view
+    try {
+      body['daily_plans'] = _buildDailyPlansFromItems(body);
+      print('📦 Service - Built daily_plans with ${(body['daily_plans'] as List).length} days (update)');
+    } catch (e) {
+      print('⚠️ Service - Failed to build daily_plans on update: $e');
+    }
+    
+    final res = await dio.put('/api/appManualTraining/$id', data: body);
     
     print('🔍 Service - Update response status: ${res.statusCode}');
     print('🔍 Service - Update response data: ${res.data}');
@@ -273,6 +335,63 @@ class ManualTrainingService {
       return responseData;
     }
     throw Exception('Failed to update plan');
+  }
+
+  // ------------------------
+  // Helpers
+  // ------------------------
+  List<Map<String, dynamic>> _buildDailyPlansFromItems(Map<String, dynamic> body) {
+    final List<dynamic> rawItems = (body['items'] as List?) ?? [];
+    final List<Map<String, dynamic>> items = rawItems.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    if (items.isEmpty) return [];
+
+    DateTime? start;
+    DateTime? end;
+    try {
+      if (body['start_date'] != null) start = DateTime.tryParse(body['start_date'].toString());
+      if (body['end_date'] != null) end = DateTime.tryParse(body['end_date'].toString());
+    } catch (_) {}
+
+    int totalDays;
+    if (start != null && end != null) {
+      totalDays = (end.difference(start).inDays + 1).clamp(1, 365);
+    } else {
+      // Fallback: derive a reasonable number of days from number of workouts and 2/day
+      totalDays = ((items.length + 1) / 2).ceil();
+    }
+
+    // Rotation logic identical to frontend: dayRotationOffset = (dayIndex * 2) % items.length
+    const int workoutsPerDay = 2;
+    final List<Map<String, dynamic>> days = [];
+    for (int d = 0; d < totalDays; d++) {
+      final int offset = (d * workoutsPerDay) % items.length;
+      final Map<String, dynamic> first = Map<String, dynamic>.from(items[offset]);
+      final Map<String, dynamic> second = Map<String, dynamic>.from(items[(offset + 1) % items.length]);
+
+      int m1 = _minutes(first);
+      int m2 = _minutes(second);
+      final int combined = m1 + m2;
+
+      final List<Map<String, dynamic>> dayWorkouts = combined > 80 ? [first] : [first, second];
+      final int totalMinutes = dayWorkouts.fold(0, (s, w) => s + _minutes(w));
+
+      days.add({
+        'day': d + 1,
+        'date': (start ?? DateTime.now()).add(Duration(days: d)).toIso8601String().split('T').first,
+        'workouts': dayWorkouts,
+        'total_workouts': dayWorkouts.length,
+        'total_minutes': totalMinutes,
+      });
+    }
+
+    return days;
+  }
+
+  int _minutes(Map<String, dynamic> w) {
+    final v = w['minutes'] ?? w['training_minutes'] ?? 0;
+    if (v is int) return v;
+    if (v is String) return int.tryParse(v) ?? 0;
+    return 0;
   }
 
   Future<void> deletePlan(int id) async {

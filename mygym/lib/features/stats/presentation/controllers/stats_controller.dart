@@ -102,9 +102,14 @@ class StatsController extends GetxController {
         print('📊 Stats - Training stats type: ${statsData.runtimeType}');
         
         if (statsData is Map<String, dynamic>) {
-          trainingStats.value = TrainingStats.fromJson(statsData);
-          _cachedStats.assignAll(statsData);
+          // API returns {success: true, data: {...}} or just {...}
+          final dataToParse = statsData['data'] as Map<String, dynamic>? ?? statsData;
+          trainingStats.value = TrainingStats.fromJson(dataToParse);
+          _cachedStats.assignAll(dataToParse);
           print('✅ Stats - Training stats updated');
+          print('✅ Stats - Total completed: ${trainingStats.value?.totalWorkoutsCompleted}');
+          print('✅ Stats - Total minutes: ${trainingStats.value?.totalMinutesSpent}');
+          print('✅ Stats - Total weight: ${trainingStats.value?.totalWeightLifted}');
         } else {
           print('⚠️ Stats - Invalid stats data format: ${statsData.runtimeType}');
           // Create default stats if data format is invalid

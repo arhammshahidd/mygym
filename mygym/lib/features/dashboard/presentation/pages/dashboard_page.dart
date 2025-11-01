@@ -129,7 +129,38 @@ class _DashboardPageState extends State<DashboardPage> {
   // Helpers to extract today's workouts summary from a plan map
   List<Map<String, dynamic>> _extractTodayWorkouts(Map<String, dynamic>? plan) {
     if (plan == null) return const [];
+    
+    print('🔍 Dashboard - _extractTodayWorkouts called for plan: ${plan['id']}');
+    print('🔍 Dashboard - Plan keys: ${plan.keys.toList()}');
+    print('🔍 Dashboard - Plan items: ${plan['items']}');
+    print('🔍 Dashboard - Plan exercises_details: ${plan['exercises_details']}');
+    
     try {
+      // First try to get workouts from items array
+      List<Map<String, dynamic>> workouts = [];
+      if (plan['items'] is List) {
+        workouts = List<Map<String, dynamic>>.from((plan['items'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+        print('🔍 Dashboard - Found ${workouts.length} items in plan[items]');
+      } else if (plan['exercises_details'] is List) {
+        workouts = List<Map<String, dynamic>>.from((plan['exercises_details'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+        print('🔍 Dashboard - Found ${workouts.length} items in plan[exercises_details]');
+      } else if (plan['exercises_details'] is String) {
+        try {
+          final List<dynamic> parsed = jsonDecode(plan['exercises_details'] as String) as List<dynamic>;
+          workouts = List<Map<String, dynamic>>.from(parsed.map((e) => Map<String, dynamic>.from(e as Map)));
+          print('🔍 Dashboard - Parsed ${workouts.length} items from exercises_details string');
+        } catch (e) {
+          print('❌ Dashboard - Failed to parse exercises_details: $e');
+        }
+      }
+      
+      if (workouts.isNotEmpty) {
+        print('🔍 Dashboard - Workout names: ${workouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+        // Apply distribution logic for the current day
+        return _applyWorkoutDistributionLogic(workouts);
+      }
+      
+      // Fallback - try daily_plans
       final List<dynamic>? daily = _normalizeDailyPlans(plan['daily_plans']);
       if (daily != null && daily.isNotEmpty) {
         final int dayIdx = _activeTrainingDayIndex.clamp(0, daily.length - 1);
@@ -137,20 +168,9 @@ class _DashboardPageState extends State<DashboardPage> {
         final List items = (day['workouts'] ?? day['items'] ?? const []) as List;
         return List<Map<String, dynamic>>.from(items.map((e) => Map<String, dynamic>.from(e as Map)));
       }
-      // Fallback - use SchedulesController's distribution logic
-      List<Map<String, dynamic>> workouts = [];
-      if (plan['exercises_details'] is List) {
-        workouts = List<Map<String, dynamic>>.from((plan['exercises_details'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
-      } else if (plan['exercises_details'] is String) {
-        try {
-          final List<dynamic> parsed = jsonDecode(plan['exercises_details'] as String) as List<dynamic>;
-          workouts = List<Map<String, dynamic>>.from(parsed.map((e) => Map<String, dynamic>.from(e as Map)));
-        } catch (_) {}
-      }
-      
-      // Apply the same distribution logic as SchedulesController
-      return _applyWorkoutDistributionLogic(workouts);
-    } catch (_) {}
+    } catch (e) {
+      print('❌ Dashboard - Error in _extractTodayWorkouts: $e');
+    }
     return const [];
   }
 
@@ -273,26 +293,27 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _workoutCard() {
     Map<String, dynamic>? activePlan;
     
-    // First check if there's an active schedule from SchedulesController
+    // Determine source priority: user-started plan (manual/AI) takes precedence over schedules
     final activeSchedule = _schedulesController.activeSchedule;
-    if (activeSchedule != null) {
-      activePlan = activeSchedule;
-      _activeTrainingPlanId = int.tryParse(activeSchedule['id']?.toString() ?? '');
+
+    // 0) Live active plan from PlansController (most immediate)
+    final Map<String, dynamic>? liveActivePlan = _plansController.activePlan;
+    if (liveActivePlan != null) {
+      activePlan = liveActivePlan;
+      _activeTrainingPlanId = int.tryParse(liveActivePlan['id']?.toString() ?? '');
     }
-    
-    // If no active schedule, check Plans tab data
     if (activePlan == null && _activeTrainingPlanId != null) {
+      // Try to resolve from Plans first (manual/AI)
       activePlan = _plansController.manualPlans.firstWhereOrNull((p) => int.tryParse(p['id']?.toString() ?? '') == _activeTrainingPlanId);
       activePlan ??= _plansController.aiGeneratedPlans.firstWhereOrNull((p) => int.tryParse(p['id']?.toString() ?? '') == _activeTrainingPlanId);
       
-      // If not found in Plans, check in Schedules tab data
+      // Fallback: check assignments list
       activePlan ??= _schedulesController.assignments.firstWhereOrNull((p) => int.tryParse(p['id']?.toString() ?? '') == _activeTrainingPlanId);
       
-      // If still not found, try to load from persisted snapshot
+      // Persisted snapshots as last resort
       if (activePlan == null) {
         SharedPreferences.getInstance().then((prefs) {
           final userId = Get.find<ProfileController>().user?.id ?? 0;
-          // Check for active training plan snapshot
           final raw = prefs.getString('activeTrainingPlan_user_$userId');
           if (raw != null && raw.isNotEmpty) {
             try {
@@ -304,7 +325,6 @@ class _DashboardPageState extends State<DashboardPage> {
               }
             } catch (_) {}
           }
-          // Also check for active schedule snapshot
           final scheduleRaw = prefs.getString('activeSchedule_user_$userId');
           if (scheduleRaw != null && scheduleRaw.isNotEmpty) {
             try {
@@ -319,18 +339,54 @@ class _DashboardPageState extends State<DashboardPage> {
         });
       }
     }
-
-    final workouts = activePlan != null ? _extractTodayWorkouts(activePlan) : const <Map<String, dynamic>>[];
-    final hasActive = activePlan != null && workouts.isNotEmpty;
     
-    // Get current day from SchedulesController if it's an active schedule
-    int currentDay = _activeTrainingDayIndex;
-    if (activeSchedule != null && _activeTrainingPlanId != null) {
-      currentDay = _schedulesController.getCurrentDay(_activeTrainingPlanId!);
+    // If no explicitly-started plan, fall back to currently active schedule
+    if (activePlan == null && activeSchedule != null) {
+      activePlan = activeSchedule;
     }
 
+    // Compute today's workouts based on selected source
+    List<Map<String, dynamic>> workouts = const <Map<String, dynamic>>[];
+    if (activePlan != null) {
+      // If we are showing a schedule instance, use schedules controller distribution
+      final bool isSchedule = activeSchedule != null && 
+          (activePlan!['id']?.toString() == activeSchedule['id']?.toString());
+      
+      if (isSchedule) {
+        workouts = _schedulesController.getActiveDayWorkouts();
+      } else {
+        // For manual/AI plans, use the plan's own workout distribution
+        workouts = _extractTodayWorkouts(activePlan!);
+      }
+      
+      print('🔍 Dashboard - Active plan: ${activePlan!['id']}');
+      print('🔍 Dashboard - Is schedule: $isSchedule');
+      print('🔍 Dashboard - Workouts count: ${workouts.length}');
+      print('🔍 Dashboard - Workouts: ${workouts.map((w) => w['name']).toList()}');
+    }
+    final hasActive = (activeSchedule != null || activePlan != null) && workouts.isNotEmpty;
+    
+    // Get current day from the correct controller/source
+    int currentDay = _activeTrainingDayIndex;
+    if (activeSchedule != null && _activeTrainingPlanId != null) {
+      // Active schedule day
+      currentDay = _schedulesController.getCurrentDay(_activeTrainingPlanId!);
+    } else if (activePlan != null && _activeTrainingPlanId != null) {
+      // Active manual/AI plan day
+      currentDay = _plansController.getCurrentDay(_activeTrainingPlanId!);
+    }
+
+    String _resolvePlanTitle(Map<String, dynamic> plan) {
+      return plan['exercise_plan_category']?.toString()
+          ?? plan['plan_category']?.toString()
+          ?? plan['category']?.toString()
+          ?? plan['workout_name']?.toString()
+          ?? 'Workout Plan';
+    }
+
+    final Map<String, dynamic>? titleSource = activeSchedule ?? activePlan;
     return _sectionCard(
-      title: hasActive ? (activePlan!['exercise_plan_category']?.toString() ?? 'Muscle Building') : 'No Active Training Plan',
+      title: hasActive && titleSource != null ? _resolvePlanTitle(titleSource) : 'No Active Training Plan',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -710,7 +766,12 @@ class _DashboardPageState extends State<DashboardPage> {
 
         // Touch reactive training/nutrition observables so Dashboard rebuilds when they change
         // ignore: unused_local_variable
-        final int _reactiveTick = _plansController.manualPlans.length + _plansController.aiGeneratedPlans.length + _schedulesController.assignments.length + (_nutritionController.mealPlanActive.value ? 1 : 0);
+        final int _reactiveTick = _plansController.manualPlans.length 
+            + _plansController.aiGeneratedPlans.length 
+            + _schedulesController.assignments.length 
+            + (_nutritionController.mealPlanActive.value ? 1 : 0)
+            // also react to active plan changes
+            + (_plansController.activePlan != null ? 1 : 0);
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(8),

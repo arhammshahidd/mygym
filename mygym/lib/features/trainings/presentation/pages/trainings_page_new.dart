@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -41,15 +42,28 @@ class _TrainingsPageState extends State<TrainingsPage>
       }
     });
 
-    // Load initial data for both tabs
-    _schedulesController.loadSchedulesData();
-    _plansController.loadPlansData();
+    // Load initial data for both tabs and refresh automatically
+    _loadInitialData();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _scaffoldMessenger = ScaffoldMessenger.of(context);
+  }
+
+  Future<void> _loadInitialData() async {
+    // Load schedules data
+    await _schedulesController.loadSchedulesData();
+    
+    // Load plans data
+    await _plansController.loadPlansData();
+    
+    // Refresh data to ensure we have the latest information
+    if (mounted) {
+      await _schedulesController.refreshSchedules();
+      await _plansController.refreshPlans();
+    }
   }
 
   @override
@@ -61,6 +75,7 @@ class _TrainingsPageState extends State<TrainingsPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.appBackgroundColor,
       appBar: AppBar(
         title: const Text('Training'),
         backgroundColor: AppTheme.appBackgroundColor,
@@ -117,20 +132,9 @@ class _TrainingsPageState extends State<TrainingsPage>
           padding: const EdgeInsets.all(16),
           children: [
             // Header
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Scheduled Workouts',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    _schedulesController.loadSchedulesData();
-                  },
-                  child: const Text('Refresh'),
-                ),
-              ],
+            const Text(
+              'Scheduled Workouts',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.textColor),
             ),
             const SizedBox(height: 16),
 
@@ -219,6 +223,27 @@ class _TrainingsPageState extends State<TrainingsPage>
                           icon: const Icon(Icons.refresh, size: 16),
                           label: const Text('Refresh Status'),
                         ),
+                        IconButton(
+                          onPressed: () async {
+                            try {
+                              await _plansController.resetManualPlanCache();
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Manual plan cache cleared')),
+                                );
+                              }
+                            } catch (e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Failed to clear cache: $e')),
+                                );
+                              }
+                            }
+                          },
+                          icon: const Icon(Icons.cleaning_services, size: 18),
+                          tooltip: 'Reset Cache',
+                          color: AppTheme.primaryColor,
+                        ),
                         TextButton.icon(
                           onPressed: () async {
                             await _plansController.debugCheckPlanStatus(34);
@@ -244,6 +269,8 @@ class _TrainingsPageState extends State<TrainingsPage>
 
           // Active Plan Daily Workouts Section
           Obx(() {
+            // Touch uiTick so this section rebuilds on day changes
+            final _ = _plansController.uiTick.value;
             final activePlan = _plansController.activePlan;
             if (activePlan != null) {
               return _buildActivePlanDailyView(activePlan);
@@ -312,163 +339,183 @@ class _TrainingsPageState extends State<TrainingsPage>
 
   Widget _buildScheduleCard(Map<String, dynamic> plan) {
     final planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;
-    final isStarted = _schedulesController.isScheduleStarted(planId);
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    plan['exercise_plan_category']?.toString() ??
-                        'Workout Plan',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+    
+    // Debug: Print all available fields in the plan
+    print('🔍 Schedule Card - Plan data: $plan');
+    print('🔍 Schedule Card - Available fields: ${plan.keys.toList()}');
+    
+    // Debug: Check for total days fields specifically
+    print('🔍 Schedule Card - Total Days Debug:');
+    print('🔍   - total_days: ${plan['total_days']}');
+    print('🔍   - days: ${plan['days']}');
+    print('🔍   - duration: ${plan['duration']}');
+    print('🔍   - plan_duration: ${plan['plan_duration']}');
+    print('🔍   - total_duration: ${plan['total_duration']}');
+    print('🔍   - workout_days: ${plan['workout_days']}');
+    print('🔍   - training_days: ${plan['training_days']}');
+    print('🔍   - start_date: ${plan['start_date']}');
+    print('🔍   - end_date: ${plan['end_date']}');
+    print('🔍   - assigned_at: ${plan['assigned_at']}');
+    print('🔍   - created_at: ${plan['created_at']}');
+    
+    return Obx(() {
+      final isStarted = _schedulesController.isScheduleStarted(planId);
+      
+      return Card(
+        margin: const EdgeInsets.only(bottom: 12),
+        color: AppTheme.cardBackgroundColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      plan['exercise_plan_category']?.toString() ?? 
+                      plan['category']?.toString() ?? 
+                      plan['plan_category']?.toString() ?? 
+                      plan['workout_name']?.toString() ?? 
+                      'Training Plan',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                     ),
                   ),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    if (isStarted) {
-                      _schedulesController.stopSchedule(plan);
-                    } else {
-                      _schedulesController.startSchedule(plan);
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isStarted
-                        ? Colors.red
-                        : AppTheme.primaryColor,
-                    foregroundColor: AppTheme.textColor,
+                  ElevatedButton(
+                    onPressed: () {
+                      if (isStarted) {
+                        _schedulesController.stopSchedule(plan);
+                      } else {
+                        _schedulesController.startSchedule(plan);
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isStarted ? Colors.red : AppTheme.primaryColor,
+                      foregroundColor: AppTheme.textColor,
+                    ),
+                    child: Text(isStarted ? 'Stop Plan' : 'Start Plan'),
                   ),
-                  child: Text(isStarted ? 'Stop Plan' : 'Start Plan'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            
-            // Plan Category Name - try multiple field names
-            if (plan['exercise_plan_category'] != null)
-              Text('Plan Category: ${plan['exercise_plan_category']}', style: const TextStyle(color: AppTheme.textColor))
-            else if (plan['category'] != null)
-              Text('Plan Category: ${plan['category']}', style: const TextStyle(color: AppTheme.textColor))
-            else if (plan['plan_category'] != null)
-              Text('Plan Category: ${plan['plan_category']}', style: const TextStyle(color: AppTheme.textColor))
-            else if (plan['workout_name'] != null)
-              Text('Plan Category: ${plan['workout_name']}', style: const TextStyle(color: AppTheme.textColor)),
-            
-            // Total Days - calculate from start_date and end_date
-            Builder(
-              builder: (context) {
-                // First try to calculate from plan data
-                int calculatedDays = _calculateTotalDays(plan);
-                
-                if (calculatedDays > 0) {
-                  return Text(
-                    'Total Days: $calculatedDays',
-                    style: const TextStyle(color: AppTheme.textColor)
-                  );
-                }
-                
-                // If no dates in plan data, try to fetch from assignment details
-                return FutureBuilder<Map<String, dynamic>>(
-                  future: _schedulesController.getAssignmentDetails(planId),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Text('Total Days: Loading...', style: TextStyle(color: AppTheme.textColor, fontStyle: FontStyle.italic));
-                    }
-                    
-                    if (snapshot.hasError) {
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Plan Category Name - try multiple field names
+              if (plan['exercise_plan_category'] != null)
+                Text('Plan Category: ${plan['exercise_plan_category']}', style: const TextStyle(color: AppTheme.textColor))
+              else if (plan['category'] != null)
+                Text('Plan Category: ${plan['category']}', style: const TextStyle(color: AppTheme.textColor))
+              else if (plan['plan_category'] != null)
+                Text('Plan Category: ${plan['plan_category']}', style: const TextStyle(color: AppTheme.textColor))
+              else if (plan['workout_name'] != null)
+                Text('Plan Category: ${plan['workout_name']}', style: const TextStyle(color: AppTheme.textColor)),
+              // Total Days - calculate from start_date and end_date
+              Builder(
+                builder: (context) {
+                  // First try to calculate from plan data
+                  int calculatedDays = _calculateTotalDays(plan);
+                  
+                  if (calculatedDays > 0) {
+                    return Text(
+                      'Total Days: $calculatedDays',
+                      style: const TextStyle(color: AppTheme.textColor)
+                    );
+                  }
+                  
+                  // If no dates in plan data, try to fetch from assignment details
+                  return FutureBuilder<Map<String, dynamic>>(
+                    future: _schedulesController.getAssignmentDetails(planId),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Text('Total Days: Loading...', style: TextStyle(color: AppTheme.textColor, fontStyle: FontStyle.italic));
+                      }
+                      
+                      if (snapshot.hasError) {
+                        // Fallback to direct field checking
+                        final totalDays = plan['total_days'] ?? plan['days'] ?? plan['duration'] ?? 
+                                        plan['plan_duration'] ?? plan['total_duration'] ?? 
+                                        plan['workout_days'] ?? plan['training_days'];
+                        return Text(
+                          totalDays != null ? 'Total Days: $totalDays' : 'Total Days: Not specified',
+                          style: const TextStyle(color: AppTheme.textColor, fontStyle: FontStyle.italic)
+                        );
+                      }
+                      
+                      final assignmentDetails = snapshot.data ?? {};
+                      
+                      // Try to calculate from assignment details
+                      int assignmentCalculatedDays = _calculateTotalDays(assignmentDetails);
+                      if (assignmentCalculatedDays > 0) {
+                        return Text(
+                          'Total Days: $assignmentCalculatedDays',
+                          style: const TextStyle(color: AppTheme.textColor)
+                        );
+                      }
+                      
                       // Fallback to direct field checking
-                      final totalDays = plan['total_days'] ?? plan['days'] ?? plan['duration'] ?? 
-                                      plan['plan_duration'] ?? plan['total_duration'] ?? 
-                                      plan['workout_days'] ?? plan['training_days'];
+                      final totalDays = assignmentDetails['total_days'] ?? assignmentDetails['days'] ?? 
+                                      assignmentDetails['duration'] ?? assignmentDetails['plan_duration'] ?? 
+                                      assignmentDetails['total_duration'] ?? assignmentDetails['workout_days'] ?? 
+                                      assignmentDetails['training_days'] ?? plan['total_days'] ?? 
+                                      plan['days'] ?? plan['duration'] ?? plan['plan_duration'] ?? 
+                                      plan['total_duration'] ?? plan['workout_days'] ?? plan['training_days'];
+                      
                       return Text(
                         totalDays != null ? 'Total Days: $totalDays' : 'Total Days: Not specified',
                         style: const TextStyle(color: AppTheme.textColor, fontStyle: FontStyle.italic)
                       );
-                    }
-                    
-                    final assignmentDetails = snapshot.data ?? {};
-                    
-                    // Try to calculate from assignment details
-                    int assignmentCalculatedDays = _calculateTotalDays(assignmentDetails);
-                    if (assignmentCalculatedDays > 0) {
-                      return Text(
-                        'Total Days: $assignmentCalculatedDays',
-                        style: const TextStyle(color: AppTheme.textColor)
-                      );
-                    }
-                    
-                    // Fallback to direct field checking
-                    final totalDays = assignmentDetails['total_days'] ?? assignmentDetails['days'] ?? 
-                                    assignmentDetails['duration'] ?? assignmentDetails['plan_duration'] ?? 
-                                    assignmentDetails['total_duration'] ?? assignmentDetails['workout_days'] ?? 
-                                    assignmentDetails['training_days'] ?? plan['total_days'] ?? 
-                                    plan['days'] ?? plan['duration'] ?? plan['plan_duration'] ?? 
-                                    plan['total_duration'] ?? plan['workout_days'] ?? plan['training_days'];
-                    
-                    return Text(
-                      totalDays != null ? 'Total Days: $totalDays' : 'Total Days: Not specified',
-                      style: const TextStyle(color: AppTheme.textColor, fontStyle: FontStyle.italic)
-                    );
-                  },
-                );
-              },
-            ),
-            
-            // User Level
-            if (plan['user_level'] != null)
-              Text('User Level: ${plan['user_level']}', style: const TextStyle(color: AppTheme.textColor)),
-            
-            // Motivational line with icon
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(
-                  Icons.fitness_center,
-                  color: AppTheme.primaryColor,
-                  size: 16,
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  'You can do it!',
-                  style: TextStyle(
-                    color: AppTheme.textColor,
-                    fontWeight: FontWeight.w500,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        PlanDetailPage(plan: plan, isAi: false),
-                  ),
-                );
-              },
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppTheme.primaryColor,
-                side: const BorderSide(color: AppTheme.primaryColor),
+                    },
+                  );
+                },
               ),
-              child: const Text('View Plan'),
-            ),
-          ],
+              // User Level
+              if (plan['user_level'] != null)
+                Text('User Level: ${plan['user_level']}', style: const TextStyle(color: AppTheme.textColor)),
+              
+              // Motivational line with icon
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.fitness_center,
+                    color: AppTheme.primaryColor,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'You can do it!',
+                    style: TextStyle(
+                      color: AppTheme.textColor,
+                      fontWeight: FontWeight.w500,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PlanDetailPage(plan: plan, isAi: false),
+                    ),
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.primaryColor,
+                  side: const BorderSide(color: AppTheme.primaryColor),
+                ),
+                child: const Text('View Plan'),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   Widget _buildManualPlanCard(Map<String, dynamic> plan) {
@@ -878,8 +925,8 @@ class _TrainingsPageState extends State<TrainingsPage>
             // Show only Start Plan button if AI plan hasn't been modified
             final isStarted = _plansController.isPlanStarted(planId);
             if (isStarted) {
-              return ElevatedButton(
-                onPressed: () {
+        return ElevatedButton(
+          onPressed: () {
                   _plansController.stopPlan(plan);
                   setState(() {});
                 },
@@ -892,46 +939,44 @@ class _TrainingsPageState extends State<TrainingsPage>
             }
             return ElevatedButton(
               onPressed: () async {
-                _plansController.startPlan(plan);
+            _plansController.startPlan(plan);
                 setState(() {}); // reflect started state immediately
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryColor,
-                foregroundColor: AppTheme.textColor,
-              ),
-              child: const Text('Start Plan'),
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: AppTheme.textColor,
+          ),
+          child: const Text('Start Plan'),
             );
           }
         } else {
-          // For manual plans: Show only Resend button if modified (convert Start Plan to Resend)
-          if (hasBeenModified) {
+          // For manual plans: enforce approval flow before starting
+          final approval = approvalStatus.toLowerCase();
+          if (approval == 'pending') {
+            return ElevatedButton(
+              onPressed: null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Pending Approval'),
+            );
+          }
+          if (approval == 'rejected' || hasBeenModified) {
             return ElevatedButton(
               onPressed: () async {
                 try {
-                  final result = await _plansController.sendManualPlanForApproval(plan);
-                  
+                  await _plansController.sendManualPlanForApproval(plan);
                   if (mounted && _scaffoldMessenger != null) {
                     _scaffoldMessenger!.showSnackBar(
-                      const SnackBar(
-                        content: Text('Manual plan resent for approval successfully!'),
-                        backgroundColor: Colors.green,
-                      ),
+                      const SnackBar(content: Text('Manual plan sent for approval')), 
                     );
                   }
-                  
-                  // Refresh the plans to update the approval status
-                  if (mounted) {
-                    await _plansController.refreshPlans();
-                  }
-                  
+                  if (mounted) await _plansController.refreshPlans();
                 } catch (e) {
                   if (mounted && _scaffoldMessenger != null) {
                     _scaffoldMessenger!.showSnackBar(
-                      SnackBar(
-                        content: Text('Failed to resend manual plan for approval: $e'),
-                        backgroundColor: Colors.red,
-                        duration: const Duration(seconds: 4),
-                      ),
+                      SnackBar(content: Text('Failed to send for approval: $e'), backgroundColor: Colors.red),
                     );
                   }
                 }
@@ -940,43 +985,61 @@ class _TrainingsPageState extends State<TrainingsPage>
                 backgroundColor: Colors.orange,
                 foregroundColor: Colors.white,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.refresh, size: 16),
-                  const SizedBox(width: 4),
-                  const Text('Resend Plan'),
-                ],
-              ),
+              child: const Text('Resend Plan'),
             );
-          } else {
-            // Show only Start Plan button if manual plan hasn't been modified
-            final isStarted = _plansController.isPlanStarted(planId);
-            if (isStarted) {
-              return ElevatedButton(
-                onPressed: () {
-                  _plansController.stopPlan(plan);
-                  setState(() {});
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('Stop Plan'),
-              );
-            }
+          }
+          if (approval != 'approved') {
             return ElevatedButton(
               onPressed: () async {
-                _plansController.startPlan(plan);
-                setState(() {}); // reflect started state immediately
+                try {
+                  await _plansController.sendManualPlanForApproval(plan);
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
+                      const SnackBar(content: Text('Manual plan sent for approval')),
+                    );
+                  }
+                  if (mounted) await _plansController.refreshPlans();
+                } catch (e) {
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
+                      SnackBar(content: Text('Failed to send for approval: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primaryColor,
-                foregroundColor: AppTheme.textColor,
+                foregroundColor: Colors.white,
               ),
-              child: const Text('Start Plan'),
+              child: const Text('Send Plan'),
             );
           }
+          // Only when approved allow starting/stopping
+          final isStarted = _plansController.isPlanStarted(planId);
+          if (isStarted) {
+            return ElevatedButton(
+              onPressed: () {
+                _plansController.stopPlan(plan);
+                setState(() {});
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Stop Plan'),
+            );
+          }
+          return ElevatedButton(
+            onPressed: () async {
+              _plansController.startPlan(plan);
+              setState(() {}); // reflect started state immediately
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+              foregroundColor: AppTheme.textColor,
+            ),
+            child: const Text('Start Plan'),
+          );
         }
       case 'rejected':
         // If plan was edited after rejection, allow resending
@@ -1119,7 +1182,7 @@ class _TrainingsPageState extends State<TrainingsPage>
               
             if (_scaffoldMessenger != null) {
               _scaffoldMessenger!.showSnackBar(
-                const SnackBar(
+              const SnackBar(
                     content: Text('Plan sent for approval successfully!'),
                     backgroundColor: Colors.green,
                     duration: Duration(seconds: 3),
@@ -1191,7 +1254,8 @@ class _TrainingsPageState extends State<TrainingsPage>
   }
 
   void _showDeleteConfirmation(Map<String, dynamic> plan, bool isAi) {
-    final planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;
+    final int planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;
+    final int backendId = int.tryParse(plan['plan_id']?.toString() ?? plan['id']?.toString() ?? '') ?? planId;
     final planName = plan['exercise_plan_category']?.toString() ?? (isAi ? 'AI Generated Plan' : 'Manual Plan');
     
     showDialog(
@@ -1210,9 +1274,9 @@ class _TrainingsPageState extends State<TrainingsPage>
                 Navigator.of(context).pop();
                 try {
                   if (isAi) {
-                    await _plansController.deleteAiGeneratedPlan(planId);
+                    await _plansController.deleteAiGeneratedPlan(backendId);
                   } else {
-                    await _plansController.deleteManualPlan(planId);
+                    await _plansController.deleteManualPlan(backendId);
                   }
                   
                   // Show success message
@@ -1246,35 +1310,148 @@ class _TrainingsPageState extends State<TrainingsPage>
   }
 
   Widget _buildActiveScheduleDisplay() {
-    final activeSchedule = _schedulesController.activeSchedule!;
-    final planId = int.tryParse(activeSchedule['id']?.toString() ?? '') ?? 0;
-    final currentDay = _schedulesController.getCurrentDay(planId);
+    return Obx(() {
+      final activeSchedule = _schedulesController.activeSchedule!;
+      print('🔍 Active Schedule Data: $activeSchedule');
+      print('🔍 Available keys: ${activeSchedule.keys}');
+      
+      // IMPORTANT: Use the same identifier the controller uses to track day state.
+      // The controller persists and increments current day against `id`, not `assignment_id`.
+      // Using `assignment_id` here causes day index to reset/repeat visually.
+      final planId = int.tryParse(activeSchedule['id']?.toString() ?? '') ?? 0;
+      print('🔍 Using planId: $planId for assignment details (must match controller id)');
+      final currentDay = _schedulesController.getCurrentDay(planId);
+      
+      return Card(
+        margin: const EdgeInsets.only(top: 16),
+        color: AppTheme.cardBackgroundColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Active Schedule - Day ${currentDay + 1}',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: () {
+                      _schedulesController.stopSchedule(activeSchedule);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: AppTheme.textColor,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    child: const Text('Stop'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text('Plan: ${activeSchedule['exercise_plan_category'] ?? 'Workout Plan'}', style: const TextStyle(color: AppTheme.textColor)),
+              const SizedBox(height: 16),
+              
+              // Day Plan Content
+              FutureBuilder<Map<String, dynamic>>(
+                future: _schedulesController.getAssignmentDetails(planId),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  
+                  if (snapshot.hasError) {
+                    return Text('Error loading plan details: ${snapshot.error}');
+                  }
+                  
+                  final planDetails = snapshot.data ?? activeSchedule;
+                  // Use the schedules controller's workout distribution logic instead of _getDayItems
+                  final dayWorkouts = _schedulesController.getActiveDayWorkouts();
+                  
+                  if (dayWorkouts.isEmpty) {
+                    return const Text('No workouts for this day', style: TextStyle(color: AppTheme.textColor));
+                  }
+                  
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Today\'s Workouts (${dayWorkouts.length} workouts)',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textColor),
+                      ),
+                      const SizedBox(height: 8),
+                      ...dayWorkouts.map((item) => _buildWorkoutItem(item)).toList(),
+                      const SizedBox(height: 16),
+                      // Completed days stacked below
+                      if (currentDay > 0) ...[
+                        const Divider(),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Completed Days',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textColor),
+                        ),
+                        const SizedBox(height: 8),
+                        for (int d = currentDay - 1; d >= 0; d--) ...[
+                          _buildCompletedDaySummary(planDetails, d),
+                          const SizedBox(height: 8),
+                        ],
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
 
+  // Compact summary card for a completed day shown below the current day
+  Widget _buildCompletedDaySummary(Map<String, dynamic> planDetails, int dayIndex) {
+    final items = _getDayItems(planDetails, dayIndex);
     return Card(
-      margin: const EdgeInsets.only(top: 16),
+      color: AppTheme.cardBackgroundColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Active Schedule - Day ${currentDay + 1}',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              'Day ${dayIndex + 1}',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textColor),
             ),
             const SizedBox(height: 8),
-            Text(
-              'Plan: ${activeSchedule['exercise_plan_category'] ?? 'Workout Plan'}',
-            ),
-            const SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: () {
-                _schedulesController.stopSchedule(activeSchedule);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: AppTheme.textColor,
-              ),
-              child: const Text('Stop Schedule'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: items.take(2).map((w) {
+                final name = w['name']?.toString() ?? w['workout_name']?.toString() ?? 'Workout';
+                final minutes = w['minutes'] ?? w['training_minutes'];
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.primaryColor.withOpacity(0.6)),
+                  ),
+                  child: Text(
+                    '$name • ${minutes ?? 0} min',
+                    style: const TextStyle(fontSize: 12, color: AppTheme.textColor),
+                  ),
+                );
+              }).toList(),
             ),
           ],
         ),
@@ -1282,11 +1459,351 @@ class _TrainingsPageState extends State<TrainingsPage>
     );
   }
 
+  List<Map<String, dynamic>> _getDayItems(Map<String, dynamic> plan, int dayIndex) {
+    try {
+      print('🔍 Getting day items for day $dayIndex');
+      print('🔍 Plan keys: ${plan.keys}');
+      
+      // Check if this is an API response with nested data
+      Map<String, dynamic> actualPlan = plan;
+      if (plan.containsKey('success') && plan.containsKey('data')) {
+        print('🔍 Detected API response format, extracting data field');
+        actualPlan = plan['data'] ?? {};
+        print('🔍 Actual plan keys: ${actualPlan.keys}');
+      }
+      
+      // Try to get daily plans first
+      final dailyPlans = actualPlan['daily_plans'];
+      if (dailyPlans is List && dailyPlans.isNotEmpty && dayIndex < dailyPlans.length) {
+        final dayPlan = dailyPlans[dayIndex];
+        if (dayPlan is Map<String, dynamic>) {
+          final workouts = dayPlan['workouts'];
+          if (workouts is List) {
+            print('🔍 Found ${workouts.length} workouts in daily_plans');
+            return _applySchedulesDistributionLogic(workouts.cast<Map<String, dynamic>>());
+          }
+        }
+      }
+      
+      // Fallback to exercises_details
+      final exercisesDetails = actualPlan['exercises_details'];
+      print('🔍 exercises_details type: ${exercisesDetails.runtimeType}');
+      print('🔍 exercises_details value: $exercisesDetails');
+      
+      List<Map<String, dynamic>> workouts = [];
+      
+      if (exercisesDetails is List && exercisesDetails.isNotEmpty) {
+        print('🔍 Found ${exercisesDetails.length} exercises in exercises_details');
+        workouts = exercisesDetails.cast<Map<String, dynamic>>();
+      } else if (exercisesDetails is String) {
+        // Handle JSON string format
+        try {
+          final List<dynamic> parsed = jsonDecode(exercisesDetails);
+          print('🔍 Parsed ${parsed.length} exercises from JSON string');
+          workouts = parsed.cast<Map<String, dynamic>>();
+        } catch (e) {
+          print('❌ Error parsing exercises_details JSON: $e');
+        }
+      }
+      
+      // Fallback to items
+      if (workouts.isEmpty) {
+        final items = actualPlan['items'];
+        if (items is List && items.isNotEmpty) {
+          print('🔍 Found ${items.length} items in items');
+          workouts = items.cast<Map<String, dynamic>>();
+        }
+      }
+      
+      // Apply workout distribution logic
+      if (workouts.isNotEmpty) {
+        return _applySchedulesDistributionLogic(workouts);
+      }
+      
+      // If no data found, return empty list
+      print('🔍 No workout data found');
+      return [];
+    } catch (e) {
+      print('Error getting day items: $e');
+      return [];
+    }
+  }
+
+  // SCHEDULES TAB: Assigned plans - limit to 2 workouts per day
+  List<Map<String, dynamic>> _applySchedulesDistributionLogic(List<Map<String, dynamic>> workouts) {
+    if (workouts.isEmpty) return workouts;
+    
+    print('🔍 SCHEDULES TAB DISTRIBUTION - Input workouts: ${workouts.length}');
+    for (int i = 0; i < workouts.length; i++) {
+      final workout = workouts[i];
+      print('🔍 Schedules Tab Workout $i: ${workout['name']} - ${_extractWorkoutMinutes(workout)} minutes');
+    }
+    
+    // Calculate total minutes for all workouts
+    int totalMinutes = 0;
+    for (var workout in workouts) {
+      final minutes = _extractWorkoutMinutes(workout);
+      totalMinutes += minutes;
+      print('🔍 Schedules Tab Adding ${workout['name']}: $minutes minutes (total: $totalMinutes)');
+    }
+    
+    print('🔍 SCHEDULES TAB Total workout minutes: $totalMinutes');
+    print('🔍 SCHEDULES TAB Number of workouts: ${workouts.length}');
+    
+    // SCHEDULES TAB: Per-day pair rule – try 2 consecutive workouts; if combined > 80, show only 1
+    if (workouts.length >= 2) {
+      // Use day 0 pairing here; actual day pairing is handled in controller for active schedule.
+      final int m1 = _extractWorkoutMinutes(workouts[0]);
+      final int m2 = _extractWorkoutMinutes(workouts[1]);
+      final int combined = m1 + m2;
+      if (combined > 80) {
+        print('🔍 SCHEDULES TAB ✅ LIMIT (combined > 80): showing 1');
+        return [workouts[0]];
+      }
+      print('🔍 SCHEDULES TAB ✅ LIMIT (combined <= 80): showing 2');
+      return workouts.take(2).toList();
+    }
+    
+    print('🔍 SCHEDULES TAB ✅ APPLYING: showing all ${workouts.length} workouts');
+    return workouts;
+  }
+
+  // Extract minutes from various possible keys safely
+  int _extractWorkoutMinutes(Map<String, dynamic> workout) {
+    final dynamic raw = workout['minutes'] ?? workout['training_minutes'] ?? workout['trainingMinutes'] ?? workout['duration'];
+    if (raw == null) return 0;
+    final String s = raw.toString();
+    final int? i = int.tryParse(s);
+    if (i != null) return i;
+    final double? d = double.tryParse(s);
+    return d?.round() ?? 0;
+  }
+
+  Widget _buildWorkoutItem(Map<String, dynamic> item) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: AppTheme.cardBackgroundColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppTheme.primaryColor, width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Day and Workout Name
+            Obx(() {
+              final activeSchedule = _schedulesController.activeSchedule;
+              if (activeSchedule == null) return const SizedBox.shrink();
+              
+              final planId = int.tryParse(activeSchedule['id']?.toString() ?? '') ?? 0;
+              final currentDay = _schedulesController.getCurrentDay(planId);
+              
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Day ${currentDay + 1}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: AppTheme.textColor,
+                    ),
+                  ),
+                  if (item['exercise_types'] != null)
+                    Text(
+                      '${item['exercise_types']} Exercises',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textColor,
+                      ),
+                    ),
+                ],
+              );
+            }),
+            const SizedBox(height: 8),
+            
+            // Workout Name
+            Text(
+              item['name']?.toString() ?? item['workout_name']?.toString() ?? 'Exercise',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textColor,
+              ),
+            ),
+            const SizedBox(height: 12),
+            
+            // Sets & Reps
+            if (item['sets'] != null || item['reps'] != null) ...[
+              Row(
+                children: [
+                  const Icon(Icons.fitness_center, size: 16, color: AppTheme.textColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${item['sets'] ?? 'N/A'} sets x ${item['reps'] ?? 'N/A'} reps',
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+            
+            // Weight
+            if (item['weight_kg'] != null || item['weight_min_kg'] != null || item['weight_max_kg'] != null) ...[
+              Row(
+                children: [
+                  const Icon(Icons.sports_gymnastics, size: 16, color: AppTheme.textColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    _formatWeightDisplay(item),
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+            
+            // Duration
+            if (item['minutes'] != null) ...[
+              Row(
+                children: [
+                  const Icon(Icons.access_time, size: 16, color: AppTheme.textColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${item['minutes']} minutes',
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+            const SizedBox(height: 8),
+            
+            // Motivational text
+            Row(
+              children: [
+                const Icon(Icons.emoji_emotions, size: 16, color: AppTheme.textColor),
+                const SizedBox(width: 8),
+                const Text(
+                  'You can do it',
+                  style: TextStyle(fontSize: 14, color: AppTheme.textColor),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            
+            // User Level
+            if (item['user_level'] != null) ...[
+              Row(
+                children: [
+                  const Icon(Icons.person, size: 16, color: AppTheme.textColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    'User Level: ${item['user_level']}',
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+            const SizedBox(height: 16),
+            
+            // Start Workout Button
+            Obx(() {
+              final activeSchedule = _schedulesController.activeSchedule;
+              if (activeSchedule == null) return const SizedBox.shrink();
+              
+              final planId = int.tryParse(activeSchedule['id']?.toString() ?? '') ?? 0;
+              final currentDay = _schedulesController.getCurrentDay(planId);
+              final workoutKey = '${planId}_${currentDay}_${item['name']}';
+              
+              final isStarted = _schedulesController.isWorkoutStarted(workoutKey);
+              final isCompleted = _schedulesController.isWorkoutCompleted(workoutKey);
+              final remainingMinutes = _schedulesController.getWorkoutRemainingMinutes(workoutKey);
+              
+              String buttonText;
+              Color buttonColor;
+              VoidCallback? onPressed;
+              
+              if (isCompleted) {
+                buttonText = 'Completed';
+                buttonColor = AppTheme.cardBackgroundColor;
+                onPressed = null;
+              } else if (isStarted) {
+                buttonText = 'Plan Started - $remainingMinutes minutes remaining';
+                buttonColor = Colors.orange;
+                onPressed = null;
+              } else {
+                buttonText = 'Start Workout';
+                buttonColor = AppTheme.primaryColor;
+                onPressed = () {
+                  final totalMinutes = int.tryParse(item['minutes']?.toString() ?? '0') ?? 0;
+                  _schedulesController.startWorkout(workoutKey, totalMinutes);
+                };
+              }
+              
+              return SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: onPressed,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: buttonColor,
+                    foregroundColor: AppTheme.textColor,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(
+                    buttonText,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatWeightDisplay(Map<String, dynamic> item) {
+    // Safely convert to double, handling both string and numeric inputs
+    final weightMin = _safeParseDouble(item['weight_min_kg']);
+    final weightMax = _safeParseDouble(item['weight_max_kg']);
+    final weight = _safeParseDouble(item['weight_kg']);
+    
+    // If we have min and max, show range
+    if (weightMin != null && weightMax != null) {
+      return '${weightMin.toStringAsFixed(0)}-${weightMax.toStringAsFixed(0)} kg';
+    }
+    // If we only have min or max, show that with a dash
+    else if (weightMin != null) {
+      return '${weightMin.toStringAsFixed(0)}+ kg';
+    }
+    else if (weightMax != null) {
+      return 'up to ${weightMax.toStringAsFixed(0)} kg';
+    }
+    // Fallback to single weight value
+    else if (weight != null) {
+      return '${weight.toStringAsFixed(0)} kg';
+    }
+    
+    return 'N/A';
+  }
+
   Widget _buildActivePlanDailyView(Map<String, dynamic> plan) {
     final planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;
-    final currentDay = _plansController.getCurrentDay(planId);
-    
-    return Column(
+    // Use Obx to make currentDay reactive to uiTick changes
+    return Obx(() {
+      final currentDay = _plansController.getCurrentDay(planId);
+      // Touch uiTick to ensure rebuild when day changes
+      final _ = _plansController.uiTick.value;
+      
+      return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 16),
@@ -1334,12 +1851,26 @@ class _TrainingsPageState extends State<TrainingsPage>
         ),
         const SizedBox(height: 12),
         
-        // Daily Workouts
-        ..._getDayWorkouts(plan, currentDay).map((workout) => _buildPlanWorkoutItem(workout, planId, currentDay)).toList(),
+        // Daily Workouts - Directly use controller's resolved workouts (uses backend daily_plans)
+        Obx(() {
+          final reactiveCurrentDay = _plansController.getCurrentDay(planId);
+          final workouts = _plansController.getActiveDayWorkouts();
+          print('🔍 PlansPage - Building workouts for Day ${reactiveCurrentDay + 1} from controller: ${workouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+          if (workouts.isEmpty) {
+            return const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Text('No workouts for this day', style: TextStyle(color: AppTheme.textColor)),
+            );
+          }
+          return Column(
+            children: workouts.map((workout) => _buildPlanWorkoutItem(workout, planId, reactiveCurrentDay)).toList(),
+          );
+        }),
         
         const SizedBox(height: 16),
       ],
     );
+    });
   }
 
   int _getTotalDays(Map<String, dynamic> plan) {
@@ -1350,26 +1881,131 @@ class _TrainingsPageState extends State<TrainingsPage>
         return max(1, end.difference(start).inDays + 1);
       }
     }
-    return max(1, (plan['total_days'] ?? 1) as int);
+    final dynamic explicitDays = plan['total_days'];
+    if (explicitDays is int && explicitDays > 0) return explicitDays;
+    if (explicitDays is String) {
+      final parsed = int.tryParse(explicitDays);
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    // Fallback: derive from items using same distribution rule
+    List<Map<String, dynamic>> workouts = [];
+    if (plan['items'] is List) {
+      workouts = (plan['items'] as List).whereType<Map<String, dynamic>>().toList();
+    } else if (plan['exercises_details'] is List) {
+      workouts = (plan['exercises_details'] as List).whereType<Map<String, dynamic>>().toList();
+    }
+    if (workouts.isEmpty) return 1;
+    final int totalMinutes = workouts.fold(0, (sum, w) => sum + _itemMinutes(w));
+    if (totalMinutes >= 80 && workouts.length > 2) {
+      return ((workouts.length + 1) / 2).ceil();
+    }
+    // All workouts can fit in a single day
+    return 1;
   }
 
   List<Map<String, dynamic>> _getDayWorkouts(Map<String, dynamic> plan, int dayIndex) {
     try {
-      List<Map<String, dynamic>> workouts = [];
+      print('🔍 PlansPage - _getDayWorkouts called for day $dayIndex');
+      print('🔍 PlansPage - Plan keys: ${plan.keys}');
       
-      // Get items from the plan
-      if (plan['items'] is List) {
-        workouts = (plan['items'] as List).cast<Map<String, dynamic>>();
-      } else if (plan['exercises_details'] is List) {
-        workouts = (plan['exercises_details'] as List).cast<Map<String, dynamic>>();
+      // Check if this is an API response with nested data (same as schedules)
+      Map<String, dynamic> actualPlan = plan;
+      if (plan.containsKey('success') && plan.containsKey('data')) {
+        print('🔍 PlansPage - Detected API response format, extracting data field');
+        actualPlan = plan['data'] ?? {};
+        print('🔍 PlansPage - Actual plan keys: ${actualPlan.keys}');
       }
       
-      if (workouts.isEmpty) return [];
+      // 1) Prefer backend daily_plans when present (List or JSON string)
+      final dailyPlansRaw = actualPlan['daily_plans'];
+      List<Map<String, dynamic>>? dailyPlansList;
+      if (dailyPlansRaw is List) {
+        if (dailyPlansRaw.isNotEmpty) {
+          dailyPlansList = dailyPlansRaw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        }
+      } else if (dailyPlansRaw is String && dailyPlansRaw.trim().isNotEmpty) {
+        try {
+          final parsed = jsonDecode(dailyPlansRaw);
+          if (parsed is List) {
+            dailyPlansList = parsed.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          }
+        } catch (e) {
+          print('⚠️ PlansPage - Failed to parse daily_plans string: $e');
+        }
+      }
+      if (dailyPlansList != null && dailyPlansList.isNotEmpty) {
+        try {
+          Map<String, dynamic>? dayEntry = dailyPlansList.firstWhereOrNull((dp) {
+            final d = int.tryParse(dp['day']?.toString() ?? '');
+            return d != null && d == dayIndex + 1;
+          });
+          dayEntry ??= (dayIndex < dailyPlansList.length ? dailyPlansList[dayIndex] : null);
+          List<Map<String, dynamic>>? resultList;
+          if (dayEntry != null && dayEntry['workouts'] is List) {
+            resultList = (dayEntry['workouts'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          } else if (dayEntry != null && dayEntry['workouts'] is String) {
+            try {
+              final parsedW = jsonDecode(dayEntry['workouts'] as String);
+              if (parsedW is List) {
+                resultList = parsedW.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+              }
+            } catch (e) {
+              print('⚠️ PlansPage - Failed to parse workouts string for day ${dayIndex + 1}: $e');
+            }
+          }
+          if (resultList != null) {
+            print('🔍 PlansPage - Using daily_plans for day ${dayIndex + 1}: ${resultList.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+            return resultList;
+          }
+        } catch (e) {
+          print('⚠️ PlansPage - Failed to use daily_plans for day ${dayIndex + 1}: $e');
+        }
+      }
+
+      List<Map<String, dynamic>> workouts = [];
       
-      // Apply distribution logic similar to schedules
-      return _distributeWorkoutsForPlan(workouts, _getTotalDays(plan), dayIndex);
+      // Get items from the plan (same priority as schedules)
+      if (actualPlan['items'] is List) {
+        workouts = (actualPlan['items'] as List).cast<Map<String, dynamic>>();
+        print('🔍 PlansPage - Found ${workouts.length} workouts in items');
+      } else if (actualPlan['exercises_details'] is List) {
+        workouts = (actualPlan['exercises_details'] as List).cast<Map<String, dynamic>>();
+        print('🔍 PlansPage - Found ${workouts.length} workouts in exercises_details (List)');
+      } else if (actualPlan['exercises_details'] is String) {
+        // Handle JSON string format (same as schedules)
+        try {
+          final List<dynamic> parsed = jsonDecode(actualPlan['exercises_details'] as String);
+          workouts = parsed.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          print('🔍 PlansPage - Parsed ${workouts.length} workouts from exercises_details (JSON String)');
+        } catch (e) {
+          print('❌ PlansPage - Error parsing exercises_details JSON: $e');
+        }
+      }
+      
+      if (workouts.isEmpty) {
+        print('⚠️ PlansPage - No workouts found for plan');
+        return [];
+      }
+      
+      // Calculate total days (same as schedules and controller)
+      int totalDays = 1;
+      if (actualPlan['start_date'] != null && actualPlan['end_date'] != null) {
+        final start = DateTime.tryParse(actualPlan['start_date'].toString());
+        final end = DateTime.tryParse(actualPlan['end_date'].toString());
+        if (start != null && end != null) {
+          totalDays = max(1, end.difference(start).inDays + 1);
+        }
+      } else {
+        totalDays = max(1, int.tryParse(actualPlan['total_days']?.toString() ?? '1') ?? 1);
+      }
+      
+      print('🔍 PlansPage - Total days: $totalDays, Requesting day: $dayIndex');
+      
+      // 2) Fallback to client rotation (same as schedules)
+      return _distributeWorkoutsForPlan(workouts, totalDays, dayIndex);
     } catch (e) {
-      print('❌ Error getting day workouts: $e');
+      print('❌ PlansPage - Error getting day workouts: $e');
+      print('❌ PlansPage - Error stack: ${e.toString()}');
       return [];
     }
   }
@@ -1377,27 +2013,41 @@ class _TrainingsPageState extends State<TrainingsPage>
   List<Map<String, dynamic>> _distributeWorkoutsForPlan(List<Map<String, dynamic>> workouts, int totalDays, int dayIndex) {
     if (workouts.isEmpty) return [];
     
-    // Calculate total minutes for distribution logic
-    int totalMinutes = workouts.fold(0, (sum, workout) {
-      return sum + (int.tryParse(workout['minutes']?.toString() ?? '0') ?? 0);
-    });
+    print('🔍 PlansPage - _distributeWorkoutsForPlan: ${workouts.length} workouts across $totalDays days, requesting day $dayIndex');
     
-    // Apply the same logic as schedules: if total minutes >= 80 and more than 2 workouts, limit to 2 per day
-    if (totalMinutes >= 80 && workouts.length > 2) {
-      // Distribute 2 workouts per day
-      final workoutsPerDay = 2;
-      final startIndex = dayIndex * workoutsPerDay;
-      final endIndex = min(startIndex + workoutsPerDay, workouts.length);
-      
-      if (startIndex < workouts.length) {
-        return workouts.sublist(startIndex, endIndex);
-      }
-    } else {
-      // Show all workouts for this day (for shorter plans)
-      return workouts;
+    // Use EXACT same logic as schedules controller and plans controller
+    // If only one workout, return it for all days
+    if (workouts.length == 1) {
+      final single = Map<String, dynamic>.from(workouts.first);
+      print('🔍 PlansPage - Only one workout available: ${single['name'] ?? single['workout_name'] ?? 'Unknown'}');
+      return [single];
     }
+
+    // Day-based distribution using rotation offset for ALL cases (same as backend)
+    // Backend: dayRotationOffset = ((day - 1) * workoutsPerDay) % exercises.length
+    // Frontend: dayRotationOffset = (dayIndex * workoutsPerDay) % workouts.length (0-based dayIndex)
+    // Rotation always applies for all cases (as per backend fix)
+    const int workoutsPerDay = 2;
+    final int dayRotationOffset = (dayIndex * workoutsPerDay) % workouts.length;
+    final int firstIdx = dayRotationOffset;
+    final int secondIdx = (dayRotationOffset + 1) % workouts.length;
     
-    return [];
+    final Map<String, dynamic> first = Map<String, dynamic>.from(workouts[firstIdx]);
+    final Map<String, dynamic> second = Map<String, dynamic>.from(workouts[secondIdx]);
+    final int m1 = _itemMinutes(first);
+    final int m2 = _itemMinutes(second);
+    final int combined = m1 + m2;
+    
+    print('🔍 PlansPage - dayRotationOffset: $dayRotationOffset (dayIndex: $dayIndex, workoutsPerDay: $workoutsPerDay, totalWorkouts: ${workouts.length})');
+    print('🔍 PlansPage - Pair indices: $firstIdx & $secondIdx → ${first['name'] ?? first['workout_name'] ?? 'Unknown'}($m1) + ${second['name'] ?? second['workout_name'] ?? 'Unknown'}($m2) = $combined');
+    
+    List<Map<String, dynamic>> selectedWorkouts = [];
+    
+    // Apply 80-minute rule: if pair exceeds 80 minutes, show only first
+    selectedWorkouts = combined > 80 ? [first] : [first, second];
+
+    print('🔍 PlansPage - Day $dayIndex selected workouts: ${selectedWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+    return selectedWorkouts;
   }
 
   Widget _buildPlanWorkoutItem(Map<String, dynamic> item, int planId, int currentDay) {
@@ -1468,7 +2118,7 @@ class _TrainingsPageState extends State<TrainingsPage>
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: _buildDetailChip('Minutes', '${item['minutes'] ?? 0}'),
+                  child: _buildDetailChip('Minutes', '${_itemMinutes(item)}'),
                 ),
               ],
             ),
@@ -1476,7 +2126,9 @@ class _TrainingsPageState extends State<TrainingsPage>
             
             // Start Workout Button
             Obx(() {
-              final workoutKey = '${planId}_${currentDay}_${item['name']}';
+              final String safeName = (item['name'] ?? item['workout_name'] ?? item['muscle_group'] ?? 'Workout').toString().replaceAll(' ', '_');
+              final int minutesVal = _itemMinutes(item);
+              final workoutKey = '${planId}_${currentDay}_${safeName}_${minutesVal}';
               final isStarted = _plansController.isWorkoutStarted(workoutKey);
               final isCompleted = _plansController.isWorkoutCompleted(workoutKey);
               final remainingMinutes = _plansController.getWorkoutRemainingMinutes(workoutKey);
@@ -1497,24 +2149,38 @@ class _TrainingsPageState extends State<TrainingsPage>
                 buttonText = 'Start Workout';
                 buttonColor = AppTheme.primaryColor;
                 onPressed = () {
-                  final totalMinutes = int.tryParse(item['minutes']?.toString() ?? '0') ?? 0;
+                  final int totalMinutes = _itemMinutes(item);
                   _plansController.startWorkout(workoutKey, totalMinutes);
                 };
               }
               
               return SizedBox(
                 width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: onPressed,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: buttonColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ElevatedButton(
+                      onPressed: onPressed,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: buttonColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: Text(buttonText),
                     ),
-                  ),
-                  child: Text(buttonText),
+                    if (!isStarted && !isCompleted)
+                      TextButton(
+                        onPressed: () {
+                          final int totalMinutes = _itemMinutes(item);
+                          _plansController.startWorkout(workoutKey, totalMinutes);
+                          _plansController.forceCompleteWorkout(workoutKey);
+                        },
+                        child: const Text('Mark Completed'),
+                      ),
+                  ],
                 ),
               );
             }),
@@ -1561,6 +2227,26 @@ class _TrainingsPageState extends State<TrainingsPage>
     if (value is int) return value.toDouble();
     final parsed = double.tryParse(value.toString());
     return parsed ?? 0.0;
+  }
+
+  int _itemMinutes(Map<String, dynamic> item) {
+    dynamic m = item['minutes'] ?? item['training_minutes'] ?? item['trainingMinutes'] ??
+               item['duration'] ?? item['time_minutes'] ?? item['time_mins'] ??
+               item['time'] ?? item['mins'] ?? item['minute'];
+    int toInt(dynamic v) {
+      if (v == null) return 0;
+      if (v is int) return v;
+      if (v is double) return v.round();
+      final s = v.toString().replaceAll(RegExp(r'[^0-9\.-]'), '');
+      return int.tryParse(s) ?? 0;
+    }
+    final val = toInt(m);
+    if (val == 0) {
+      // Debug: log keys once when minutes cannot be found
+      // ignore: avoid_print
+      print('⚠️ Minutes not found on item. Keys: ${item.keys} Values: ${item}');
+    }
+    return val;
   }
 
   // Helper function to calculate total days from start_date and end_date
