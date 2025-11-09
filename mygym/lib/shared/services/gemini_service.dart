@@ -116,6 +116,8 @@ You are a fitness planning assistant. Generate a comprehensive training plan JSO
       "sets": number,
       "reps": number,
       "weight_kg": number,
+      "weight_min_kg": number,            // minimum weight in kg (optional, use same as weight_kg if not specified)
+      "weight_max_kg": number,            // maximum weight in kg (optional, use same as weight_kg if not specified)
       "minutes": number
     }
   ]
@@ -132,6 +134,7 @@ Rules:
 - Use meaningful workout_name values like Chest, Back, Shoulders, Legs, Arms, Core (no placeholders like "Test Workout").
 - Set exercise_types as an integer count (6-12) representing the number of different exercises (for GIF selection).
 - Vary workout types throughout the plan (strength, cardio, flexibility, etc.)
+- For weight ranges: set weight_min_kg and weight_max_kg based on user level and exercise type. For beginners, use a range (e.g., 5-10 kg), for intermediate/advanced use wider ranges. If weight_min_kg equals weight_max_kg, it represents a fixed weight.
 - Return ONLY valid JSON, no markdown, no commentary.
 - training_minutes must equal the sum of items.minutes
 

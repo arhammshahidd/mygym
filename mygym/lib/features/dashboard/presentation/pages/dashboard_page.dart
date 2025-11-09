@@ -343,6 +343,12 @@ class _DashboardPageState extends State<DashboardPage> {
     // If no explicitly-started plan, fall back to currently active schedule
     if (activePlan == null && activeSchedule != null) {
       activePlan = activeSchedule;
+      // IMPORTANT: Set _activeTrainingPlanId when we have an active schedule
+      final scheduleId = int.tryParse(activeSchedule['id']?.toString() ?? '');
+      if (scheduleId != null && scheduleId > 0) {
+        _activeTrainingPlanId = scheduleId;
+        print('🔍 Dashboard - Set _activeTrainingPlanId to schedule ID: $scheduleId');
+      }
     }
 
     // Compute today's workouts based on selected source
@@ -355,26 +361,47 @@ class _DashboardPageState extends State<DashboardPage> {
       if (isSchedule) {
         workouts = _schedulesController.getActiveDayWorkouts();
       } else {
-        // For manual/AI plans, use the plan's own workout distribution
-        workouts = _extractTodayWorkouts(activePlan!);
+        // For manual/AI plans, use plans controller's getActiveDayWorkouts() 
+        // which properly distributes workouts per day (1 workout per day for AI plans)
+        workouts = _plansController.getActiveDayWorkouts();
+        print('🔍 Dashboard - Using plans controller getActiveDayWorkouts()');
+        print('🔍 Dashboard - Active plan ID: ${activePlan!['id']}');
+        print('🔍 Dashboard - Current day: ${_plansController.getCurrentDay(int.tryParse(activePlan!['id']?.toString() ?? '') ?? 0)}');
       }
       
       print('🔍 Dashboard - Active plan: ${activePlan!['id']}');
       print('🔍 Dashboard - Is schedule: $isSchedule');
       print('🔍 Dashboard - Workouts count: ${workouts.length}');
-      print('🔍 Dashboard - Workouts: ${workouts.map((w) => w['name']).toList()}');
+      print('🔍 Dashboard - Workouts: ${workouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
     }
     final hasActive = (activeSchedule != null || activePlan != null) && workouts.isNotEmpty;
     
     // Get current day from the correct controller/source
     int currentDay = _activeTrainingDayIndex;
-    if (activeSchedule != null && _activeTrainingPlanId != null) {
-      // Active schedule day
-      currentDay = _schedulesController.getCurrentDay(_activeTrainingPlanId!);
-    } else if (activePlan != null && _activeTrainingPlanId != null) {
-      // Active manual/AI plan day
-      currentDay = _plansController.getCurrentDay(_activeTrainingPlanId!);
+    
+    // Priority 1: If we have an active schedule, use its current day
+    if (activeSchedule != null) {
+      final scheduleId = int.tryParse(activeSchedule['id']?.toString() ?? '');
+      if (scheduleId != null && scheduleId > 0) {
+        currentDay = _schedulesController.getCurrentDay(scheduleId);
+        print('🔍 Dashboard - Using schedule current day: $currentDay (Day $currentDay) for schedule ID: $scheduleId');
+      }
     }
+    // Priority 2: If we have _activeTrainingPlanId set, use it
+    else if (_activeTrainingPlanId != null) {
+      // Check if it's a schedule or a plan
+      if (activeSchedule != null) {
+        // Active schedule day
+        currentDay = _schedulesController.getCurrentDay(_activeTrainingPlanId!);
+        print('🔍 Dashboard - Using schedule current day via _activeTrainingPlanId: $currentDay (Day $currentDay)');
+      } else if (activePlan != null) {
+        // Active manual/AI plan day
+        currentDay = _plansController.getCurrentDay(_activeTrainingPlanId!);
+        print('🔍 Dashboard - Using plan current day via _activeTrainingPlanId: $currentDay (Day $currentDay)');
+      }
+    }
+    
+    print('🔍 Dashboard - Final currentDay: $currentDay (will display as Day $currentDay)');
 
     String _resolvePlanTitle(Map<String, dynamic> plan) {
       return plan['exercise_plan_category']?.toString()
@@ -431,7 +458,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  (w['name'] ?? 'Workout').toString(),
+                                  (w['workout_name'] ?? w['name'] ?? 'Workout').toString(),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -443,7 +470,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 const SizedBox(height: 6),
                                 _buildWorkoutDetail('Sets', w['sets']?.toString() ?? '-'),
                                 _buildWorkoutDetail('Reps', w['reps']?.toString() ?? '-'),
-                                _buildWorkoutDetail('Weight', '${w['weight_kg']?.toString() ?? w['weight']?.toString() ?? '-'} kg'),
+                                _buildWorkoutDetail('Weight', _formatWeightDisplay(w)),
                                 _buildWorkoutDetail('Minutes', '${w['training_minutes'] ?? w['minutes'] ?? '-'}'),
                                 if (w['exercise_types'] != null)
                                   _buildWorkoutDetail('Exercise Types', w['exercise_types']?.toString() ?? '-'),
@@ -664,6 +691,73 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       ),
     );
+  }
+
+  String _formatWeightDisplay(Map<String, dynamic> item) {
+    // Check multiple possible field names for weight
+    final weightMinRaw = item['weight_min_kg'] ?? item['weight_min'] ?? item['min_weight'] ?? item['min_weight_kg'];
+    final weightMaxRaw = item['weight_max_kg'] ?? item['weight_max'] ?? item['max_weight'] ?? item['max_weight_kg'];
+    final weightRaw = item['weight_kg'] ?? item['weight'] ?? 0;
+    
+    // Check if weight_kg is stored as a string range like "20-40"
+    String? parsedRange;
+    if (weightRaw != null && weightRaw is String && weightRaw.contains('-')) {
+      // weight_kg is stored as a string range (e.g., "20-40")
+      final parts = weightRaw.split('-');
+      if (parts.length == 2) {
+        final minStr = parts[0].trim();
+        final maxStr = parts[1].trim();
+        final minVal = _safeParseDouble(minStr);
+        final maxVal = _safeParseDouble(maxStr);
+        if (minVal != null && maxVal != null) {
+          parsedRange = '${minVal.toStringAsFixed(0)}-${maxVal.toStringAsFixed(0)} kg';
+        }
+      }
+    }
+    
+    final weightMin = _safeParseDouble(weightMinRaw);
+    final weightMax = _safeParseDouble(weightMaxRaw);
+    final weight = weightRaw is String && weightRaw.contains('-') ? null : _safeParseDouble(weightRaw);
+    
+    // If weight_kg was a string range, return it directly
+    if (parsedRange != null) {
+      return parsedRange;
+    }
+    
+    // If we have min and max, show range (even if one is 0)
+    if (weightMin != null && weightMax != null) {
+      if (weightMin == 0 && weightMax == 0) {
+        // Both are 0, check if single weight exists
+        if (weight != null && weight > 0) {
+          return '${weight.toStringAsFixed(0)} kg';
+        }
+        return '0 kg';
+      }
+      return '${weightMin.toStringAsFixed(0)}-${weightMax.toStringAsFixed(0)} kg';
+    }
+    // If we only have min or max, show that with a dash
+    else if (weightMin != null && weightMin > 0) {
+      return '${weightMin.toStringAsFixed(0)}+ kg';
+    }
+    else if (weightMax != null && weightMax > 0) {
+      return 'up to ${weightMax.toStringAsFixed(0)} kg';
+    }
+    // Fallback to single weight value (even if 0, show it)
+    else if (weight != null) {
+      return '${weight.toStringAsFixed(0)} kg';
+    }
+    
+    return '-';
+  }
+
+  double? _safeParseDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
   }
 
   Widget _buildNutritionBadge(String value, String unit, Color color) {

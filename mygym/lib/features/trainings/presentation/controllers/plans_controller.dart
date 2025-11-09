@@ -68,12 +68,12 @@ class PlansController extends GetxController {
     try {
       _realtime.connectApprovals();
       _realtime.events.listen((data) {
-        print('📡 Plans - Real-time update: $data');
+        // Real-time update received
         // Handle real-time updates for plans
         _handleRealtimeUpdate(data);
       });
       _socketSubscribed = true;
-      print('✅ Plans - Connected to real-time updates');
+      // Connected to real-time updates
     } catch (e) {
       print('❌ Plans - Failed to connect to real-time updates: $e');
     }
@@ -92,7 +92,7 @@ class PlansController extends GetxController {
 
   Future<void> loadPlansData() async {
     try {
-      print('🚀 Plans - Starting loadPlansData...');
+      // Loading plans data
       isLoading.value = true;
       
       await _loadApprovalIdCacheIfNeeded();
@@ -101,26 +101,17 @@ class PlansController extends GetxController {
       // Ensure profile is loaded
       await _profileController.loadUserProfileIfNeeded();
       final userId = _profileController.user?.id;
-      print('👤 Plans - User ID: $userId');
-      
       if (userId == null) {
         print('❌ Plans - User ID is null! Cannot fetch plans.');
         return;
       }
-      
-      print('👤 Plans - User profile loaded successfully');
-      print('👤 Plans - User name: ${_profileController.user?.name}');
-      print('👤 Plans - User email: ${_profileController.user?.email}');
       
       // Test API connectivity
       await _manualService.testApiConnectivity();
       
       // Fetch manual training plans (Plans-specific)
       try {
-        print('📝 Plans - Fetching manual training plans...');
-        print('📝 Plans - API Endpoint: /api/appManualTraining/');
         final manualRes = await _manualService.listPlans();
-        print('📝 Plans - Manual plans result: ${manualRes.length} items');
         
         if (manualRes.isEmpty) {
           print('⚠️ Plans - No manual plans returned from API!');
@@ -135,8 +126,6 @@ class PlansController extends GetxController {
           try {
             final dio = await _manualService.getAuthedDio();
             final altRes = await dio.get('/api/trainingPlans/');
-            print('🔄 Plans - Alternative endpoint response: ${altRes.statusCode}');
-            print('🔄 Plans - Alternative endpoint data: ${altRes.data}');
             
             if (altRes.statusCode == 200) {
               final altData = altRes.data;
@@ -210,7 +199,6 @@ class PlansController extends GetxController {
                               // Removed strict checks for assignedBy, assignmentId, webPlanId
                               // as these might be set by the backend during updates
           
-          print('🔍 Plans - Plan ${planMap['id']}:');
           print('🔍   - plan_type: $planType');
           print('🔍   - created_by: $createdBy (type: ${createdBy.runtimeType})');
           print('🔍   - userId: $userId (type: ${userId.runtimeType})');
@@ -233,6 +221,39 @@ class PlansController extends GetxController {
           
           if (planId != null && !seenIds.contains(planId) && isManualPlan && !isAssignedPlan) {
             seenIds.add(planId);
+            
+            // Extract approval_status from plan data and store it in both places
+            if (planMap['approval_status'] != null) {
+              final approvalStatus = planMap['approval_status'].toString().toLowerCase();
+              if (approvalStatus.isNotEmpty && approvalStatus != 'null') {
+                planApprovalStatus[planId] = approvalStatus;
+                // Also ensure it's stored in the plan map itself (normalize to lowercase)
+                planMap['approval_status'] = approvalStatus;
+                
+                // IMPORTANT: If plan is approved, also extract and store approval_id
+                if (approvalStatus == 'approved' && planToApprovalId[planId] == null) {
+                  final approvalId = planMap['approval_id'];
+                  if (approvalId != null) {
+                    final approvalIdInt = int.tryParse(approvalId.toString());
+                    if (approvalIdInt != null) {
+                      planToApprovalId[planId] = approvalIdInt;
+                      await _persistApprovalIdCache();
+                      print('✅ Plans - Stored approval_id $approvalIdInt for approved plan $planId from plan data');
+                    }
+                  } else {
+                    print('⚠️ Plans - Plan $planId is approved but approval_id not in plan data');
+                    print('⚠️ Plans - Will need to find approval_id from training_approvals table');
+                  }
+                }
+              }
+            } else {
+              // If not in plan data, check cache and add it to plan map
+              final cachedStatus = planApprovalStatus[planId];
+              if (cachedStatus != null && cachedStatus.isNotEmpty && cachedStatus != 'none') {
+                planMap['approval_status'] = cachedStatus;
+              }
+            }
+            
             uniquePlans.add(planMap);
             print('📝 Plans - Added manual plan ID: $planId');
           } else if (planId != null && seenIds.contains(planId)) {
@@ -250,7 +271,6 @@ class PlansController extends GetxController {
         }
         
         if (!isClosed) manualPlans.assignAll(uniquePlans);
-        print('✅ Plans - Manual plans list updated: ${manualPlans.length} unique manual items (removed ${manualRes.length - uniquePlans.length} assigned/duplicate plans)');
         
         // TEMPORARY DEBUG: If no plans found, show ALL plans for debugging
         if (uniquePlans.isEmpty && manualRes.isNotEmpty) {
@@ -275,7 +295,6 @@ class PlansController extends GetxController {
         print('🤖 Plans - AI plans result: ${aiRes.length} items');
         
         if (!isClosed) aiGeneratedPlans.assignAll(aiRes.map((e) => Map<String, dynamic>.from(e)));
-        print('✅ Plans - AI plans list updated: ${aiGeneratedPlans.length} items');
       } catch (e) {
         print('⚠️ Plans - Failed to load AI plans: $e');
         if (!isClosed) aiGeneratedPlans.clear();
@@ -289,7 +308,6 @@ class PlansController extends GetxController {
     } finally {
       isLoading.value = false;
       hasLoadedOnce.value = true;
-      print('🏁 Plans - Load completed');
     }
   }
 
@@ -310,19 +328,13 @@ class PlansController extends GetxController {
   /// Send AI generated plan for approval
   Future<Map<String, dynamic>> sendAiPlanForApproval(Map<String, dynamic> plan) async {
     try {
-      print('🔍 PlansController - Sending AI plan for approval: ${plan['id']}');
-      print('🔍 PlansController - Plan data keys: ${plan.keys.toList()}');
-      print('🔍 PlansController - Plan data: $plan');
+      // Sending AI plan for approval
       
       // TEMPORARY DEBUG: Check if this is actually an AI plan
       final planType = plan['plan_type']?.toString().toLowerCase();
       final hasAiIndicators = plan.containsKey('exercise_plan_category') || 
                               plan.containsKey('user_level');
       
-      print('🔍 PlansController - Plan type: $planType');
-      print('🔍 PlansController - Has AI indicators: $hasAiIndicators');
-      print('🔍 PlansController - exercise_plan_category: ${plan['exercise_plan_category']}');
-      print('🔍 PlansController - user_level: ${plan['user_level']}');
       
       // TEMPORARY DEBUG: If this doesn't look like an AI plan, throw an error
       if (planType != 'ai_generated' && !hasAiIndicators) {
@@ -335,9 +347,8 @@ class PlansController extends GetxController {
         throw Exception('Invalid plan ID');
       }
       
-      print('🔍 PlansController - Fetching complete plan details for ID: $planId');
+      // Fetching complete plan details
       final completePlan = await _aiService.getGenerated(planId);
-      print('🔍 PlansController - Complete plan data: ${completePlan.keys.toList()}');
       
       // Check if plan has items
       // Normalize items: ensure weight_min_kg/weight_max_kg present
@@ -351,7 +362,6 @@ class PlansController extends GetxController {
       // write back normalized items into plan data copy we'll send
       final normalizedPlan = Map<String, dynamic>.from(completePlan);
       normalizedPlan['items'] = items;
-      print('🔍 PlansController - Plan has ${items.length} items');
       
       if (items.isEmpty) {
         throw Exception('Cannot send plan for approval: Plan has no workout items. Please regenerate the plan with workout items.');
@@ -410,7 +420,6 @@ class PlansController extends GetxController {
         'requested_at': DateTime.now().toIso8601String(),
       };
       
-      print('🔍 PlansController - AI plan approval payload:');
       print('🔍   - plan_id: ${payload['plan_id']}');
       print('🔍   - plan_type: ${payload['plan_type']}');
       print('🔍   - user_id: ${payload['user_id']}');
@@ -432,20 +441,14 @@ class PlansController extends GetxController {
         payload: payload,
       );
       
-      print('✅ PlansController - AI plan sent for approval successfully');
-      print('🔍 PlansController - Approval result: $result');
-      print('🔍 PlansController - Result keys: ${result.keys.toList()}');
-      print('🔍 PlansController - Result ID: ${result['id']}');
-      print('🔍 PlansController - Result ID type: ${result['id'].runtimeType}');
+      // AI plan sent for approval successfully
       
       // Update the plan's approval status locally
       if (planId != null && result['id'] != null) {
         final approvalId = result['id'];
-        print('🔍 PlansController - Storing approval ID $approvalId for plan $planId');
         planToApprovalId[planId] = approvalId;
         planApprovalStatus[planId] = 'pending'; // Set initial status to pending
         await _persistApprovalIdCache();
-        print('✅ PlansController - Approval ID stored successfully');
         
         // Force UI refresh to show "Pending" status
         if (!isClosed) update();
@@ -463,9 +466,7 @@ class PlansController extends GetxController {
   /// Send manual plan for approval
   Future<Map<String, dynamic>> sendManualPlanForApproval(Map<String, dynamic> plan) async {
     try {
-      print('🔍 PlansController - Sending manual plan for approval (or resending)...');
-      print('🔍 PlansController - Plan data keys: ${plan.keys.toList()}');
-      print('🔍 PlansController - Plan data: $plan');
+      // Sending manual plan for approval
       
       // First, fetch the complete plan details with items
       final planId = int.tryParse(plan['id']?.toString() ?? '');
@@ -474,7 +475,6 @@ class PlansController extends GetxController {
       }
       
       // DEBUG: Check plan type indicators before fetching
-      print('🔍 PlansController - Plan type indicators:');
       print('🔍   - plan_type: ${plan['plan_type']}');
       print('🔍   - has request_id: ${plan.containsKey('request_id')}');
       print('🔍   - has ai_generated: ${plan.containsKey('ai_generated')}');
@@ -500,7 +500,6 @@ class PlansController extends GetxController {
                            int.tryParse(m['training_minutes']?.toString() ?? '') ?? 0;
         m['minutes'] = minutes;
         m['training_minutes'] = minutes;
-        print('🔍 PlansController - Normalized item ${m['workout_name'] ?? 'Unknown'}: minutes=$minutes');
         return m;
       }).toList();
       List<Map<String, dynamic>> exercisesDetails = [];
@@ -529,7 +528,6 @@ class PlansController extends GetxController {
         } catch (_) {}
       }
       
-      print('🔍 PlansController - Manual plan has ${items.length} items, ${exercisesDetails.length} exercises_details');
       
       if (items.isEmpty) {
         throw Exception('Cannot send plan for approval: Plan has no workout items. Please add workout items to the plan.');
@@ -586,7 +584,6 @@ class PlansController extends GetxController {
       final String safeUserName = profileController.user?.name ?? 'Unknown User';
       final String safeUserPhone = profileController.user?.phone ?? '';
       
-      print('🔍 PlansController - User data for approval:');
       print('🔍   - User ID: $safeUserId');
       print('🔍   - User Name: $safeUserName');
       print('🔍   - User Phone: $safeUserPhone');
@@ -623,7 +620,6 @@ class PlansController extends GetxController {
         'requested_at': DateTime.now().toIso8601String(),
       };
       
-      print('🔍 PlansController - Manual plan approval payload:');
       print('🔍   - plan_id: ${payload['plan_id']} (type: ${payload['plan_id'].runtimeType})');
       print('🔍   - plan_type: ${payload['plan_type']} (type: ${payload['plan_type'].runtimeType})');
       print('🔍   - user_id: ${payload['user_id']} (type: ${payload['user_id'].runtimeType})');
@@ -657,21 +653,27 @@ class PlansController extends GetxController {
         payload: payload,
       );
       
-      print('✅ PlansController - Manual plan sent for approval successfully');
-      print('🔍 PlansController - Approval result: $result');
-      print('🔍 PlansController - Result keys: ${result.keys.toList()}');
-      print('🔍 PlansController - Result ID: ${result['id']}');
-      print('🔍 PlansController - Result ID type: ${result['id'].runtimeType}');
+      // Manual plan sent for approval successfully
       
       // Update the plan's approval status locally
       if (planId != null && result['id'] != null) {
-        planToApprovalId[planId] = result['id'];
+        final approvalId = int.tryParse(result['id'].toString()) ?? result['id'] as int?;
+        if (approvalId != null) {
+          planToApprovalId[planId] = approvalId;
         planApprovalStatus[planId] = 'pending'; // Set initial status to pending
         await _persistApprovalIdCache();
-        print('✅ PlansController - Approval ID stored and status set to pending');
+          
+          // Immediately refresh approval status from backend to get accurate status
+          try {
+            await refreshApprovalStatusFromBackend();
+            print('✅ PlansController - Approval status refreshed from backend');
+          } catch (e) {
+            print('⚠️ PlansController - Error refreshing approval status: $e');
+          }
         
         // Force UI refresh to show "Pending" status
         if (!isClosed) update();
+        }
       }
       
       return result;
@@ -688,10 +690,7 @@ class PlansController extends GetxController {
       return;
     }
     
-    print('🚀 PlansController - Starting plan $planId');
-    print('🚀 PlansController - Original plan keys: ${plan.keys.toList()}');
-    print('🚀 PlansController - Original plan items: ${plan['items']}');
-    print('🚀 PlansController - Original plan exercises_details: ${plan['exercises_details']}');
+    // Starting plan $planId
     
     // Normalize items/exercises_details to Lists to avoid type errors from String JSON
     try {
@@ -724,19 +723,16 @@ class PlansController extends GetxController {
       
       // If trying to start the same plan, just return
       if (currentPlanId == planId) {
-        print('ℹ️ PlansController - Plan $planId is already active');
         return;
       }
       
       // Show confirmation dialog to stop current plan
       final shouldStopCurrent = await _showStopCurrentPlanDialog(existingActivePlan);
       if (!shouldStopCurrent) {
-        print('❌ PlansController - User cancelled starting new plan');
         return;
       }
       
       // Stop the current active plan from any tab
-      print('🛑 PlansController - Stopping current active plan $currentPlanId');
       await _stopAnyActivePlan();
     }
     
@@ -771,10 +767,7 @@ class PlansController extends GetxController {
       isAiPlan = false;
     }
     
-    print('🚀 PlansController - Plan type detection: isAiPlan=$isAiPlan, planType=$planType');
-    print('🚀 PlansController - AI indicators: ai_generated=${plan.containsKey('ai_generated')}, gemini_generated=${plan.containsKey('gemini_generated')}, ai_plan_id=${plan.containsKey('ai_plan_id')}, request_id=${plan.containsKey('request_id')}');
-    print('🚀 PlansController - Manual indicators: created_by=${plan.containsKey('created_by')}, assigned_by=${plan['assigned_by']}, assignment_id=${plan['assignment_id']}, web_plan_id=${plan['web_plan_id']}');
-    print('🚀 PlansController - hasExplicitAiIndicators=$hasExplicitAiIndicators, hasExplicitManualIndicators=$hasExplicitManualIndicators');
+    // Plan type: ${isAiPlan ? 'AI' : 'Manual'}
     
     // First, check if the original plan already has workout data
     bool hasWorkoutData = false;
@@ -782,12 +775,10 @@ class PlansController extends GetxController {
     final List? exList = plan['exercises_details'] is List ? plan['exercises_details'] as List : null;
     if ((itemsList != null && itemsList.isNotEmpty) || (exList != null && exList.isNotEmpty)) {
       hasWorkoutData = true;
-      print('✅ PlansController - Original plan already has workout data');
     }
     
     if (hasWorkoutData) {
       // Use the original plan data directly
-      print('🚀 PlansController - Using original plan data with workout items');
     _startedPlans[planId] = true;
     // Ensure daily_plans present on active plan using client rotation if backend didn't provide
     try {
@@ -799,22 +790,69 @@ class PlansController extends GetxController {
           totalDays: _getTotalDays(plan),
         );
         plan['daily_plans'] = generatedDays;
-        print('🗓️ PlansController - Attached generated daily_plans (${generatedDays.length} days) to active plan');
       }
     } catch (_) {}
+    // Ensure approval_id is included in active plan data for stats filtering
+    if (plan['approval_id'] == null) {
+      final approvalId = getApprovalIdForPlan(planId);
+      if (approvalId != null) {
+        plan['approval_id'] = approvalId;
+      } else {
+        // If plan is approved but approval_id is missing, this is a problem
+        final approvalStatus = plan['approval_status']?.toString().toLowerCase();
+        if (approvalStatus == 'approved') {
+          print('⚠️ PlansController - WARNING: Plan $planId is approved but approval_id is missing!');
+          print('⚠️ PlansController - This will prevent daily_training_plans from being created and stats from being tracked');
+          print('⚠️ PlansController - Backend should include approval_id in plan data when approved');
+        }
+      }
+    }
+    
     _activePlan.value = plan;
+    
+    // ALWAYS check database first (database is source of truth), then fall back to cache
+    // This ensures we resume correctly even if cache is cleared on app restart
+    int? cachedDay;
+    try {
+      final completedDay = await _getLastCompletedDayFromDatabase(planId, isAiPlan ? 'ai_generated' : 'manual');
+      if (completedDay != null) {
+        // completedDay is 1-based (from daily_plans), _currentDay is 0-based
+        // If completedDay = 2 (Day 2 completed), we should resume at Day 3 (index 2 in 0-based)
+        final nextDay = completedDay; // completedDay is 1-based, use directly as 0-based index for next day
+        _currentDay[planId.toString()] = nextDay;
+        _persistCurrentDayToCache(planId, nextDay);
+        cachedDay = nextDay;
+      } else {
+        // If no completed days in database, check cache as fallback
+        await _loadCurrentDayFromCache(planId);
+        cachedDay = _currentDay[planId.toString()];
+      }
+    } catch (e) {
+      // If database check fails, fall back to cache
+      await _loadCurrentDayFromCache(planId);
+      cachedDay = _currentDay[planId.toString()];
+    }
+    
+    if (cachedDay == null) {
+      // First time starting this plan, start at day 0
     _currentDay[planId.toString()] = 0;
+      _persistCurrentDayToCache(planId, 0);
+    }
     
     _persistStartedPlansToCache();
     _persistActivePlanSnapshot();
       if (!isClosed) {
         update(); // Force UI refresh
-        print('🚀 PlansController - Plan $planId started with original data, UI updated');
-        print('🚀 PlansController - Active plan items: ${_activePlan.value?['items']?.length ?? 0}');
-        print('🚀 PlansController - Active plan exercises_details: ${_activePlan.value?['exercises_details']?.length ?? 0}');
       }
-      // Debug: print all days distribution to console
-      _debugPrintAllDaysForActivePlan();
+      
+      // Refresh stats when plan is started to show current values
+      try {
+        final statsController = Get.find<StatsController>();
+        await statsController.refreshStats(forceSync: true);
+      } catch (e) {
+        print('⚠️ PlansController - Error refreshing stats for started plan: $e');
+      }
+      
       return;
     }
     
@@ -824,33 +862,24 @@ class PlansController extends GetxController {
       
       if (isAiPlan) {
         // Fetch full AI plan details
-        print('🚀 PlansController - Fetching full AI plan details for $planId');
+        // Fetching full AI plan details
         try {
           fullPlanData = await _aiService.getGenerated(planId);
-          print('✅ PlansController - AI plan fetched successfully');
         } catch (e) {
           print('❌ PlansController - Failed to fetch AI plan: $e');
-          print('🔄 PlansController - Falling back to original plan data');
           fullPlanData = Map<String, dynamic>.from(plan);
         }
       } else {
         // Fetch full manual plan details
-        print('🚀 PlansController - Fetching full manual plan details for $planId');
+        // Fetching full manual plan details
         try {
           fullPlanData = await _manualService.getPlan(planId);
-          print('✅ PlansController - Manual plan fetched successfully');
         } catch (e) {
           print('❌ PlansController - Failed to fetch manual plan: $e');
-          print('🔄 PlansController - Falling back to original plan data');
           fullPlanData = Map<String, dynamic>.from(plan);
         }
       }
       
-      print('🚀 PlansController - Full plan data fetched: ${fullPlanData.keys.toList()}');
-      print('🚀 PlansController - Items count: ${fullPlanData['items']?.length ?? 0}');
-      print('🚀 PlansController - Exercises details count: ${fullPlanData['exercises_details']?.length ?? 0}');
-      print('🚀 PlansController - Full plan items: ${fullPlanData['items']}');
-      print('🚀 PlansController - Full plan exercises_details: ${fullPlanData['exercises_details']}');
       
       // Check if the fetched plan has workout data
       final hasItems = (fullPlanData['items'] as List?)?.isNotEmpty ?? false;
@@ -870,8 +899,59 @@ class PlansController extends GetxController {
       }
       
       _startedPlans[planId] = true;
+      
+      // Ensure approval_id is included in active plan data for stats filtering
+      if (fullPlanData['approval_id'] == null) {
+        final approvalId = getApprovalIdForPlan(planId);
+        if (approvalId != null) {
+          fullPlanData['approval_id'] = approvalId;
+          print('🔍 PlansController - Added approval_id $approvalId to active plan data (fetched path)');
+        }
+      }
+      
       _activePlan.value = fullPlanData;
+      
+      // ALWAYS check database first (database is source of truth), then fall back to cache
+      // This ensures we resume correctly even if cache is cleared on app restart
+      int? cachedDay;
+      try {
+        print('📅 PlansController - Checking database for completed days (database is source of truth)...');
+        final completedDay = await _getLastCompletedDayFromDatabase(planId, isAiPlan ? 'ai_generated' : 'manual');
+        if (completedDay != null) {
+          // completedDay is 1-based (from daily_plans), _currentDay is 0-based
+          // If completedDay = 2 (Day 2 completed), we should resume at Day 3 (index 2 in 0-based)
+          final nextDay = completedDay; // completedDay is 1-based, use directly as 0-based index for next day
+          _currentDay[planId.toString()] = nextDay;
+          _persistCurrentDayToCache(planId, nextDay);
+          print('📅 PlansController - ✅ Found completed day $completedDay (1-based) in database, resuming at day $nextDay (0-based index, Day ${completedDay + 1})');
+          cachedDay = nextDay;
+        } else {
+          // If no completed days in database, check cache as fallback
+          await _loadCurrentDayFromCache(planId);
+          cachedDay = _currentDay[planId.toString()];
+          if (cachedDay != null) {
+            print('📅 PlansController - Using cached day $cachedDay as fallback');
+          }
+        }
+      } catch (e) {
+        print('⚠️ PlansController - Error checking database for completed days: $e');
+        // If database check fails, fall back to cache
+        await _loadCurrentDayFromCache(planId);
+        cachedDay = _currentDay[planId.toString()];
+        if (cachedDay != null) {
+          print('📅 PlansController - Using cached day $cachedDay after database error');
+        }
+      }
+      
+      if (cachedDay == null) {
+        // First time starting this plan, start at day 0
       _currentDay[planId.toString()] = 0;
+        _persistCurrentDayToCache(planId, 0);
+        print('📅 PlansController - Starting new plan $planId at day 0');
+      } else {
+        // Resume from previous progress
+        print('📅 PlansController - Resuming plan $planId at day $cachedDay');
+      }
       
       // Store daily training plan data in the database (only if we have workout data)
       final workoutItems = (fullPlanData['items'] as List? ?? []).cast<Map<String, dynamic>>();
@@ -951,6 +1031,15 @@ class PlansController extends GetxController {
             print('📤 PlansController - Plan category: $planCategory');
             print('📤 PlansController - User level: $userLevel');
             
+            // BACKEND BEHAVIOR (syncDailyPlansFromManualPlanHelper):
+            // - Finds the last completed daily plan by plan_date (not completed_at)
+            // - Skips days with plan_date <= lastCompletedDate
+            // - Creates/updates only days after the last completed date
+            // - This preserves completed days and continues from the next day
+            // 
+            // FRONTEND BEHAVIOR:
+            // - Stores all daily plans when plan is started
+            // - Backend sync handles skipping completed days automatically
             try {
               final result = await _dailyTrainingService.storeDailyTrainingPlan(
                 planId: planId,
@@ -991,6 +1080,16 @@ class PlansController extends GetxController {
       }
       // Debug: print all days distribution to console
       _debugPrintAllDaysForActivePlan();
+      
+      // Refresh stats when plan is started to show current values
+      try {
+        final statsController = Get.find<StatsController>();
+        print('🔄 PlansController - Refreshing stats after starting plan $planId...');
+        await statsController.refreshStats(forceSync: true);
+        print('✅ PlansController - Stats refreshed for started plan $planId');
+      } catch (e) {
+        print('⚠️ PlansController - Error refreshing stats for started plan: $e');
+      }
     } catch (e) {
       print('❌ PlansController - Error fetching full plan data: $e');
       print('❌ PlansController - Using original plan data as fallback');
@@ -1000,7 +1099,48 @@ class PlansController extends GetxController {
       // Fallback to original plan data
       _startedPlans[planId] = true;
       _activePlan.value = plan;
+      
+      // ALWAYS check database first (database is source of truth), then fall back to cache
+      // This ensures we resume correctly even if cache is cleared on app restart
+      int? cachedDay;
+      try {
+        print('📅 PlansController - Checking database for completed days (database is source of truth)...');
+        final completedDay = await _getLastCompletedDayFromDatabase(planId, isAiPlan ? 'ai_generated' : 'manual');
+        if (completedDay != null) {
+          // completedDay is 1-based (from daily_plans), _currentDay is 0-based
+          // If completedDay = 2 (Day 2 completed), we should resume at Day 3 (index 2 in 0-based)
+          final nextDay = completedDay; // completedDay is 1-based, use directly as 0-based index for next day
+          _currentDay[planId.toString()] = nextDay;
+          _persistCurrentDayToCache(planId, nextDay);
+          print('📅 PlansController - ✅ Found completed day $completedDay (1-based) in database, resuming at day $nextDay (0-based index, Day ${completedDay + 1})');
+          cachedDay = nextDay;
+        } else {
+          // If no completed days in database, check cache as fallback
+          await _loadCurrentDayFromCache(planId);
+          cachedDay = _currentDay[planId.toString()];
+          if (cachedDay != null) {
+            print('📅 PlansController - Using cached day $cachedDay as fallback');
+          }
+        }
+      } catch (e) {
+        print('⚠️ PlansController - Error checking database for completed days: $e');
+        // If database check fails, fall back to cache
+        await _loadCurrentDayFromCache(planId);
+        cachedDay = _currentDay[planId.toString()];
+        if (cachedDay != null) {
+          print('📅 PlansController - Using cached day $cachedDay after database error');
+        }
+      }
+      
+      if (cachedDay == null) {
+        // First time starting this plan, start at day 0
       _currentDay[planId.toString()] = 0;
+        _persistCurrentDayToCache(planId, 0);
+        print('📅 PlansController - Starting new plan $planId at day 0');
+      } else {
+        // Resume from previous progress
+        print('📅 PlansController - Resuming plan $planId at day $cachedDay');
+      }
       
       _persistStartedPlansToCache();
       _persistActivePlanSnapshot();
@@ -1009,6 +1149,16 @@ class PlansController extends GetxController {
       }
       // Debug: print all days distribution to console
       _debugPrintAllDaysForActivePlan();
+      
+      // Refresh stats when plan is started to show current values
+      try {
+        final statsController = Get.find<StatsController>();
+        print('🔄 PlansController - Refreshing stats after starting plan $planId...');
+        await statsController.refreshStats(forceSync: true);
+        print('✅ PlansController - Stats refreshed for started plan $planId');
+      } catch (e) {
+        print('⚠️ PlansController - Error refreshing stats for started plan: $e');
+      }
     }
   }
 
@@ -1034,7 +1184,7 @@ class PlansController extends GetxController {
     }
   }
 
-  void stopPlan(Map<String, dynamic> plan) {
+  Future<void> stopPlan(Map<String, dynamic> plan) async {
     final int? planId = int.tryParse(plan['id']?.toString() ?? '');
     if (planId == null) return;
     
@@ -1046,12 +1196,36 @@ class PlansController extends GetxController {
     
     _persistStartedPlansToCache();
     _clearActivePlanSnapshotIfStopped();
+    
+    // Clear stats data for this plan when stopped
+    try {
+      final statsController = Get.find<StatsController>();
+      final approvalId = planToApprovalId[planId];
+      
+      // Determine if this is an AI plan or manual plan
+      final isAiPlan = plan.containsKey('ai_generated') || 
+                      plan.containsKey('gemini_generated') ||
+                      plan.containsKey('ai_plan_id') ||
+                      plan.containsKey('request_id') ||
+                      (plan.containsKey('exercise_plan_category') && plan.containsKey('user_level') && plan.containsKey('total_days'));
+      
+      print('🧹 PlansController - Clearing stats for stopped plan ID: $planId (type: ${isAiPlan ? 'AI' : 'Manual'}, approval_id: $approvalId)');
+      await statsController.cleanupStatsForPlan(
+        planId,
+        assignmentId: null, // Manual/AI plans don't have assignment_id
+        webPlanId: null, // Manual/AI plans don't have web_plan_id
+      );
+      print('✅ PlansController - Stats cleared for stopped plan $planId');
+    } catch (e) {
+      print('⚠️ PlansController - Error clearing stats for stopped plan: $e');
+    }
+    
     if (!isClosed) update(); // Force UI refresh
     print('🛑 PlansController - Plan $planId stopped, UI updated');
   }
 
   /// Stop the current active plan without requiring a plan parameter
-  void _stopCurrentActivePlan() {
+  Future<void> _stopCurrentActivePlan() async {
     if (_activePlan.value == null) return;
     
     final currentPlan = _activePlan.value!;
@@ -1064,6 +1238,30 @@ class PlansController extends GetxController {
     
     _persistStartedPlansToCache();
     _clearActivePlanSnapshotIfStopped();
+    
+    // Clear stats data for this plan when stopped
+    try {
+      final statsController = Get.find<StatsController>();
+      final approvalId = planToApprovalId[planId];
+      
+      // Determine if this is an AI plan or manual plan
+      final isAiPlan = currentPlan.containsKey('ai_generated') || 
+                      currentPlan.containsKey('gemini_generated') ||
+                      currentPlan.containsKey('ai_plan_id') ||
+                      currentPlan.containsKey('request_id') ||
+                      (currentPlan.containsKey('exercise_plan_category') && currentPlan.containsKey('user_level') && currentPlan.containsKey('total_days'));
+      
+      print('🧹 PlansController - Clearing stats for stopped current plan ID: $planId (type: ${isAiPlan ? 'AI' : 'Manual'}, approval_id: $approvalId)');
+      await statsController.cleanupStatsForPlan(
+        planId,
+        assignmentId: null, // Manual/AI plans don't have assignment_id
+        webPlanId: null, // Manual/AI plans don't have web_plan_id
+      );
+      print('✅ PlansController - Stats cleared for stopped current plan $planId');
+    } catch (e) {
+      print('⚠️ PlansController - Error clearing stats for stopped current plan: $e');
+    }
+    
     if (!isClosed) update(); // Force UI refresh
     print('🛑 PlansController - Current active plan $planId stopped, UI updated');
   }
@@ -1098,7 +1296,7 @@ class PlansController extends GetxController {
     // Stop Plans tab active plan
     if (_activePlan.value != null) {
       print('🛑 PlansController - Stopping active plan from Plans tab');
-      _stopCurrentActivePlan();
+      await _stopCurrentActivePlan();
     }
     
     // Stop Schedules tab active plan
@@ -1107,7 +1305,7 @@ class PlansController extends GetxController {
         final schedulesController = Get.find<SchedulesController>();
         if (schedulesController.activeSchedule != null) {
           print('🛑 PlansController - Stopping active plan from Schedules tab');
-          schedulesController.stopSchedule(schedulesController.activeSchedule!);
+          await schedulesController.stopSchedule(schedulesController.activeSchedule!);
         }
       }
     } catch (e) {
@@ -1153,15 +1351,108 @@ class PlansController extends GetxController {
   Map<String, dynamic>? get activePlan => _activePlan.value;
 
   int getCurrentDay(int planId) {
-    return _currentDay[planId.toString()] ?? 0;
+    // Return 0-based day index (Day 1 = 0, Day 2 = 1, Day 3 = 2, etc.)
+    // This matches the internal storage format
+    final day = _currentDay[planId.toString()] ?? 0;
+    print('🔍 PlansController - getCurrentDay($planId) = $day (0-based, Day ${day + 1})');
+    return day;
   }
 
-  void setCurrentDay(int planId, int day) {
+  Future<void> setCurrentDay(int planId, int day) async {
     _currentDay[planId.toString()] = day;
     _persistCurrentDayToCache(planId, day);
-    _currentDay.refresh(); // Refresh reactive map (same as schedules)
+    
+    // Check if this day is completed and mark workouts accordingly
+    await _checkAndMarkDayCompleted(planId, day);
+    
+    // Refresh reactive map (same as schedules)
+    _currentDay.refresh();
     uiTick.value++;
     if (!isClosed) update();
+  }
+  
+  /// Check if a specific day is completed and mark all workouts for that day as completed
+  Future<void> _checkAndMarkDayCompleted(int planId, int day) async {
+    try {
+      final activePlan = _activePlan.value;
+      if (activePlan == null) return;
+      
+      // Determine plan type
+      final isAiPlan = activePlan.containsKey('ai_generated') || 
+                      activePlan.containsKey('gemini_generated') ||
+                      activePlan.containsKey('ai_plan_id') ||
+                      activePlan.containsKey('request_id') ||
+                      (activePlan.containsKey('exercise_plan_category') && activePlan.containsKey('user_level') && activePlan.containsKey('total_days'));
+      final planType = isAiPlan ? 'ai_generated' : 'manual';
+      
+      // Get plan's start_date to calculate plan_date
+      DateTime? planStartDate;
+      if (activePlan['start_date'] != null) {
+        planStartDate = DateTime.tryParse(activePlan['start_date'].toString());
+      }
+      planStartDate ??= DateTime.now();
+      
+      // Calculate plan_date for this day (day is 0-based in Plans controller)
+      final utcDate = DateTime.utc(planStartDate.year, planStartDate.month, planStartDate.day);
+      final dayOffset = day; // day is 0-based, so Day 1 = 0, Day 2 = 1, etc.
+      final planDate = utcDate.add(Duration(days: dayOffset)).toIso8601String().split('T').first;
+      
+      print('🔍 PlansController - Checking if day ${day + 1} (plan_date: $planDate) is completed...');
+      
+      // Get approval_id for manual/AI plans
+      int? approvalId = planToApprovalId[planId];
+      if (approvalId == null) {
+        approvalId = getApprovalIdForPlan(planId);
+      }
+      
+      // Get all daily plans for this plan type
+      final dailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: planType);
+      
+      final matchingDay = dailyPlans.firstWhereOrNull((dp) {
+        final dpDate = dp['plan_date']?.toString().split('T').first;
+        final dpPlanType = dp['plan_type']?.toString() ?? '';
+        
+        // For manual/AI plans, source_plan_id can be either approval_id OR plan_id (if approval_id is null)
+        if (dpPlanType == 'manual' || dpPlanType == 'ai_generated') {
+          final dpSourcePlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+          // Match by approval_id if available, otherwise match by plan_id (source_plan_id)
+          return (approvalId != null && dpSourcePlanId == approvalId && dpDate == planDate) ||
+                 (approvalId == null && dpSourcePlanId == planId && dpDate == planDate);
+        }
+        return false;
+      });
+      
+      if (matchingDay != null) {
+        final isCompleted = matchingDay['is_completed'] as bool? ?? false;
+        final completedAt = matchingDay['completed_at'] as String?;
+        print('🔍 PlansController - Day ${day + 1} completion status: is_completed=$isCompleted, completed_at=$completedAt');
+        
+        if (isCompleted) {
+          // Day is completed, mark all workouts for this day as completed
+          final dayWorkouts = _getDayWorkouts(activePlan, day);
+          print('✅ PlansController - Day ${day + 1} is completed, marking ${dayWorkouts.length} workouts as completed');
+          
+          for (final workout in dayWorkouts) {
+            final workoutName = workout['name']?.toString() ?? workout['workout_name']?.toString() ?? '';
+            final safeName = workoutName.replaceAll(' ', '_');
+            final minutesVal = _extractWorkoutMinutesFromMap(workout);
+            final workoutKey = '${planId}_${day}_${safeName}_${minutesVal}';
+            _workoutCompleted[workoutKey] = true;
+            _workoutStarted[workoutKey] = false;
+            _workoutRemainingMinutes[workoutKey] = 0;
+            print('✅ PlansController - Marked workout "$workoutName" as completed (key: $workoutKey)');
+          }
+          
+          // Force UI refresh to show completed workouts
+          refreshUI();
+        }
+      } else {
+        print('⚠️ PlansController - Could not find daily plan for day ${day + 1} (plan_date: $planDate, planId: $planId, approvalId: $approvalId)');
+        print('⚠️ PlansController - Searched in ${dailyPlans.length} daily plans for planType: $planType');
+      }
+    } catch (e) {
+      print('⚠️ PlansController - Error checking day completion: $e');
+    }
   }
 
   // Public: return today's workouts for the active plan (same as schedules controller)
@@ -1175,6 +1466,13 @@ class PlansController extends GetxController {
     final workouts = _getDayWorkouts(active, currentDay);
     print('🔍 PlansController - getActiveDayWorkouts: returning ${workouts.length} workouts for day ${currentDay + 1}');
     return workouts;
+  }
+
+  // Public: get workouts for a specific day of a plan (for PlanDetailPage)
+  List<Map<String, dynamic>> getDayWorkoutsForDay(Map<String, dynamic> plan, int dayIndex) {
+    // dayIndex is 0-based (Day 1 = 0, Day 2 = 1, Day 3 = 2, etc.)
+    print('🔍 PlansController - getDayWorkoutsForDay: dayIndex=$dayIndex (Day ${dayIndex + 1})');
+    return _getDayWorkouts(plan, dayIndex);
   }
 
   // Workout tracking methods (similar to SchedulesController)
@@ -1458,17 +1756,49 @@ class PlansController extends GetxController {
     final Map<String, dynamic> second = Map<String, dynamic>.from(workouts[secondIdx]);
     final int m1 = _extractWorkoutMinutesFromMap(first);
     final int m2 = _extractWorkoutMinutesFromMap(second);
-    final int combined = m1 + m2;
+    int combined = m1 + m2;
     
     print('🔍 PlansController - dayRotationOffset: $dayRotationOffset (dayIndex: $dayIndex, workoutsPerDay: $workoutsPerDay, totalWorkouts: ${workouts.length})');
     print('🔍 PlansController - Pair indices: $firstIdx & $secondIdx → ${first['name'] ?? first['workout_name'] ?? 'Unknown'}($m1) + ${second['name'] ?? second['workout_name'] ?? 'Unknown'}($m2) = $combined');
     
     List<Map<String, dynamic>> selectedWorkouts = [];
     
-    // Apply 80-minute rule: if pair exceeds 80 minutes, show only first
-    selectedWorkouts = combined > 80 ? [first] : [first, second];
+    // Updated distribution logic:
+    // - If total minutes > 80: show only 1 workout
+    // - If total minutes <= 80: show 2 workouts
+    // - If total minutes < 50: try to add a third workout if available
+    if (combined > 80) {
+      // More than 80 minutes: show only first workout
+      selectedWorkouts = [first];
+      print('🔍 PlansController - Total minutes ($combined) > 80, showing only 1 workout');
+    } else if (combined < 50) {
+      // Less than 50 minutes: try to add a third workout
+      selectedWorkouts = [first, second];
+      
+      if (workouts.length > 2) {
+        final int thirdIdx = (dayRotationOffset + 2) % workouts.length;
+        final Map<String, dynamic> third = Map<String, dynamic>.from(workouts[thirdIdx]);
+        final int m3 = _extractWorkoutMinutesFromMap(third);
+        final int totalWithThird = combined + m3;
+        
+        // Only add third workout if it doesn't exceed 80 minutes
+        if (totalWithThird <= 80) {
+          selectedWorkouts.add(third);
+          combined = totalWithThird;
+          print('🔍 PlansController - Total minutes ($combined) < 50, added third workout: ${third['name'] ?? third['workout_name'] ?? 'Unknown'}($m3)');
+        } else {
+          print('🔍 PlansController - Total minutes would be $totalWithThird with third workout, keeping 2 workouts');
+        }
+      } else {
+        print('🔍 PlansController - Total minutes ($combined) < 50, but only ${workouts.length} workouts available');
+      }
+    } else {
+      // Between 50 and 80 minutes: show 2 workouts
+      selectedWorkouts = [first, second];
+      print('🔍 PlansController - Total minutes ($combined) between 50-80, showing 2 workouts');
+    }
 
-    print('🔍 PlansController - Day $dayIndex selected workouts: ${selectedWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+    print('🔍 PlansController - Day $dayIndex selected workouts: ${selectedWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()} (total: ${selectedWorkouts.fold<int>(0, (sum, w) => sum + _extractWorkoutMinutesFromMap(w))} minutes)');
     return selectedWorkouts;
   }
   
@@ -1489,48 +1819,219 @@ class PlansController extends GetxController {
     try {
       print('✅ Workout completed: Plan $planId, Day ${day + 1}, Workout $workoutName');
       
+      // Get plan's start_date to calculate correct plan_date (not DateTime.now())
+      final activePlan = _activePlan.value;
+      
+      // Get approval_id for manual/AI plans (needed for lookup and creation)
+      // Try multiple sources: planToApprovalId map, active plan data, or plan data
+      int? approvalId = planToApprovalId[planId];
+      if (approvalId == null && activePlan != null) {
+        final approvalIdFromPlan = activePlan['approval_id'];
+        if (approvalIdFromPlan != null) {
+          approvalId = int.tryParse(approvalIdFromPlan.toString());
+          if (approvalId != null) {
+            planToApprovalId[planId] = approvalId;
+            await _persistApprovalIdCache();
+            print('✅ PlansController - Retrieved approval_id $approvalId from active plan data');
+          }
+        }
+      }
+      // If still null, try to get from controller's getApprovalIdForPlan
+      if (approvalId == null) {
+        approvalId = getApprovalIdForPlan(planId);
+        if (approvalId != null) {
+          print('✅ PlansController - Retrieved approval_id $approvalId from controller cache');
+        }
+      }
+      print('🔍 PlansController - Looking up daily_plan_id for plan $planId, approval_id: $approvalId, day ${day + 1}');
+      DateTime? planStartDate;
+      if (activePlan != null && activePlan['id']?.toString() == planId.toString()) {
+        if (activePlan['start_date'] != null) {
+          planStartDate = DateTime.tryParse(activePlan['start_date'].toString());
+          print('🔍 PlansController - Found plan start_date: $planStartDate');
+        }
+      }
+      // Fallback to current date if start_date not found
+      planStartDate ??= DateTime.now();
+      
       // First, try to get the daily_plan_id from stored daily plans
       int? dailyPlanId;
       try {
-        final dailyPlans = await _dailyTrainingService.getDailyTrainingPlans();
-        final planDate = DateTime.now().add(Duration(days: day)).toIso8601String().split('T').first;
+        // CRITICAL: Pass planType to ensure we only get plans of the correct type (manual or ai_generated)
+        // This prevents interference from assigned plans or stats records
+        // Determine plan type from active plan
+        final isAiPlanForLookup = activePlan != null && (
+          activePlan.containsKey('ai_generated') || 
+          activePlan.containsKey('gemini_generated') ||
+          activePlan.containsKey('ai_plan_id') ||
+          activePlan.containsKey('request_id') ||
+          (activePlan.containsKey('exercise_plan_category') && activePlan.containsKey('user_level') && activePlan.containsKey('total_days'))
+        );
+        final planTypeForLookup = isAiPlanForLookup ? 'ai_generated' : 'manual';
+        final dailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: planTypeForLookup);
+        // Calculate plan_date using plan's start_date + day offset (not DateTime.now())
+        final planDate = planStartDate.add(Duration(days: day)).toIso8601String().split('T').first;
+        print('🔍 PlansController - Searching for daily plan with date: $planDate (calculated from start_date: $planStartDate + $day days)');
+        print('🔍 PlansController - Total daily plans fetched: ${dailyPlans.length}');
+        
         final matchingDay = dailyPlans.firstWhereOrNull((dp) {
-          final dpPlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
           final dpDate = dp['plan_date']?.toString().split('T').first;
-          return dpPlanId == planId && dpDate == planDate;
+          final dpPlanType = dp['plan_type']?.toString() ?? '';
+          
+          // For manual/AI plans, source_plan_id can be either approval_id OR plan_id (if approval_id is null)
+          if (dpPlanType == 'manual' || dpPlanType == 'ai_generated') {
+            final dpSourcePlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+            // Match by approval_id if available, otherwise match by plan_id (source_plan_id)
+            final matches = (approvalId != null && dpSourcePlanId == approvalId && dpDate == planDate) ||
+                          (approvalId == null && dpSourcePlanId == planId && dpDate == planDate);
+            if (matches) {
+              print('🔍 PlansController - Found match: source_plan_id=$dpSourcePlanId (${approvalId != null ? "approval_id" : "plan_id"}), date=$dpDate');
+            }
+            return matches;
+          } else {
+            // For assigned plans, source_plan_id is the assignment_id
+            final dpSourcePlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+            return dpSourcePlanId == planId && dpDate == planDate;
+          }
         });
+        
         if (matchingDay != null) {
           dailyPlanId = int.tryParse(matchingDay['id']?.toString() ?? matchingDay['daily_plan_id']?.toString() ?? '');
           print('🔍 PlansController - Found daily_plan_id: $dailyPlanId for day ${day + 1}');
+          // Store the matching daily plan for later use in item_id calculation
+          activePlan?['_found_daily_plan'] = matchingDay;
+        } else {
+          print('⚠️ PlansController - No matching daily plan found for plan $planId, approval_id: $approvalId, date: $planDate');
         }
       } catch (e) {
         print('⚠️ PlansController - Could not fetch daily plan ID: $e');
       }
       
-      // If we couldn't find daily_plan_id, use planId as fallback (backend might handle it)
-      final int targetPlanId = dailyPlanId ?? planId;
-      
-      // Get workout details from active plan to build proper completion data
-      final activePlan = _activePlan.value;
-      List<Map<String, dynamic>> workouts = [];
-      if (activePlan != null && activePlan['id']?.toString() == planId.toString()) {
-        if (activePlan['items'] is List) {
-          workouts = (activePlan['items'] as List).cast<Map<String, dynamic>>();
-        } else if (activePlan['exercises_details'] is List) {
-          workouts = (activePlan['exercises_details'] as List).cast<Map<String, dynamic>>();
+      // If we couldn't find daily_plan_id, try to find/create one using findDailyPlanBySource
+      // Backend now supports source_plan_id (plan_id) even when approval_id is null
+      if (dailyPlanId == null) {
+        try {
+          print('📤 PlansController - No daily_plan_id found, trying to find/create using findDailyPlanBySource for day ${day + 1}');
+          
+          // Calculate plan_date using plan's start_date + day offset (not DateTime.now())
+          final planDate = planStartDate.add(Duration(days: day)).toIso8601String().split('T').first;
+          
+          // Try to find daily plan using findDailyPlanBySource (backend will auto-sync if needed)
+          Map<String, dynamic>? foundPlan;
+          if (approvalId != null) {
+            print('📤 PlansController - Finding daily plan with approval_id: $approvalId, plan_date: $planDate');
+            foundPlan = await _dailyTrainingService.findDailyPlanBySource(
+              approvalId: approvalId,
+              planDate: planDate,
+            );
+          } else {
+            // Use source_plan_id (plan_id) when approval_id is null (backend supports this now)
+            print('📤 PlansController - Finding daily plan with source_plan_id (plan_id): $planId, plan_date: $planDate');
+            foundPlan = await _dailyTrainingService.findDailyPlanBySource(
+              sourcePlanId: planId,
+              planDate: planDate,
+            );
+          }
+          
+          if (foundPlan != null && foundPlan.isNotEmpty) {
+            dailyPlanId = int.tryParse(foundPlan['id']?.toString() ?? foundPlan['daily_plan_id']?.toString() ?? '');
+            if (dailyPlanId != null) {
+              print('✅ PlansController - Found/created daily_plan_id: $dailyPlanId using findDailyPlanBySource');
+              // Store the found/created daily plan for later use in item_id calculation
+              activePlan?['_found_daily_plan'] = foundPlan;
+            } else {
+              print('⚠️ PlansController - Found daily plan but could not extract daily_plan_id');
+            }
+          } else {
+            // Fallback: try createDailyPlanFromApproval if findDailyPlanBySource didn't work
+            print('⚠️ PlansController - findDailyPlanBySource returned empty, trying createDailyPlanFromApproval as fallback');
+            if (approvalId != null) {
+              final createdPlan = await _dailyTrainingService.createDailyPlanFromApproval(
+                approvalId: approvalId,
+                planDate: planDate,
+              );
+              
+              if (createdPlan.isNotEmpty) {
+                dailyPlanId = int.tryParse(createdPlan['id']?.toString() ?? createdPlan['daily_plan_id']?.toString() ?? '');
+                if (dailyPlanId != null) {
+                  print('✅ PlansController - Created daily_plan_id on-demand: $dailyPlanId');
+                  activePlan?['_found_daily_plan'] = createdPlan;
+                }
+              }
+            } else {
+              print('⚠️ PlansController - No approval_id and findDailyPlanBySource failed, cannot create daily plan');
+            }
+          }
+        } catch (e) {
+          print('⚠️ PlansController - Failed to find/create daily plan on-demand: $e');
         }
       }
       
-      // Find the matching workout
-      final workout = workouts.firstWhereOrNull((w) {
-        final wName = (w['workout_name'] ?? w['name'] ?? '').toString();
-        return wName.toLowerCase() == workoutName.toLowerCase();
-      });
+      // If we still don't have daily_plan_id, use planId as fallback (backend might handle it)
+      final int targetPlanId = dailyPlanId ?? planId;
+      
+      // Get workout details from daily plan's exercises_details (preferred) or active plan
+      // Use exercises_details from the daily plan structure (not items)
+      List<Map<String, dynamic>> workouts = [];
+      Map<String, dynamic>? dailyPlanData = activePlan?['_found_daily_plan'] as Map<String, dynamic>?;
+      
+      // Prefer exercises_details from the found/created daily plan
+      if (dailyPlanData != null) {
+        if (dailyPlanData['exercises_details'] is List) {
+          workouts = (dailyPlanData['exercises_details'] as List).cast<Map<String, dynamic>>();
+          print('🔍 PlansController - Using exercises_details from daily plan (${workouts.length} workouts)');
+        } else if (dailyPlanData['items'] is List) {
+          workouts = (dailyPlanData['items'] as List).cast<Map<String, dynamic>>();
+          print('🔍 PlansController - Using items from daily plan (${workouts.length} workouts)');
+        }
+      }
+      
+      // Fallback to active plan's exercises_details if daily plan not available
+      if (workouts.isEmpty && activePlan != null && activePlan['id']?.toString() == planId.toString()) {
+        // For manual/AI plans, use exercises_details (array format)
+        if (activePlan['exercises_details'] is List) {
+          workouts = (activePlan['exercises_details'] as List).cast<Map<String, dynamic>>();
+          print('🔍 PlansController - Using exercises_details from active plan (${workouts.length} workouts)');
+        } else if (activePlan['items'] is List) {
+          workouts = (activePlan['items'] as List).cast<Map<String, dynamic>>();
+          print('🔍 PlansController - Using items from active plan (${workouts.length} workouts)');
+        }
+      }
+      
+      // Find the matching workout and get its 1-based index in exercises_details
+      // Handle workout names with suffixes like "_1", "_2" by stripping them for matching
+      int itemId = 0;
+      Map<String, dynamic>? workout;
+      // Strip suffix from workoutName (e.g., "Squats_1" -> "Squats")
+      final baseWorkoutName = workoutName.replaceAll(RegExp(r'_\d+$'), '').trim();
+      
+      for (int i = 0; i < workouts.length; i++) {
+        final w = workouts[i];
+        final wName = (w['workout_name'] ?? w['name'] ?? '').toString().trim();
+        final wNameBase = wName.replaceAll(RegExp(r'_\d+$'), '').trim();
+        
+        // Try exact match first, then base name match (without suffix)
+        if (wName.toLowerCase() == workoutName.toLowerCase() || 
+            wNameBase.toLowerCase() == baseWorkoutName.toLowerCase() ||
+            wName.toLowerCase() == baseWorkoutName.toLowerCase()) {
+          workout = w;
+          // item_id is 1-based index in exercises_details array
+          itemId = i + 1;
+          print('🔍 PlansController - Found workout "$workoutName" (base: "$baseWorkoutName") matching "$wName" (base: "$wNameBase") at index $i, item_id: $itemId (1-based)');
+          break;
+        }
+      }
+      
+      if (itemId == 0) {
+        print('⚠️ PlansController - Could not find workout "$workoutName" (base: "$baseWorkoutName") in exercises_details');
+        print('⚠️ PlansController - Available workouts: ${workouts.map((w) => (w['workout_name'] ?? w['name'] ?? '').toString()).toList()}');
+        print('⚠️ PlansController - Using item_id: 0 (this may cause issues)');
+      }
       
       // Build completion data with item-based format
       final completionData = [
         {
-          'item_id': workout != null ? (int.tryParse(workout['id']?.toString() ?? '0') ?? 0) : 0,
+          'item_id': itemId,
           'sets_completed': workout != null ? (int.tryParse(workout['sets']?.toString() ?? '0') ?? 0) : 0,
           'reps_completed': workout != null ? (int.tryParse(workout['reps']?.toString() ?? '0') ?? 0) : 0,
           'weight_used': workout != null ? (double.tryParse(workout['weight_kg']?.toString() ?? workout['weight']?.toString() ?? '0') ?? 0.0) : 0.0,
@@ -1541,12 +2042,89 @@ class PlansController extends GetxController {
         }
       ];
       
-      await _dailyTrainingService.submitDailyTrainingCompletion(
+      final completionResponse = await _dailyTrainingService.submitDailyTrainingCompletion(
         planId: targetPlanId,
         completionData: completionData,
       );
       
-      print('✅ Workout completion stored successfully');
+      print('✅ Workout completion submitted successfully');
+      print('📊 PlansController - Completion response: $completionResponse');
+      
+      // Extract daily_plan_id from response if available (backend may return it)
+      // Reuse existing dailyPlanId variable (already declared earlier in the method)
+      if (completionResponse is Map<String, dynamic>) {
+        final responseDailyPlanId = int.tryParse(completionResponse['daily_plan_id']?.toString() ?? '') ??
+                                     int.tryParse(completionResponse['id']?.toString() ?? '');
+        if (responseDailyPlanId != null) {
+          dailyPlanId = responseDailyPlanId; // Update existing variable
+          print('📊 PlansController - Found daily_plan_id in response: $dailyPlanId');
+        }
+      }
+      
+      // CRITICAL: Verify completion was persisted (backend now uses transactions)
+      // Check both is_completed AND completed_at (backend requires both)
+      if (dailyPlanId != null) {
+        bool verified = false;
+        int retryCount = 0;
+        const maxRetries = 3;
+        
+        while (!verified && retryCount < maxRetries) {
+          await Future.delayed(Duration(milliseconds: 500 * (retryCount + 1))); // Increasing delay
+          retryCount++;
+          
+          try {
+            print('📊 PlansController - Verifying completion (attempt $retryCount/$maxRetries) for daily_plan_id: $dailyPlanId');
+            final updatedDailyPlan = await _dailyTrainingService.getDailyTrainingPlan(dailyPlanId);
+            
+            final isCompleted = updatedDailyPlan['is_completed'] as bool? ?? false;
+            final completedAt = updatedDailyPlan['completed_at'] as String?;
+            final planDate = updatedDailyPlan['plan_date'] as String?;
+            final planType = updatedDailyPlan['plan_type'] as String?;
+            
+            print('📊 PlansController - Verification result:');
+            print('  - is_completed: $isCompleted');
+            print('  - completed_at: $completedAt');
+            print('  - plan_date: $planDate');
+            print('  - plan_type: $planType');
+            
+            // Backend requires BOTH is_completed=true AND completed_at timestamp
+            if (isCompleted && completedAt != null && completedAt.isNotEmpty) {
+              verified = true;
+              print('✅ PlansController - Completion verified successfully (transaction committed)');
+            } else {
+              print('⚠️ PlansController - Completion not yet verified: is_completed=$isCompleted, completed_at=${completedAt != null ? "set" : "null"}');
+              if (retryCount < maxRetries) {
+                print('📊 PlansController - Retrying verification...');
+              }
+            }
+          } catch (verifyError) {
+            print('⚠️ PlansController - Verification attempt $retryCount failed: $verifyError');
+            if (retryCount >= maxRetries) {
+              print('❌ PlansController - Could not verify completion after $maxRetries attempts');
+            }
+          }
+        }
+        
+        if (!verified) {
+          print('⚠️ PlansController - WARNING: Completion may not have been persisted (transaction may have failed)');
+          print('⚠️ PlansController - Backend logs should show transaction commit/rollback status');
+        }
+      } else {
+        print('⚠️ PlansController - Could not extract daily_plan_id from response, skipping verification');
+      }
+      
+      // CRITICAL: Force stats sync after completion to ensure backend calculates stats correctly
+      // Wait a moment for backend transaction to fully commit before syncing stats
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      try {
+        final statsController = Get.find<StatsController>();
+        print('📊 PlansController - Syncing stats after workout completion...');
+        await statsController.refreshStats(forceSync: true);
+        print('✅ PlansController - Stats synced after workout completion');
+      } catch (e) {
+        print('⚠️ PlansController - Failed to sync stats after completion: $e');
+      }
     } catch (e) {
       print('❌ Error storing workout completion: $e');
       // Even if remote store fails (e.g., 404 on some servers), still advance the day locally
@@ -1599,7 +2177,8 @@ class PlansController extends GetxController {
   void _refreshStatsSafe() {
     try {
       final statsController = Get.find<StatsController>();
-      statsController.refreshStats();
+      // Force sync after workout completion to ensure stats are recalculated
+      statsController.refreshStats(forceSync: true);
     } catch (e) {
       print('⚠️ PlansController - StatsController not available to refresh: $e');
     }
@@ -1672,45 +2251,52 @@ class PlansController extends GetxController {
     final List<Map<String, dynamic>> days = [];
     if (items.isEmpty || totalDays <= 0) return days;
     
-    int index = 0;
+    // Rotation logic for manual plans: dayRotationOffset = (dayIndex * workoutsPerDay) % items.length
+    // Distribution rule:
+    // - If combined minutes > 80: show 1 workout per day
+    // - If combined minutes <= 80: show 2 workouts per day
+    const int workoutsPerDay = 2; // Base rotation for selecting workouts
     for (int day = 0; day < totalDays; day++) {
-      final List<Map<String, dynamic>> workoutsForDay = [];
+      final int dayRotationOffset = (day * workoutsPerDay) % items.length;
+      final int firstIdx = dayRotationOffset;
+      final int secondIdx = (dayRotationOffset + 1) % items.length;
       
-      // Ensure we have valid items
-      if (items.isNotEmpty) {
-        // Add first workout
-        final Map<String, dynamic> first = Map<String, dynamic>.from(items[index % items.length]);
+      final Map<String, dynamic> first = Map<String, dynamic>.from(items[firstIdx]);
         final int m1 = _extractWorkoutMinutesFromMap(first);
-        workoutsForDay.add(first);
-        index++;
+      
+      final List<Map<String, dynamic>> workoutsForDay = [first];
         
-        // Check if we can add a second workout (80-minute rule)
+      // Manual Plan Distribution Rule:
+      // - If combined minutes > 80: show 1 workout per day (only first)
+      // - If combined minutes <= 80: show 2 workouts per day (both first and second)
         if (items.length > 1) {
-          final Map<String, dynamic> second = Map<String, dynamic>.from(items[index % items.length]);
+        final Map<String, dynamic> second = Map<String, dynamic>.from(items[secondIdx]);
           final int m2 = _extractWorkoutMinutesFromMap(second);
-          final int totalMinutes = m1 + m2;
+        final int combinedMinutes = m1 + m2;
           
           print('🔍 Daily Plan Generation - Day ${day + 1}:');
           print('🔍   - First workout: ${first['workout_name'] ?? 'Unknown'} (${m1} min)');
           print('🔍   - Second workout: ${second['workout_name'] ?? 'Unknown'} (${m2} min)');
-          print('🔍   - Total minutes: $totalMinutes');
-          print('🔍   - 80-minute rule: ${totalMinutes <= 80 ? 'PASS' : 'FAIL'}');
+        print('🔍   - Combined minutes: $combinedMinutes');
+        print('🔍   - Distribution rule: ${combinedMinutes > 80 ? '1 workout (exceeds 80 min)' : '2 workouts (<= 80 min)'}');
           
-          if (totalMinutes <= 80) {
+        if (combinedMinutes <= 80) {
             workoutsForDay.add(second);
-            index++;
-            print('✅ Added 2 workouts for Day ${day + 1} (${totalMinutes} min total)');
+          print('✅ Added 2 workouts for Day ${day + 1} (${combinedMinutes} min total)');
           } else {
-            print('⚠️ Skipped second workout for Day ${day + 1} (would exceed 80 min: ${totalMinutes} min)');
-          }
+          print('⚠️ Showing 1 workout for Day ${day + 1} (combined ${combinedMinutes} min exceeds 80 min limit)');
         }
       }
       
       final DateTime? date = startDate != null ? startDate.add(Duration(days: day)) : null;
+      final int totalMinutes = workoutsForDay.fold(0, (sum, w) => sum + _extractWorkoutMinutesFromMap(w));
+      
       days.add({
         'day': day + 1,
         if (date != null) 'date': date.toIso8601String().split('T').first,
         'workouts': workoutsForDay,
+        'total_workouts': workoutsForDay.length,
+        'total_minutes': totalMinutes,
       });
     }
     return days;
@@ -1888,6 +2474,9 @@ class PlansController extends GetxController {
               if (status == 'approved') {
                 resetModificationFlag(planId);
               }
+              
+              // Force UI update when status changes
+              if (!isClosed) update();
             } else {
               print('ℹ️ PlansController - Plan $planId status unchanged: $status');
             }
@@ -1927,9 +2516,33 @@ class PlansController extends GetxController {
               print('🔍 PlansController - No approval_status field found in plan data');
             }
             
-            // Update local status if found
-            if (status != 'none' && planApprovalStatus[planId] != status) {
-              final oldStatus = planApprovalStatus[planId];
+            // IMPORTANT: If plan is approved but we don't have approval_id, extract it from plan data
+            // Backend now includes approval_id in plan data for approved plans (prioritizes plan_type='manual')
+            if (status == 'approved' && planToApprovalId[planId] == null) {
+              print('🔍 PlansController - Plan $planId is approved but approval_id not in cache, extracting from plan data...');
+              
+              // Extract approval_id from plan data (backend now includes it)
+              int? approvalId;
+              if (planData['approval_id'] != null) {
+                approvalId = int.tryParse(planData['approval_id'].toString());
+                print('🔍 PlansController - Found approval_id in plan data: $approvalId');
+              }
+              
+              if (approvalId != null) {
+                // Store the approval_id for future use
+                planToApprovalId[planId] = approvalId;
+                await _persistApprovalIdCache();
+                print('✅ PlansController - Stored approval_id $approvalId for approved plan $planId');
+              } else {
+                print('⚠️ PlansController - approval_id not found in plan data for approved plan $planId');
+                print('⚠️ PlansController - Backend should include approval_id for approved plans (check backend approval lookup)');
+              }
+            }
+            
+            // Update local status if found - always update if status is found in plan data
+            if (status != 'none') {
+              final oldStatus = planApprovalStatus[planId] ?? 'none';
+              if (oldStatus != status) {
               planApprovalStatus[planId] = status;
               print('✅ PlansController - Updated manual plan $planId status from $oldStatus to $status');
               
@@ -1937,10 +2550,14 @@ class PlansController extends GetxController {
               if (status == 'approved') {
                 resetModificationFlag(planId);
               }
-            } else if (status != 'none') {
+                
+                // Force UI update when status changes
+                if (!isClosed) update();
+              } else {
               print('ℹ️ PlansController - Manual plan $planId status unchanged: $status');
+              }
             } else {
-              print('⚠️ PlansController - Manual plan $planId has no approval status');
+              print('⚠️ PlansController - Manual plan $planId has no approval status in plan data');
             }
 
             // Even if unchanged, ensure modified flag is cleared when approved
@@ -2010,6 +2627,9 @@ class PlansController extends GetxController {
               if (status == 'approved') {
                 resetModificationFlag(planId);
               }
+              
+              // Force UI update when status changes
+              if (!isClosed) update();
             }
 
             // Even if unchanged, ensure modified flag is cleared when approved
@@ -2155,7 +2775,51 @@ class PlansController extends GetxController {
       if (data != null && data.isNotEmpty) {
         final Map<String, dynamic> snapshot = jsonDecode(data);
         _activePlan.value = snapshot;
-        print('📱 Plans - Loaded active plan snapshot from cache: ${snapshot['id']}');
+        final planId = int.tryParse(snapshot['id']?.toString() ?? '');
+        print('📱 Plans - Loaded active plan snapshot from cache: $planId');
+        
+        // When restoring active plan, check database for completed days
+        if (planId != null) {
+          try {
+            print('📱 Plans - Checking database for completed days when restoring active plan...');
+            
+            // Determine plan type
+            final planType = snapshot['plan_type']?.toString().toLowerCase();
+            bool isAiPlan = false;
+            if (planType == 'ai_generated' || 
+                snapshot.containsKey('ai_generated') || 
+                snapshot.containsKey('gemini_generated') ||
+                snapshot.containsKey('ai_plan_id') ||
+                snapshot.containsKey('request_id')) {
+              isAiPlan = true;
+            }
+            
+            final completedDay = await _getLastCompletedDayFromDatabase(planId, isAiPlan ? 'ai_generated' : 'manual');
+            if (completedDay != null) {
+              // completedDay is 1-based (from daily_plans), _currentDay is 0-based
+              // If completedDay = 2 (Day 2 completed), we should resume at Day 3 (index 2 in 0-based)
+              final nextDay = completedDay; // completedDay is 1-based, use directly as 0-based index for next day
+              _currentDay[planId.toString()] = nextDay;
+              _persistCurrentDayToCache(planId, nextDay);
+              print('📱 Plans - ✅ Restored active plan: found completed day $completedDay (1-based) in database, resuming at day $nextDay (0-based index, Day ${completedDay + 1})');
+            } else {
+              // No completed days in database, fall back to cache
+              await _loadCurrentDayFromCache(planId);
+              final cachedDay = _currentDay[planId.toString()];
+              if (cachedDay != null) {
+                print('📱 Plans - Loaded current day $cachedDay for plan $planId from cache (no completed days in database)');
+              }
+            }
+          } catch (e) {
+            print('⚠️ Plans - Error checking database when restoring active plan: $e');
+            // If database check fails, fall back to cache
+            await _loadCurrentDayFromCache(planId!);
+            final cachedDay = _currentDay[planId.toString()];
+            if (cachedDay != null) {
+              print('📱 Plans - Loaded current day $cachedDay for plan $planId from cache (after database error)');
+            }
+          }
+        }
       }
     } catch (e) {
       print('❌ Plans - Error loading active plan snapshot from cache: $e');
@@ -2227,6 +2891,139 @@ class PlansController extends GetxController {
       }
     } catch (e) {
       print('❌ Plans - Error loading current day: $e');
+    }
+  }
+
+  // Get the last completed day from database by checking completed daily plans
+  Future<int?> _getLastCompletedDayFromDatabase(int planId, String planType) async {
+    try {
+      print('🔍 PlansController - Checking database for completed days for plan $planId (type: $planType)');
+      
+      // Get all daily plans from database
+      final allPlans = await _dailyTrainingService.getDailyTrainingPlans();
+      print('📅 PlansController - Retrieved ${allPlans.length} total daily plans from database');
+      
+      // Get approval_id for this plan (needed to match source_plan_id)
+      int? approvalId = planToApprovalId[planId];
+      if (approvalId == null) {
+        approvalId = getApprovalIdForPlan(planId);
+      }
+      
+      // Filter plans for this plan (check source_plan_id)
+      // For manual/AI plans, source_plan_id can be either approval_id OR plan_id (if approval_id is null)
+      // CRITICAL: STRICTLY filter by plan_type to avoid picking up assigned plan data
+      // Manual plans and assigned plans are completely independent and should never interfere
+      final planPlans = allPlans.where((plan) {
+        final sourcePlanId = plan['source_plan_id'] as int?;
+        final planTypeRaw = plan['plan_type'] as String?;
+        
+        // CRITICAL: First check plan type - MUST match exactly (not 'web_assigned')
+        // This ensures manual/AI plans and assigned plans are completely isolated
+        if (planTypeRaw != planType) {
+          return false; // Reject any plans with different plan type immediately
+        }
+        
+        // Match by approval_id if available, otherwise match by plan_id
+        if (approvalId != null) {
+          return sourcePlanId == approvalId;
+        } else {
+          return sourcePlanId == planId;
+        }
+      }).toList();
+      
+      print('📅 PlansController - Found ${planPlans.length} plans for plan $planId (approval_id: $approvalId)');
+      
+      if (planPlans.isEmpty) {
+        print('📅 PlansController - No daily plans found in database for plan $planId');
+        return null;
+      }
+      
+      // Get plan's start_date to calculate day numbers
+      final activePlan = _activePlan.value;
+      DateTime? startDate;
+      if (activePlan != null && activePlan['id']?.toString() == planId.toString()) {
+        if (activePlan['start_date'] != null) {
+          startDate = DateTime.tryParse(activePlan['start_date'].toString());
+        }
+      }
+      
+      // If start_date not found in active plan, try to get from plan data
+      if (startDate == null) {
+        try {
+          if (planType == 'manual') {
+            final planData = await _manualService.getPlan(planId);
+            if (planData['start_date'] != null) {
+              startDate = DateTime.tryParse(planData['start_date'].toString());
+            }
+          } else if (planType == 'ai_generated') {
+            final planData = await _aiService.getGenerated(planId);
+            if (planData['start_date'] != null) {
+              startDate = DateTime.tryParse(planData['start_date'].toString());
+            }
+          }
+        } catch (e) {
+          print('⚠️ PlansController - Could not fetch plan data for start_date: $e');
+        }
+      }
+      
+      // Fallback to current date if start_date not found
+      startDate ??= DateTime.now();
+      final startDateNormalized = DateTime(startDate.year, startDate.month, startDate.day);
+      
+      print('📅 PlansController - Using start_date: $startDateNormalized');
+      
+      // Find completed plans and calculate day numbers
+      int? lastCompletedDay;
+      final completedPlans = <Map<String, dynamic>>[];
+      
+      for (final plan in planPlans) {
+        final isCompleted = plan['is_completed'] as bool? ?? false;
+        final completedAt = plan['completed_at'] as String?;
+        
+        // Must have both is_completed: true AND completed_at timestamp
+        if (!isCompleted || completedAt == null || completedAt.isEmpty) {
+          continue;
+        }
+        
+        // Calculate day number from plan_date
+        final planDate = plan['plan_date'] as String?;
+        if (planDate == null) continue;
+        
+        final planDateObj = DateTime.tryParse(planDate);
+        if (planDateObj == null) continue;
+        
+        final planDateNormalized = DateTime(planDateObj.year, planDateObj.month, planDateObj.day);
+        final daysDiff = planDateNormalized.difference(startDateNormalized).inDays;
+        
+        // Day number is 1-based (Day 1 = daysDiff 0)
+        final dayNumber = daysDiff + 1;
+        
+        if (dayNumber > 0) {
+          completedPlans.add(plan);
+          if (lastCompletedDay == null || dayNumber > lastCompletedDay) {
+            lastCompletedDay = dayNumber;
+            print('📅 PlansController - Updated lastCompletedDay to $lastCompletedDay (plan_date: $planDateNormalized)');
+          }
+        }
+      }
+      
+      print('📅 PlansController - Found ${completedPlans.length} completed plans for plan $planId');
+      print('📅 PlansController - Last completed day from database: $lastCompletedDay');
+      
+      if (lastCompletedDay != null) {
+        // lastCompletedDay is 1-based (from daily_plans), _currentDay is 0-based
+        // If lastCompletedDay = 2 (Day 2 completed), we should resume at Day 3 (index 2 in 0-based)
+        final nextDay = lastCompletedDay; // lastCompletedDay is 1-based, use directly as 0-based index for next day
+        print('📅 PlansController - Last completed day: $lastCompletedDay (1-based, Day $lastCompletedDay completed)');
+        print('📅 PlansController - Should resume at Day ${lastCompletedDay + 1} (0-based index: $nextDay)');
+        return nextDay;
+      } else {
+        print('📅 PlansController - No completed days found in database for plan $planId');
+        return null;
+      }
+    } catch (e) {
+      print('⚠️ PlansController - Error getting last completed day from database: $e');
+      return null;
     }
   }
 
@@ -2470,27 +3267,45 @@ class PlansController extends GetxController {
         final isManualPlan = (planType == 'manual' || planType == null || planType == '') && 
                             (createdBy == null || createdBy == userId); // Allow null createdBy or match userId
                             // Removed strict checks for assignedBy, assignmentId, webPlanId
-                            // as these might be set by the backend during updates
-        
-        print('🔍 Manual Plan Filter - Plan ID: $planId');
-        print('🔍   - planType: $planType');
-        print('🔍   - createdBy: $createdBy (type: ${createdBy.runtimeType})');
-        print('🔍   - userId: $userId (type: ${userId.runtimeType})');
-        print('🔍   - assignedBy: $assignedBy');
-        print('🔍   - assignmentId: $assignmentId');
-        print('🔍   - webPlanId: $webPlanId');
-        print('🔍   - isAssignedPlan: $isAssignedPlan');
-        print('🔍   - isManualPlan: $isManualPlan');
-        print('🔍   - createdBy == userId: ${createdBy == userId}');
-        print('🔍   - createdBy == null: ${createdBy == null}');
-        print('🔍   - (createdBy == null || createdBy == userId): ${createdBy == null || createdBy == userId}');
         
         if (planId != null && !seenIds.contains(planId) && isManualPlan && !isAssignedPlan) {
           seenIds.add(planId);
-          uniquePlans.add(planMap);
-          print('✅ Plans - Added manual plan $planId to list');
+          
+          // Extract approval_status and approval_id from plan data
+          if (planMap['approval_status'] != null) {
+            final approvalStatus = planMap['approval_status'].toString().toLowerCase();
+            if (approvalStatus.isNotEmpty && approvalStatus != 'null') {
+              planApprovalStatus[planId] = approvalStatus;
+              planMap['approval_status'] = approvalStatus;
+              print('📝 Plans - Extracted approval_status for plan $planId: $approvalStatus');
+              
+              // IMPORTANT: If plan is approved, extract and store approval_id (backend now includes it)
+              if (approvalStatus == 'approved' && planToApprovalId[planId] == null) {
+                final approvalId = planMap['approval_id'];
+                if (approvalId != null) {
+                  final approvalIdInt = int.tryParse(approvalId.toString());
+                  if (approvalIdInt != null) {
+                    planToApprovalId[planId] = approvalIdInt;
+                    await _persistApprovalIdCache();
+                    print('✅ Plans - Stored approval_id $approvalIdInt for approved plan $planId from refreshManualPlans');
+                  }
         } else {
-          print('❌ Plans - Excluded plan $planId: isManualPlan=$isManualPlan, isAssignedPlan=$isAssignedPlan');
+                  print('⚠️ Plans - Plan $planId is approved but approval_id not in plan data (backend should include it)');
+                }
+              }
+            }
+          }
+          
+          uniquePlans.add(planMap);
+          print('📝 Plans - Added manual plan ID: $planId');
+        } else if (planId != null && seenIds.contains(planId)) {
+          print('⚠️ Plans - Skipped duplicate plan ID: $planId');
+        } else if (planId == null) {
+          print('⚠️ Plans - Skipped plan with invalid ID');
+        } else if (!isManualPlan) {
+          print('⚠️ Plans - Skipped non-manual plan ID: $planId (type: $planType)');
+        } else if (isAssignedPlan) {
+          print('⚠️ Plans - Skipped assigned plan ID: $planId');
         }
       }
       
@@ -2562,27 +3377,152 @@ class PlansController extends GetxController {
   Future<void> deleteManualPlan(int planId) async {
     try {
       print('🗑️ Plans - Deleting manual plan ID: $planId');
+      
+      // Get the plan details before deletion to extract approval_id
+      final plan = manualPlans.firstWhereOrNull((p) {
+        final int id = int.tryParse(p['id']?.toString() ?? '') ?? -1;
+        final int pid = int.tryParse(p['plan_id']?.toString() ?? '') ?? -1;
+        return id == planId || pid == planId;
+      });
+      
+      // Get approval_id from plan or from planToApprovalId map
+      int? approvalId;
+      if (plan != null) {
+        approvalId = int.tryParse(plan['approval_id']?.toString() ?? '');
+        if (approvalId == null) {
+          approvalId = planToApprovalId[planId];
+        }
+      } else {
+        approvalId = planToApprovalId[planId];
+      }
+      
+      print('🗑️ Plans - Found approval_id: $approvalId for plan $planId');
+      
+      // Step 1: Delete daily training plans associated with this manual plan
+      // Use approval_id as source_plan_id for manual plans
+      if (approvalId != null) {
+        try {
+          print('🗑️ Plans - Deleting daily training plans for approval_id: $approvalId');
+          await _dailyTrainingService.deleteDailyPlansBySource(
+            approvalId: approvalId,
+            sourcePlanId: approvalId, // For manual plans, approval_id is the source_plan_id
+          );
+          print('✅ Plans - Daily training plans deleted for approval_id: $approvalId');
+        } catch (e) {
+          print('⚠️ Plans - Error deleting daily training plans (backend may handle cascading deletes): $e');
+          // Don't fail the entire deletion if this fails - backend should handle cascading deletes
+        }
+      }
+      
+      // Step 2: Delete the manual plan from backend
+      bool planDeletedFromBackend = false;
       try {
       await _manualService.deletePlan(planId);
+        planDeletedFromBackend = true;
+        print('✅ Plans - Plan $planId deleted successfully from backend');
       } on Exception catch (e) {
         final msg = e.toString();
         if (msg.contains('not found') || msg.contains('404')) {
+          print('⚠️ Plans - Plan $planId not found in backend (404). Trying fallback...');
+          
           // Try fallback using plan_id if available in list
           final alt = manualPlans.firstWhereOrNull((p) => int.tryParse(p['plan_id']?.toString() ?? '') == planId);
           final int? altId = alt != null ? int.tryParse(alt['id']?.toString() ?? '') : null;
           if (altId != null && altId != planId) {
             print('🗑️ Plans - Retrying delete using alt id $altId for plan_id $planId');
+            try {
             await _manualService.deletePlan(altId);
+              planDeletedFromBackend = true;
+              print('✅ Plans - Plan deleted successfully using alt id $altId');
+            } catch (altError) {
+              final altMsg = altError.toString();
+              if (altMsg.contains('not found') || altMsg.contains('404')) {
+                print('⚠️ Plans - Plan not found in backend (already deleted or doesn\'t exist). Cleaning up local state only.');
+                // Plan doesn't exist in backend - treat as successful deletion (clean up local state)
+                planDeletedFromBackend = false; // Will clean up local state below
           } else {
             rethrow;
+              }
           }
         } else {
+            // Plan not found in backend - treat as successful deletion (clean up local state)
+            print('⚠️ Plans - Plan $planId not found in backend (already deleted or doesn\'t exist). Cleaning up local state only.');
+            planDeletedFromBackend = false; // Will clean up local state below
+          }
+        } else {
+          // Other errors should be rethrown
+          print('❌ Plans - Error deleting plan from backend: $e');
           rethrow;
         }
       }
       
-      // Remove from local list
+      // Step 3: Remove from local list (always do this, even if backend deletion failed)
+      final removedCount = manualPlans.length;
       manualPlans.removeWhere((plan) {
+        final int id = int.tryParse(plan['id']?.toString() ?? '') ?? -1;
+        final int pid = int.tryParse(plan['plan_id']?.toString() ?? '') ?? -1;
+        return id == planId || pid == planId;
+      });
+      final remainingCount = manualPlans.length;
+      print('🗑️ Plans - Removed plan from local list (${removedCount - remainingCount} plan(s) removed)');
+      
+      // Step 4: Remove from started plans if it was started
+      if (_startedPlans.containsKey(planId)) {
+        _startedPlans.remove(planId);
+        await _persistStartedPlansToCache();
+        print('🗑️ Plans - Removed plan $planId from started plans');
+      }
+      
+      // Step 5: Clear active plan if it was the deleted plan
+      final activePlanId = int.tryParse(_activePlan.value?['id']?.toString() ?? '') ?? -1;
+      if (activePlanId == planId) {
+        _activePlan.value = null;
+        await _clearActivePlanSnapshotIfStopped();
+        print('🗑️ Plans - Cleared active plan (was plan $planId)');
+      }
+      
+      // Step 6: Remove from planToApprovalId map
+      planToApprovalId.remove(planId);
+      print('🗑️ Plans - Removed plan $planId from planToApprovalId map');
+      
+      // Step 7: Clean up stats data for this plan (always do this, even if backend deletion failed)
+      try {
+        final statsController = Get.find<StatsController>();
+        await statsController.cleanupStatsForPlan(planId);
+        print('✅ Plans - Stats data cleaned up for plan $planId');
+        
+        // Refresh stats to sync with backend after deletion
+        if (planDeletedFromBackend) {
+          await statsController.refreshStats(forceSync: true);
+          print('✅ Plans - Stats refreshed after plan deletion');
+        } else {
+          print('⚠️ Plans - Skipping stats refresh (plan not found in backend)');
+        }
+      } catch (e) {
+        print('⚠️ Plans - Error cleaning up stats for plan $planId: $e');
+      }
+      
+      // Step 8: Refresh plans list to ensure UI is updated
+      await refreshPlans();
+      
+      if (planDeletedFromBackend) {
+        print('✅ Plans - Manual plan deleted successfully (plan ID: $planId, approval_id: $approvalId)');
+      } else {
+        print('✅ Plans - Manual plan removed from local state (plan ID: $planId was not found in backend, may have been already deleted)');
+      }
+    } catch (e) {
+      print('❌ Plans - Error deleting manual plan: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteAiGeneratedPlan(int planId) async {
+    try {
+      print('🗑️ Plans - Deleting AI generated plan ID: $planId');
+      await _aiService.deleteGenerated(planId);
+      
+      // Remove from local list - check both id and plan_id fields
+      aiGeneratedPlans.removeWhere((plan) {
         final int id = int.tryParse(plan['id']?.toString() ?? '') ?? -1;
         final int pid = int.tryParse(plan['plan_id']?.toString() ?? '') ?? -1;
         return id == planId || pid == planId;
@@ -2595,37 +3535,23 @@ class PlansController extends GetxController {
       }
       
       // Clear active plan if it was the deleted plan
-      if (_activePlan.value?['id'] == planId) {
+      final activePlanId = int.tryParse(_activePlan.value?['id']?.toString() ?? '') ?? -1;
+      if (activePlanId == planId) {
         _activePlan.value = null;
         await _clearActivePlanSnapshotIfStopped();
       }
       
-      print('✅ Plans - Manual plan deleted successfully');
-    } catch (e) {
-      print('❌ Plans - Error deleting manual plan: $e');
-      rethrow;
-    }
-  }
-
-  Future<void> deleteAiGeneratedPlan(int planId) async {
-    try {
-      print('🗑️ Plans - Deleting AI generated plan ID: $planId');
-      await _aiService.deleteGenerated(planId);
-      
-      // Remove from local list
-      aiGeneratedPlans.removeWhere((plan) => plan['id'] == planId);
-      
-      // Remove from started plans if it was started
-      if (_startedPlans.containsKey(planId)) {
-        _startedPlans.remove(planId);
-        await _persistStartedPlansToCache();
+      // Clean up stats data for this plan
+      try {
+        final statsController = Get.find<StatsController>();
+        await statsController.cleanupStatsForPlan(planId);
+        print('✅ Plans - Stats data cleaned up for plan $planId');
+      } catch (e) {
+        print('⚠️ Plans - Error cleaning up stats for plan $planId: $e');
       }
       
-      // Clear active plan if it was the deleted plan
-      if (_activePlan.value?['id'] == planId) {
-        _activePlan.value = null;
-        await _clearActivePlanSnapshotIfStopped();
-      }
+      // Refresh plans to ensure UI is updated
+      await refreshPlans();
       
       print('✅ Plans - AI generated plan deleted successfully');
     } catch (e) {

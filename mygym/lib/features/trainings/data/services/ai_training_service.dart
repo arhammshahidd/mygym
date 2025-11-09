@@ -295,7 +295,9 @@ class AiTrainingService {
       final sets = int.tryParse(m['sets']?.toString() ?? '0') ?? 0;
       final reps = int.tryParse(m['reps']?.toString() ?? '0') ?? 0;
       final weightKg = double.tryParse(m['weight']?.toString() ?? m['weight_kg']?.toString() ?? '0') ?? 0.0;
-      return {
+      final weightMinKg = double.tryParse(m['weight_min_kg']?.toString() ?? m['weight_min']?.toString() ?? '');
+      final weightMaxKg = double.tryParse(m['weight_max_kg']?.toString() ?? m['weight_max']?.toString() ?? '');
+      final result = {
         'workout_name': (m['name'] ?? m['workout_name'] ?? 'Exercise').toString(),
         'exercise_types': (m['exercise_types'] ?? '').toString(),
         'sets': sets,
@@ -303,6 +305,14 @@ class AiTrainingService {
         'weight_kg': weightKg,
         'minutes': minutes,
       };
+      // Only include weight_min_kg and weight_max_kg if they have valid values
+      if (weightMinKg != null) {
+        result['weight_min_kg'] = weightMinKg;
+      }
+      if (weightMaxKg != null) {
+        result['weight_max_kg'] = weightMaxKg;
+      }
+      return result;
     }).toList();
 
     final totalMinutes = mappedItems.fold<int>(0, (s, it) => s + (it['minutes'] as int));
@@ -338,8 +348,16 @@ class AiTrainingService {
 
   Future<void> deleteGenerated(int id) async {
     final dio = await _authedDio();
+    print('🗑️ AI Training Service - Deleting plan ID: $id');
     final res = await dio.delete('/api/appAIPlans/generated/$id');
-    if (res.statusCode != 200) throw Exception('Failed to delete AI generated plan');
+    print('🗑️ AI Training Service - Delete response status: ${res.statusCode}');
+    // Accept both 200 (OK) and 204 (No Content) as successful deletions
+    if (res.statusCode != 200 && res.statusCode != 204) {
+      print('❌ AI Training Service - Delete failed with status: ${res.statusCode}');
+      print('❌ AI Training Service - Response data: ${res.data}');
+      throw Exception('Failed to delete AI generated plan: HTTP ${res.statusCode}');
+    }
+    print('✅ AI Training Service - Plan deleted successfully');
   }
 }
 

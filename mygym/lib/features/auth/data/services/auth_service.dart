@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../shared/services/api_client.dart';
@@ -22,7 +23,8 @@ class AuthService {
   }
 
   /// Validate token with backend - only call this when needed
-  Future<bool> validateTokenWithBackend() async {
+  /// [skipInterceptor] - if true, creates a Dio instance without interceptors to prevent loops
+  Future<bool> validateTokenWithBackend({bool skipInterceptor = false}) async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString(StorageKeys.authToken);
     
@@ -32,8 +34,34 @@ class AuthService {
     
     // Validate token with backend to ensure it's still valid
     try {
-      final client = ApiClient(authToken: token);
-      final response = await client.dio.get('/api/auth/validate');
+      Dio dio;
+      if (skipInterceptor) {
+        // Create a clean Dio instance without interceptors to prevent infinite loops
+        // Use the same baseUrl computation logic as ApiClient
+        String _computeBaseUrl() {
+          String url = AppConfig.baseApiUrl;
+          // On Android emulators, map localhost to 10.0.2.2
+          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+            url = url.replaceFirst('localhost', '10.0.2.2');
+          }
+          return url.isEmpty ? (kIsWeb ? 'http://localhost:5000' : 'http://10.0.2.2:5000') : url;
+        }
+        
+        dio = Dio(BaseOptions(
+          baseUrl: _computeBaseUrl(),
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 60),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        ));
+      } else {
+        final client = ApiClient(authToken: token);
+        dio = client.dio;
+      }
+      
+      final response = await dio.get('/api/auth/validate');
       
       // If validation succeeds, user is logged in
       if (response.statusCode == 200) {
@@ -44,13 +72,13 @@ class AuthService {
       // Handle specific HTTP errors
       if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
         print('🔐 Token expired or invalid (${e.response?.statusCode})');
-        // Clear invalid token
-        await logout();
+        // Clear invalid token - but don't call logout() here to avoid recursion
+        // The interceptor will handle the logout
         return false;
       } else if (e.response?.statusCode == 404) {
         // If validation endpoint doesn't exist, fall back to profile check
         print('🔐 Validation endpoint not found, checking profile instead');
-        return await _validateTokenViaProfile(token);
+        return await _validateTokenViaProfile(token, skipInterceptor: skipInterceptor);
       } else {
         // Network error or other issues - assume token is still valid
         print('🔐 Token validation failed due to network error: ${e.message} - assuming token is still valid');
@@ -66,10 +94,36 @@ class AuthService {
   }
 
   /// Fallback validation method using profile endpoint
-  Future<bool> _validateTokenViaProfile(String token) async {
+  Future<bool> _validateTokenViaProfile(String token, {bool skipInterceptor = false}) async {
     try {
-      final client = ApiClient(authToken: token);
-      final response = await client.dio.get('/api/profile');
+      Dio dio;
+      if (skipInterceptor) {
+        // Create a clean Dio instance without interceptors to prevent infinite loops
+        // Use the same baseUrl computation logic as ApiClient
+        String _computeBaseUrl() {
+          String url = AppConfig.baseApiUrl;
+          // On Android emulators, map localhost to 10.0.2.2
+          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+            url = url.replaceFirst('localhost', '10.0.2.2');
+          }
+          return url.isEmpty ? (kIsWeb ? 'http://localhost:5000' : 'http://10.0.2.2:5000') : url;
+        }
+        
+        dio = Dio(BaseOptions(
+          baseUrl: _computeBaseUrl(),
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 60),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        ));
+      } else {
+        final client = ApiClient(authToken: token);
+        dio = client.dio;
+      }
+      
+      final response = await dio.get('/api/profile');
       
       if (response.statusCode == 200) {
         print('🔐 Token validation via profile successful');
@@ -78,7 +132,7 @@ class AuthService {
     } on DioException catch (e) {
       if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
         print('🔐 Token expired or invalid via profile check (${e.response?.statusCode})');
-        await logout();
+        // Don't call logout() here to avoid recursion - interceptor will handle it
         return false;
       } else if (e.response?.statusCode == 404) {
         // Profile endpoint doesn't exist either - assume token is valid

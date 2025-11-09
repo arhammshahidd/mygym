@@ -6,6 +6,7 @@ import '../../features/auth/data/services/auth_service.dart';
 
 class ApiClient {
   final Dio _dio;
+  static bool _isValidatingToken = false; // Flag to prevent recursive validation
 
   ApiClient._internal(this._dio);
 
@@ -47,11 +48,25 @@ class ApiClient {
     // Add interceptor to handle 401 and 403 errors globally (non-disruptive)
     dio.interceptors.add(InterceptorsWrapper(
       onError: (error, handler) async {
+        // Prevent infinite loop: if we're already validating, just logout and return
+        if (_isValidatingToken) {
+          print('🔐 Already validating token, skipping interceptor to prevent loop');
+          if (error.response?.statusCode == 401 || error.response?.statusCode == 403) {
+            final authService = AuthService();
+            await authService.handleSessionExpiration();
+          }
+          handler.next(error);
+          return;
+        }
+
         if (error.response?.statusCode == 401) {
           print('🔐 401 Unauthorized received');
           try {
+            _isValidatingToken = true;
             final authService = AuthService();
-            final stillValid = await authService.validateTokenWithBackend();
+            final stillValid = await authService.validateTokenWithBackend(skipInterceptor: true);
+            _isValidatingToken = false;
+            
             if (!stillValid) {
               // Only then logout
               await authService.handleSessionExpiration();
@@ -60,14 +75,18 @@ class ApiClient {
               print('🔐 Token validated as still valid after 401');
             }
           } catch (e) {
+            _isValidatingToken = false;
             // Network or other transient errors - don't logout to avoid accidental sign-outs
-            print('🔐 Token revalidation failed after 401 (non-fatal)');
+            print('🔐 Token revalidation failed after 401 (non-fatal): $e');
           }
         } else if (error.response?.statusCode == 403) {
           print('🔐 403 Forbidden received');
           try {
+            _isValidatingToken = true;
             final authService = AuthService();
-            final stillValid = await authService.validateTokenWithBackend();
+            final stillValid = await authService.validateTokenWithBackend(skipInterceptor: true);
+            _isValidatingToken = false;
+            
             if (!stillValid) {
               // Token is invalid, logout
               await authService.handleSessionExpiration();
@@ -76,7 +95,8 @@ class ApiClient {
               print('🔐 Token valid but access denied');
             }
           } catch (e) {
-            print('🔐 Token validation failed after 403 (non-fatal)');
+            _isValidatingToken = false;
+            print('🔐 Token validation failed after 403 (non-fatal): $e');
           }
         }
         handler.next(error);

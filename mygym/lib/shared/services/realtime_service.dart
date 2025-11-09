@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/html.dart' as html_ws;
-import 'dart:html' as html;
+// Conditional imports for web platform only
+import 'realtime_service_stub.dart' if (dart.library.html) 'realtime_service_web.dart' as web_impl;
 import '../../core/constants/app_constants.dart';
 
 class RealtimeService {
@@ -20,7 +20,7 @@ class RealtimeService {
       if (kIsWeb) {
         // Some servers require explicit upgrade; if handshake returns 200,
         // this will throw and we silently disable realtime.
-        _channel = html_ws.HtmlWebSocketChannel.connect(uri.toString());
+        _channel = web_impl.WebSocketHelper.connectWebSocket(uri.toString());
       } else {
         _channel = WebSocketChannel.connect(uri);
       }
@@ -56,19 +56,22 @@ class RealtimeService {
 
   Uri _computeWsUri({required String path, String? token}) {
     if (kIsWeb) {
-      final isHttps = html.window.location.protocol == 'https:';
-      final scheme = isHttps ? 'wss' : 'ws';
-      final host = html.window.location.hostname ?? '';
-      final port = html.window.location.port ?? '';
-      return Uri(
-        scheme: scheme,
-        host: host.isEmpty ? 'localhost' : host,
-        port: int.tryParse(port) ?? (isHttps ? 443 : 80),
-        path: path,
-        queryParameters: {
-          if (token != null && token.isNotEmpty) 'token': token,
-        },
-      );
+      final location = web_impl.WebSocketHelper.getWindowLocation();
+      if (location != null) {
+        final isHttps = location.protocol == 'https:';
+        final scheme = isHttps ? 'wss' : 'ws';
+        final host = location.hostname ?? '';
+        final port = location.port ?? '';
+        return Uri(
+          scheme: scheme,
+          host: host.isEmpty ? 'localhost' : host,
+          port: int.tryParse(port) ?? (isHttps ? 443 : 80),
+          path: path,
+          queryParameters: {
+            if (token != null && token.isNotEmpty) 'token': token,
+          },
+        );
+      }
     }
     // Non-web: use configured base
     final base = Uri.parse(AppConfig.wsBaseUrl);

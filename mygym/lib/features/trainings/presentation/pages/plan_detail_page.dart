@@ -239,11 +239,73 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     }
   }
 
+  /// Normalize minutes and weight fields in items to ensure they're properly extracted from database
+  List<Map<String, dynamic>> _normalizeItemsMinutes(List<Map<String, dynamic>> items) {
+    return items.map((item) {
+      final normalizedItem = Map<String, dynamic>.from(item);
+      
+      // Extract minutes from various possible field names and formats
+      // Try multiple field names in order of preference
+      dynamic minutesRaw = item['minutes'] ?? 
+                           item['training_minutes'] ?? 
+                           item['trainingMinutes'] ?? 
+                           item['duration'] ??
+                           item['time_minutes'] ??
+                           0;
+      
+      int minutes = 0;
+      if (minutesRaw is int) {
+        minutes = minutesRaw;
+      } else if (minutesRaw is String && minutesRaw.trim().isNotEmpty) {
+        // Try parsing as int, remove any non-numeric characters except minus
+        final cleaned = minutesRaw.trim().replaceAll(RegExp(r'[^0-9-]'), '');
+        minutes = int.tryParse(cleaned) ?? 0;
+      } else if (minutesRaw is num) {
+        minutes = minutesRaw.toInt();
+      } else if (minutesRaw != null && minutesRaw != 0) {
+        // Last resort: try converting to string then parsing
+        try {
+          minutes = int.tryParse(minutesRaw.toString()) ?? 0;
+        } catch (e) {
+          minutes = 0;
+        }
+      }
+      
+      // Normalize weight fields - check multiple possible field names
+      normalizedItem['weight_min_kg'] = item['weight_min_kg'] ?? 
+                                        item['weight_min'] ?? 
+                                        item['min_weight'] ?? 
+                                        item['min_weight_kg'];
+      normalizedItem['weight_max_kg'] = item['weight_max_kg'] ?? 
+                                        item['weight_max'] ?? 
+                                        item['max_weight'] ?? 
+                                        item['max_weight_kg'];
+      normalizedItem['weight_kg'] = item['weight_kg'] ?? 
+                                    item['weight'] ?? 
+                                    item['weight_kg'];
+      
+      // Ensure both minutes and training_minutes are set
+      normalizedItem['minutes'] = minutes;
+      normalizedItem['training_minutes'] = minutes;
+      
+      // Debug: only log if minutes or weight were extracted or if raw value was non-zero
+      if (minutes > 0 || (minutesRaw != null && minutesRaw != 0 && minutesRaw != '0') || 
+          normalizedItem['weight_min_kg'] != null || normalizedItem['weight_max_kg'] != null || normalizedItem['weight_kg'] != null) {
+        print('🔍 Plan Detail - Normalized item ${item['workout_name'] ?? item['name'] ?? 'Unknown'}: minutes=$minutes, weight_kg=${normalizedItem['weight_kg']}, weight_min_kg=${normalizedItem['weight_min_kg']}, weight_max_kg=${normalizedItem['weight_max_kg']}');
+      }
+      
+      return normalizedItem;
+    }).toList();
+  }
+
   void _rebuildDays(List<Map<String, dynamic>> items) {
-    print('🔍 Plan Detail - Rebuilding days with ${items.length} items');
-    print('🔍 Plan Detail - Items data: $items');
-    for (int i = 0; i < items.length; i++) {
-      print('🔍 Plan Detail - Item $i: ${items[i]}');
+    // Normalize items first to ensure minutes are properly extracted
+    final normalizedItems = _normalizeItemsMinutes(items);
+    
+    print('🔍 Plan Detail - Rebuilding days with ${normalizedItems.length} items');
+    print('🔍 Plan Detail - Items data: $normalizedItems');
+    for (int i = 0; i < normalizedItems.length; i++) {
+      print('🔍 Plan Detail - Item $i: ${normalizedItems[i]}');
     }
     
     // Calculate total days from start/end date or use provided total_days
@@ -272,20 +334,19 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
       return;
     }
 
-          // Calculate average minutes per workout
-          final totalPlanMinutes = items.fold<int>(0, (sum, item) =>
-              sum + (int.tryParse(item['minutes']?.toString() ?? item['training_minutes']?.toString() ?? '0') ?? 0));
-          final avgMinutes = items.isEmpty ? 0 : (totalPlanMinutes / items.length).floor();
-
-          print('🔍 Plan Detail - Total plan minutes: $totalPlanMinutes, avg: $avgMinutes');
-
-          // If average workout minutes < 80 and multiple items exist, show multiple per day
-          if (avgMinutes < 80 && items.length > 1) {
-      print('🔍 Plan Detail - Using multiple workouts per day');
-      _distributeMultipleWorkoutsPerDay(items, totalDays, avgMinutes.toDouble());
-    } else {
-      print('🔍 Plan Detail - Using standard distribution');
-      _distributeStandard(items, totalDays);
+    // Use controller's distribution logic for consistency with active plan view
+    // Build a plan map with exercises_details for the controller
+    final planForController = Map<String, dynamic>.from(widget.plan);
+    planForController['exercises_details'] = normalizedItems;
+    if (_startStr != null) planForController['start_date'] = _startStr;
+    if (_endStr != null) planForController['end_date'] = _endStr;
+    planForController['total_days'] = totalDays;
+    
+    // Use controller's getDayWorkoutsForDay for each day to ensure consistency
+    for (int dayIndex = 0; dayIndex < totalDays; dayIndex++) {
+      final dayWorkouts = _plansController.getDayWorkoutsForDay(planForController, dayIndex);
+      _days[dayIndex] = dayWorkouts;
+      print('🔍 Plan Detail - Day ${dayIndex + 1}: ${dayWorkouts.length} workouts using controller logic');
     }
     
     // Debug: print final distribution
@@ -552,7 +613,17 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
     final sets = ex['sets'] ?? 0;
     final reps = ex['reps'] ?? 0;
     final weight = ex['weight_kg'] ?? ex['weight'] ?? 0;
-    final minutes = ex['minutes'] ?? ex['training_minutes'] ?? 0;
+    // Properly extract minutes, handling both string and numeric values from database
+    final minutesRaw = ex['minutes'] ?? ex['training_minutes'] ?? ex['trainingMinutes'] ?? 0;
+    int minutes = 0;
+    if (minutesRaw is int) {
+      minutes = minutesRaw;
+    } else if (minutesRaw is String) {
+      minutes = int.tryParse(minutesRaw) ?? 0;
+    } else if (minutesRaw is num) {
+      minutes = minutesRaw.toInt();
+    }
+    print('🔍 Plan Detail - _exerciseCard: workout=$workoutName, minutesRaw=$minutesRaw, minutes=$minutes');
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -614,27 +685,60 @@ class _PlanDetailPageState extends State<PlanDetailPage> {
 
   String _formatWeightDisplay(Map<String, dynamic> item) {
     // Safely convert to double, handling both string and numeric inputs
-    final weightMin = _safeParseDouble(item['weight_min_kg']);
-    final weightMax = _safeParseDouble(item['weight_max_kg']);
-    final weight = _safeParseDouble(item['weight_kg']);
+    // Check multiple possible field names for weight
+    final weightMinRaw = item['weight_min_kg'] ?? item['weight_min'] ?? item['min_weight'] ?? item['min_weight_kg'];
+    final weightMaxRaw = item['weight_max_kg'] ?? item['weight_max'] ?? item['max_weight'] ?? item['max_weight_kg'];
+    final weightRaw = item['weight_kg'] ?? item['weight'] ?? 0;
     
-    // If we have min and max, show range
+    // Check if weight_kg is stored as a string range like "20-40"
+    String? parsedRange;
+    if (weightRaw != null && weightRaw is String && weightRaw.contains('-')) {
+      // weight_kg is stored as a string range (e.g., "20-40")
+      final parts = weightRaw.split('-');
+      if (parts.length == 2) {
+        final minStr = parts[0].trim();
+        final maxStr = parts[1].trim();
+        final minVal = _safeParseDouble(minStr);
+        final maxVal = _safeParseDouble(maxStr);
+        if (minVal != null && maxVal != null) {
+          parsedRange = '${minVal.toStringAsFixed(0)}-${maxVal.toStringAsFixed(0)}';
+        }
+      }
+    }
+    
+    final weightMin = _safeParseDouble(weightMinRaw);
+    final weightMax = _safeParseDouble(weightMaxRaw);
+    final weight = weightRaw is String && weightRaw.contains('-') ? null : _safeParseDouble(weightRaw);
+    
+    // If weight_kg was a string range, return it directly
+    if (parsedRange != null) {
+      return parsedRange;
+    }
+    
+    // If we have min and max, show range (even if one is 0)
     if (weightMin != null && weightMax != null) {
+      if (weightMin == 0 && weightMax == 0) {
+        // Both are 0, check if single weight exists
+        if (weight != null && weight > 0) {
+          return '${weight.toStringAsFixed(0)}';
+        }
+        return '0';
+      }
       return '${weightMin.toStringAsFixed(0)}-${weightMax.toStringAsFixed(0)}';
     }
     // If we only have min or max, show that with a dash
-    else if (weightMin != null) {
+    else if (weightMin != null && weightMin > 0) {
       return '${weightMin.toStringAsFixed(0)}+';
     }
-    else if (weightMax != null) {
+    else if (weightMax != null && weightMax > 0) {
       return 'up to ${weightMax.toStringAsFixed(0)}';
     }
-    // Fallback to single weight value
+    // Fallback to single weight value (even if 0, show it)
     else if (weight != null) {
       return '${weight.toStringAsFixed(0)}';
     }
     
-    return 'N/A';
+    return '0';
   }
 
   double? _safeParseDouble(dynamic value) {

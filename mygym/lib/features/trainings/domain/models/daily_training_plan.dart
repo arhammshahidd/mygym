@@ -23,10 +23,16 @@ class DailyTrainingPlan {
                                 json['exercise_plan_category']?.toString() ?? 
                                 'Training Plan';
     
+    // Handle null id or user_id (use daily_plan_id as fallback for id)
+    final int planId = json['id'] as int? ?? 
+                      (json['daily_plan_id'] as int?) ?? 
+                      0;
+    final int planUserId = json['user_id'] as int? ?? 0;
+    
     return DailyTrainingPlan(
-      id: json['id'] as int,
-      userId: json['user_id'] as int,
-      planDate: json['plan_date'] as String,
+      id: planId,
+      userId: planUserId,
+      planDate: json['plan_date'] as String? ?? '',
       planCategory: planCategory,
       workoutName: json['workout_name'] as String? ?? 'Daily Workout',
       isCompleted: json['is_completed'] as bool? ?? false,
@@ -87,12 +93,31 @@ class DailyTrainingItem {
   });
 
   factory DailyTrainingItem.fromJson(Map<String, dynamic> json) {
+    // Handle null values with defaults
+    // Parse weight_kg - can be a number or a string like "20-40"
+    double weightKgValue = 0.0;
+    final weightKgRaw = json['weight_kg'];
+    if (weightKgRaw != null) {
+      if (weightKgRaw is num) {
+        weightKgValue = weightKgRaw.toDouble();
+      } else if (weightKgRaw is String) {
+        // Try to parse string - if it's a range like "20-40", extract first number
+        final match = RegExp(r'^(\d+(?:\.\d+)?)').firstMatch(weightKgRaw);
+        if (match != null) {
+          weightKgValue = double.tryParse(match.group(1) ?? '0') ?? 0.0;
+        }
+      }
+    }
+    
     return DailyTrainingItem(
-      id: json['id'] as int,
-      exerciseName: json['exercise_name'] as String,
-      sets: json['sets'] as int,
-      reps: json['reps'] as int,
-      weightKg: (json['weight_kg'] as num).toDouble(),
+      id: json['id'] as int? ?? 0,
+      exerciseName: json['exercise_name'] as String? ?? 
+                    json['workout_name'] as String? ?? 
+                    json['name'] as String? ?? 
+                    'Unknown Exercise',
+      sets: json['sets'] as int? ?? 0,
+      reps: json['reps'] as int? ?? 0,
+      weightKg: weightKgValue,
       isCompleted: json['is_completed'] as bool? ?? false,
     );
   }

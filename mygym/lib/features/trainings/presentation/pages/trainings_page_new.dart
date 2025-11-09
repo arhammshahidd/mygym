@@ -151,10 +151,16 @@ class _TrainingsPageState extends State<TrainingsPage>
   }
 
   Widget _buildPlansTab() {
+    // Refresh approval status when Plans tab is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _plansController.refreshApprovalStatusFromBackend();
+    });
+    
     return RefreshIndicator(
       onRefresh: () async {
         print('🔄 Refreshing Plans tab...');
         await _plansController.refreshPlans();
+        await _plansController.refreshApprovalStatusFromBackend();
       },
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -198,6 +204,11 @@ class _TrainingsPageState extends State<TrainingsPage>
 
             // Manual Plans Section
             Obx(() {
+              // Trigger approval status refresh when manual plans are displayed
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _plansController.refreshApprovalStatusFromBackend();
+              });
+              
               final manualPlans = _plansController.manualPlans;
               if (manualPlans.isNotEmpty) {
                 return Column(
@@ -221,7 +232,7 @@ class _TrainingsPageState extends State<TrainingsPage>
                             );
                           },
                           icon: const Icon(Icons.refresh, size: 16),
-                          label: const Text('Refresh Status'),
+                          label: const Text('Refresh'),
                         ),
                         IconButton(
                           onPressed: () async {
@@ -244,21 +255,11 @@ class _TrainingsPageState extends State<TrainingsPage>
                           tooltip: 'Reset Cache',
                           color: AppTheme.primaryColor,
                         ),
-                        TextButton.icon(
-                          onPressed: () async {
-                            await _plansController.debugCheckPlanStatus(34);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Debug check completed - see console')),
-                            );
-                          },
-                          icon: const Icon(Icons.bug_report, size: 16),
-                          label: const Text('Debug Plan 34'),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     ...manualPlans
-                        .map((plan) => _buildManualPlanCard(plan))
+                        .map((plan) => Obx(() => _buildManualPlanCard(plan)))
                         .toList(),
                     const SizedBox(height: 16),
                   ],
@@ -521,7 +522,26 @@ class _TrainingsPageState extends State<TrainingsPage>
   Widget _buildManualPlanCard(Map<String, dynamic> plan) {
     final planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;
     final isStarted = _plansController.isPlanStarted(planId);
-    final approvalStatus = _plansController.getPlanApprovalStatus(planId);
+    
+    // Get approval status - ALWAYS prefer plan data first (most up-to-date source)
+    String approvalStatus = 'none';
+    
+    // First, check plan data directly for approval_status (most reliable source)
+    if (plan['approval_status'] != null) {
+      final planStatus = plan['approval_status'].toString().toLowerCase();
+      if (planStatus.isNotEmpty && planStatus != 'none' && planStatus != 'null') {
+        approvalStatus = planStatus;
+        print('📝 UI - _buildManualPlanCard: Using approval_status from plan data: $planStatus for plan $planId');
+      }
+    }
+    
+    // Fallback to controller cache if plan data doesn't have status
+    if (approvalStatus == 'none' || approvalStatus.isEmpty) {
+      approvalStatus = _plansController.getPlanApprovalStatus(planId);
+      print('📝 UI - _buildManualPlanCard: Using approval_status from controller cache: $approvalStatus for plan $planId');
+    }
+    
+    print('📝 UI - _buildManualPlanCard: Final approvalStatus=$approvalStatus for plan $planId');
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -544,7 +564,70 @@ class _TrainingsPageState extends State<TrainingsPage>
                     ),
                   ),
                 ),
-                _buildApprovalButton(plan, approvalStatus),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Delete Icon Button
+                    IconButton(
+                      onPressed: () async {
+                        // Show confirmation dialog
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Delete Plan'),
+                            content: Text(
+                              'Are you sure you want to delete "${plan['exercise_plan_category']?.toString() ?? 'Manual Plan'}"? This action cannot be undone.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, false),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, true),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.red,
+                                ),
+                                child: const Text('Delete'),
+                              ),
+                            ],
+                          ),
+                        );
+                        
+                        if (confirm == true && mounted) {
+                          try {
+                            await _plansController.deleteManualPlan(planId);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Plan deleted successfully'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                              // Refresh plans list
+                              await _plansController.refreshPlans();
+                            }
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Failed to delete plan: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      tooltip: 'Delete Plan',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    const SizedBox(width: 8),
+                    _buildApprovalButton(plan, approvalStatus),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -645,7 +728,21 @@ class _TrainingsPageState extends State<TrainingsPage>
     }
 
     // Prefer daily_plans from plan if present to match portal distribution
-    final List<dynamic>? dailyPlans = plan['daily_plans'] as List<dynamic>?;
+    // Handle both JSON string and parsed List formats (backend may return either)
+    List<dynamic>? dailyPlans;
+    final dailyPlansRaw = plan['daily_plans'];
+    if (dailyPlansRaw is List) {
+      dailyPlans = dailyPlansRaw;
+    } else if (dailyPlansRaw is String && dailyPlansRaw.trim().isNotEmpty) {
+      try {
+        final parsed = jsonDecode(dailyPlansRaw);
+        if (parsed is List) {
+          dailyPlans = parsed;
+        }
+      } catch (e) {
+        print('⚠️ AI Plan Card - Failed to parse daily_plans JSON string: $e');
+      }
+    }
     // If daily_plans exists, override totalDays for card badge
     if (dailyPlans != null && dailyPlans.isNotEmpty) {
       totalDays = dailyPlans.length;
@@ -821,14 +918,36 @@ class _TrainingsPageState extends State<TrainingsPage>
     String approvalStatus,
   ) {
     final planId = int.tryParse(plan['id']?.toString() ?? '') ?? 0;
+    
+    // Also check plan data directly for approval_status (most up-to-date source)
+    if (plan['approval_status'] != null) {
+      final planStatus = plan['approval_status'].toString().toLowerCase();
+      if (planStatus.isNotEmpty && planStatus != 'none' && planStatus != 'null') {
+        approvalStatus = planStatus;
+        print('🔍 UI - _buildApprovalButton: Using approval_status from plan data: $planStatus for plan $planId');
+      }
+    }
+    
+    print('🔍 UI - _buildApprovalButton: planId=$planId, approvalStatus=$approvalStatus');
+    
+    // Check if plan has been sent for approval (has approval_id)
+    final approvalId = _plansController.getApprovalIdForPlan(planId);
+    final hasBeenSentForApproval = approvalId != null || plan['approval_id'] != null;
+    
+    // If status is 'pending' but plan hasn't been sent, treat it as 'none' to show Send Plan button
+    final effectiveStatus = (approvalStatus == 'pending' && !hasBeenSentForApproval) 
+        ? 'none' 
+        : approvalStatus;
+    
+    print('🔍 UI - _buildApprovalButton: effectiveStatus=$effectiveStatus, hasBeenSentForApproval=$hasBeenSentForApproval');
 
-    switch (approvalStatus) {
+    switch (effectiveStatus) {
       case 'pending':
         return ElevatedButton(
           onPressed: null,
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.textColor,
-            foregroundColor: AppTheme.textColor,
+            backgroundColor: Colors.grey,
+            foregroundColor: Colors.white,
           ),
           child: const Text('Pending'),
         );
@@ -926,8 +1045,8 @@ class _TrainingsPageState extends State<TrainingsPage>
             final isStarted = _plansController.isPlanStarted(planId);
             if (isStarted) {
         return ElevatedButton(
-          onPressed: () {
-                  _plansController.stopPlan(plan);
+          onPressed: () async {
+                  await _plansController.stopPlan(plan);
                   setState(() {});
                 },
                 style: ElevatedButton.styleFrom(
@@ -951,32 +1070,36 @@ class _TrainingsPageState extends State<TrainingsPage>
           }
         } else {
           // For manual plans: enforce approval flow before starting
-          final approval = approvalStatus.toLowerCase();
-          if (approval == 'pending') {
-            return ElevatedButton(
-              onPressed: null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Pending Approval'),
-            );
-          }
-          if (approval == 'rejected' || hasBeenModified) {
+          // Since we're in the 'approved' case, we know the plan is approved
+          // Check if plan has been modified since approval - if so, show Resend Plan
+          print('🔍 UI - Manual plan approved, hasBeenModified=$hasBeenModified');
+          if (hasBeenModified) {
+            print('🔍 UI - Showing Resend Plan button for modified approved plan');
             return ElevatedButton(
               onPressed: () async {
                 try {
                   await _plansController.sendManualPlanForApproval(plan);
                   if (mounted && _scaffoldMessenger != null) {
                     _scaffoldMessenger!.showSnackBar(
-                      const SnackBar(content: Text('Manual plan sent for approval')), 
+                      const SnackBar(
+                        content: Text('Manual plan resent for approval successfully!'),
+                        backgroundColor: Colors.green,
+                      ),
                     );
                   }
-                  if (mounted) await _plansController.refreshPlans();
+                  // Refresh plans and approval status to update UI
+                  if (mounted) {
+                    await _plansController.refreshPlans();
+                    await _plansController.refreshApprovalStatusFromBackend();
+                    setState(() {}); // Force UI update
+                  }
                 } catch (e) {
                   if (mounted && _scaffoldMessenger != null) {
                     _scaffoldMessenger!.showSnackBar(
-                      SnackBar(content: Text('Failed to send for approval: $e'), backgroundColor: Colors.red),
+                      SnackBar(
+                        content: Text('Failed to resend for approval: $e'),
+                        backgroundColor: Colors.red,
+                      ),
                     );
                   }
                 }
@@ -988,38 +1111,14 @@ class _TrainingsPageState extends State<TrainingsPage>
               child: const Text('Resend Plan'),
             );
           }
-          if (approval != 'approved') {
-            return ElevatedButton(
-              onPressed: () async {
-                try {
-                  await _plansController.sendManualPlanForApproval(plan);
-                  if (mounted && _scaffoldMessenger != null) {
-                    _scaffoldMessenger!.showSnackBar(
-                      const SnackBar(content: Text('Manual plan sent for approval')),
-                    );
-                  }
-                  if (mounted) await _plansController.refreshPlans();
-                } catch (e) {
-                  if (mounted && _scaffoldMessenger != null) {
-                    _scaffoldMessenger!.showSnackBar(
-                      SnackBar(content: Text('Failed to send for approval: $e'), backgroundColor: Colors.red),
-                    );
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryColor,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Send Plan'),
-            );
-          }
-          // Only when approved allow starting/stopping
+          
+          // Plan is approved and not modified - show Start/Stop Plan button
+          print('🔍 UI - Showing Start/Stop Plan button for approved plan');
           final isStarted = _plansController.isPlanStarted(planId);
           if (isStarted) {
             return ElevatedButton(
-              onPressed: () {
-                _plansController.stopPlan(plan);
+              onPressed: () async {
+                await _plansController.stopPlan(plan);
                 setState(() {});
               },
               style: ElevatedButton.styleFrom(
@@ -1258,6 +1357,10 @@ class _TrainingsPageState extends State<TrainingsPage>
     final int backendId = int.tryParse(plan['plan_id']?.toString() ?? plan['id']?.toString() ?? '') ?? planId;
     final planName = plan['exercise_plan_category']?.toString() ?? (isAi ? 'AI Generated Plan' : 'Manual Plan');
     
+    print('🗑️ Delete Confirmation - Plan ID: $planId, Backend ID: $backendId');
+    print('🗑️ Delete Confirmation - Plan data: ${plan.keys.toList()}');
+    print('🗑️ Delete Confirmation - plan[\'id\']: ${plan['id']}, plan[\'plan_id\']: ${plan['plan_id']}');
+    
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -1279,9 +1382,9 @@ class _TrainingsPageState extends State<TrainingsPage>
                     await _plansController.deleteManualPlan(backendId);
                   }
                   
-                  // Show success message
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                  // Show success message using saved scaffold messenger
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
                       SnackBar(
                         content: Text('${isAi ? 'AI Generated' : 'Manual'} plan deleted successfully'),
                         backgroundColor: AppTheme.primaryColor,
@@ -1289,9 +1392,9 @@ class _TrainingsPageState extends State<TrainingsPage>
                     );
                   }
                 } catch (e) {
-                  // Show error message
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                  // Show error message using saved scaffold messenger
+                  if (mounted && _scaffoldMessenger != null) {
+                    _scaffoldMessenger!.showSnackBar(
                       SnackBar(
                         content: Text('Failed to delete plan: $e'),
                         backgroundColor: Colors.red,
@@ -1338,7 +1441,7 @@ class _TrainingsPageState extends State<TrainingsPage>
                 children: [
                   Expanded(
                     child: Text(
-                      'Active Schedule - Day ${currentDay + 1}',
+                      'Active Schedule - Day $currentDay',
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                     ),
                   ),
@@ -1391,7 +1494,8 @@ class _TrainingsPageState extends State<TrainingsPage>
                       ...dayWorkouts.map((item) => _buildWorkoutItem(item)).toList(),
                       const SizedBox(height: 16),
                       // Completed days stacked below
-                      if (currentDay > 0) ...[
+                      // currentDay is now 1-based, so show days 1 to currentDay-1
+                      if (currentDay > 1) ...[
                         const Divider(),
                         const SizedBox(height: 8),
                         const Text(
@@ -1399,7 +1503,7 @@ class _TrainingsPageState extends State<TrainingsPage>
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textColor),
                         ),
                         const SizedBox(height: 8),
-                        for (int d = currentDay - 1; d >= 0; d--) ...[
+                        for (int d = currentDay - 1; d >= 1; d--) ...[
                           _buildCompletedDaySummary(planDetails, d),
                           const SizedBox(height: 8),
                         ],
@@ -1416,8 +1520,18 @@ class _TrainingsPageState extends State<TrainingsPage>
   }
 
   // Compact summary card for a completed day shown below the current day
+  // dayIndex is now 1-based (Day 1, Day 2, etc.)
   Widget _buildCompletedDaySummary(Map<String, dynamic> planDetails, int dayIndex) {
-    final items = _getDayItems(planDetails, dayIndex);
+    // Use schedules controller's getDayWorkoutsForDay to get correct workouts for this day
+    final activeSchedule = _schedulesController.activeSchedule;
+    if (activeSchedule == null) {
+      return const SizedBox.shrink();
+    }
+    
+    // Use schedules controller's method which properly distributes workouts by day
+    // dayIndex is 1-based (Day 1, Day 2, etc.)
+    final items = _schedulesController.getDayWorkoutsForDay(activeSchedule, dayIndex);
+    
     return Card(
       color: AppTheme.cardBackgroundColor,
       shape: RoundedRectangleBorder(
@@ -1430,7 +1544,7 @@ class _TrainingsPageState extends State<TrainingsPage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Day ${dayIndex + 1}',
+              'Day $dayIndex',
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textColor),
             ),
             const SizedBox(height: 8),
@@ -1604,7 +1718,7 @@ class _TrainingsPageState extends State<TrainingsPage>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Day ${currentDay + 1}',
+                    'Day $currentDay',
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -1650,20 +1764,18 @@ class _TrainingsPageState extends State<TrainingsPage>
               const SizedBox(height: 8),
             ],
             
-            // Weight
-            if (item['weight_kg'] != null || item['weight_min_kg'] != null || item['weight_max_kg'] != null) ...[
-              Row(
-                children: [
-                  const Icon(Icons.sports_gymnastics, size: 16, color: AppTheme.textColor),
-                  const SizedBox(width: 8),
-                  Text(
-                    _formatWeightDisplay(item),
-                    style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-            ],
+            // Weight - Always show weight row (even if 0, to show proper display)
+            Row(
+              children: [
+                const Icon(Icons.sports_gymnastics, size: 16, color: AppTheme.textColor),
+                const SizedBox(width: 8),
+                Text(
+                  _formatWeightDisplay(item),
+                  style: const TextStyle(fontSize: 14, color: AppTheme.textColor),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
             
             // Duration
             if (item['minutes'] != null) ...[
@@ -1772,27 +1884,64 @@ class _TrainingsPageState extends State<TrainingsPage>
 
   String _formatWeightDisplay(Map<String, dynamic> item) {
     // Safely convert to double, handling both string and numeric inputs
-    final weightMin = _safeParseDouble(item['weight_min_kg']);
-    final weightMax = _safeParseDouble(item['weight_max_kg']);
-    final weight = _safeParseDouble(item['weight_kg']);
+    // Check multiple possible field names for weight
+    final weightMinRaw = item['weight_min_kg'] ?? item['weight_min'] ?? item['min_weight'] ?? item['min_weight_kg'];
+    final weightMaxRaw = item['weight_max_kg'] ?? item['weight_max'] ?? item['max_weight'] ?? item['max_weight_kg'];
+    final weightRaw = item['weight_kg'] ?? item['weight'] ?? 0;
     
-    // If we have min and max, show range
+    // Check if weight_kg is stored as a string range like "20-40"
+    String? parsedRange;
+    if (weightRaw != null && weightRaw is String && weightRaw.contains('-')) {
+      // weight_kg is stored as a string range (e.g., "20-40")
+      final parts = weightRaw.split('-');
+      if (parts.length == 2) {
+        final minStr = parts[0].trim();
+        final maxStr = parts[1].trim();
+        final minVal = _safeParseDouble(minStr);
+        final maxVal = _safeParseDouble(maxStr);
+        // Always display the range if it's stored as a string range
+        parsedRange = '${minVal.toStringAsFixed(0)}-${maxVal.toStringAsFixed(0)} kg';
+      }
+    }
+    
+    final weightMin = _safeParseDouble(weightMinRaw);
+    final weightMax = _safeParseDouble(weightMaxRaw);
+    final weight = weightRaw is String && weightRaw.contains('-') ? null : _safeParseDouble(weightRaw);
+    
+    print('🔍 Format Weight Display - item keys: ${item.keys.toList()}');
+    print('🔍 Format Weight Display - weight_min_kg: $weightMinRaw (parsed: $weightMin)');
+    print('🔍 Format Weight Display - weight_max_kg: $weightMaxRaw (parsed: $weightMax)');
+    print('🔍 Format Weight Display - weight_kg: $weightRaw (parsed: $weight, range: $parsedRange)');
+    
+    // If weight_kg was a string range, return it directly
+    if (parsedRange != null) {
+      return parsedRange;
+    }
+    
+    // If we have min and max, show range (even if one is 0)
     if (weightMin != null && weightMax != null) {
+      if (weightMin == 0 && weightMax == 0) {
+        // Both are 0, check if single weight exists
+        if (weight != null && weight > 0) {
+          return '${weight.toStringAsFixed(0)} kg';
+        }
+        return '0 kg';
+      }
       return '${weightMin.toStringAsFixed(0)}-${weightMax.toStringAsFixed(0)} kg';
     }
     // If we only have min or max, show that with a dash
-    else if (weightMin != null) {
+    else if (weightMin != null && weightMin > 0) {
       return '${weightMin.toStringAsFixed(0)}+ kg';
     }
-    else if (weightMax != null) {
+    else if (weightMax != null && weightMax > 0) {
       return 'up to ${weightMax.toStringAsFixed(0)} kg';
     }
-    // Fallback to single weight value
+    // Fallback to single weight value (even if 0, show it)
     else if (weight != null) {
       return '${weight.toStringAsFixed(0)} kg';
     }
     
-    return 'N/A';
+    return '0 kg';
   }
 
   Widget _buildActivePlanDailyView(Map<String, dynamic> plan) {
@@ -2036,17 +2185,49 @@ class _TrainingsPageState extends State<TrainingsPage>
     final Map<String, dynamic> second = Map<String, dynamic>.from(workouts[secondIdx]);
     final int m1 = _itemMinutes(first);
     final int m2 = _itemMinutes(second);
-    final int combined = m1 + m2;
+    int combined = m1 + m2;
     
     print('🔍 PlansPage - dayRotationOffset: $dayRotationOffset (dayIndex: $dayIndex, workoutsPerDay: $workoutsPerDay, totalWorkouts: ${workouts.length})');
     print('🔍 PlansPage - Pair indices: $firstIdx & $secondIdx → ${first['name'] ?? first['workout_name'] ?? 'Unknown'}($m1) + ${second['name'] ?? second['workout_name'] ?? 'Unknown'}($m2) = $combined');
     
     List<Map<String, dynamic>> selectedWorkouts = [];
     
-    // Apply 80-minute rule: if pair exceeds 80 minutes, show only first
-    selectedWorkouts = combined > 80 ? [first] : [first, second];
+    // Updated distribution logic:
+    // - If total minutes > 80: show only 1 workout
+    // - If total minutes <= 80: show 2 workouts
+    // - If total minutes < 50: try to add a third workout if available
+    if (combined > 80) {
+      // More than 80 minutes: show only first workout
+      selectedWorkouts = [first];
+      print('🔍 PlansPage - Total minutes ($combined) > 80, showing only 1 workout');
+    } else if (combined < 50) {
+      // Less than 50 minutes: try to add a third workout
+      selectedWorkouts = [first, second];
+      
+      if (workouts.length > 2) {
+        final int thirdIdx = (dayRotationOffset + 2) % workouts.length;
+        final Map<String, dynamic> third = Map<String, dynamic>.from(workouts[thirdIdx]);
+        final int m3 = _itemMinutes(third);
+        final int totalWithThird = combined + m3;
+        
+        // Only add third workout if it doesn't exceed 80 minutes
+        if (totalWithThird <= 80) {
+          selectedWorkouts.add(third);
+          combined = totalWithThird;
+          print('🔍 PlansPage - Total minutes ($combined) < 50, added third workout: ${third['name'] ?? third['workout_name'] ?? 'Unknown'}($m3)');
+        } else {
+          print('🔍 PlansPage - Total minutes would be $totalWithThird with third workout, keeping 2 workouts');
+        }
+      } else {
+        print('🔍 PlansPage - Total minutes ($combined) < 50, but only ${workouts.length} workouts available');
+      }
+    } else {
+      // Between 50 and 80 minutes: show 2 workouts
+      selectedWorkouts = [first, second];
+      print('🔍 PlansPage - Total minutes ($combined) between 50-80, showing 2 workouts');
+    }
 
-    print('🔍 PlansPage - Day $dayIndex selected workouts: ${selectedWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+    print('🔍 PlansPage - Day $dayIndex selected workouts: ${selectedWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()} (total: ${selectedWorkouts.fold<int>(0, (sum, w) => sum + _itemMinutes(w))} minutes)');
     return selectedWorkouts;
   }
 
@@ -2114,7 +2295,7 @@ class _TrainingsPageState extends State<TrainingsPage>
             Row(
               children: [
                 Expanded(
-                  child: _buildDetailChip('Weight', '${_safeParseDouble(item['weight'] ?? item['weight_kg'] ?? 0)} kg'),
+                  child: _buildDetailChip('Weight', _formatWeightDisplay(item)),
                 ),
                 const SizedBox(width: 8),
                 Expanded(

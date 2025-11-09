@@ -19,7 +19,11 @@ class _StatsPageState extends State<StatsPage> {
   void initState() {
     super.initState();
     _statsController = Get.find<StatsController>();
-    _statsController.loadStatsData();
+    // Check for active plan and refresh stats when page loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Always refresh stats when stats page is opened to ensure latest data
+      _statsController.refreshStats(forceSync: true);
+    });
   }
 
   @override
@@ -51,19 +55,25 @@ class _StatsPageState extends State<StatsPage> {
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
-              _statsController.refreshStats();
+              _statsController.refreshStats(forceSync: true);
             },
           ),
         ],
       ),
       body: Obx(() {
+        // Watch userStats to trigger rebuild when it changes (including when set to null)
+        // These are intentionally accessed to trigger reactivity in Obx
+        _statsController.userStats.value;
+        _statsController.trainingStats.value;
+        _statsController.dailyPlansRaw.length;
+        
         if (_statsController.isLoading.value && !_statsController.hasLoadedOnce.value) {
           return const Center(child: CircularProgressIndicator());
         }
 
         return RefreshIndicator(
           onRefresh: () async {
-            await _statsController.refreshStats();
+            await _statsController.refreshStats(forceSync: true);
           },
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -95,28 +105,12 @@ class _StatsPageState extends State<StatsPage> {
                 _buildRecentWorkoutsSection(),
                 const SizedBox(height: 24),
 
-                // Workouts by Category
-                _buildWorkoutsByCategorySection(),
-                const SizedBox(height: 24),
-
                 // Weekly Progress
                 _buildWeeklyProgressSection(),
                 const SizedBox(height: 24),
 
                 // Monthly Progress
                 _buildMonthlyProgressSection(),
-                const SizedBox(height: 24),
-
-                // Goal Progress
-                _buildGoalProgressSection(),
-                const SizedBox(height: 24),
-
-                // Remaining Tasks Report
-                _buildRemainingTasksSection(),
-                const SizedBox(height: 24),
-
-                // Task Completion Report
-                _buildTaskCompletionReportSection(),
               ],
             ),
           ),
@@ -218,10 +212,10 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Widget _buildTrainingStatsOverview() {
-    final stats = _statsController.trainingStats.value;
-    if (stats == null) {
-      return const SizedBox.shrink();
-    }
+    // Get overall progress data
+    final totalWorkouts = _statsController.getTotalWorkouts();
+    final totalMinutes = _statsController.getTotalMinutes();
+    final longestStreak = _statsController.getLongestStreak();
     
     return Card(
       color: AppTheme.cardBackgroundColor,
@@ -244,14 +238,14 @@ class _StatsPageState extends State<StatsPage> {
                 Expanded(
                   child: _buildStatItem(
                     'Total Workouts',
-                    '${stats.totalWorkoutsCompleted}',
+                    '$totalWorkouts',
                     Icons.fitness_center,
                   ),
                 ),
                 Expanded(
                   child: _buildStatItem(
                     'Total Minutes',
-                    '${stats.totalMinutesSpent}',
+                    '$totalMinutes',
                     Icons.timer,
                   ),
                 ),
@@ -262,15 +256,8 @@ class _StatsPageState extends State<StatsPage> {
               children: [
                 Expanded(
                   child: _buildStatItem(
-                    'Total Weight',
-                    '${stats.totalWeightLifted.toStringAsFixed(1)} kg',
-                    Icons.fitness_center,
-                  ),
-                ),
-                Expanded(
-                  child: _buildStatItem(
                     'Longest Streak',
-                    '${stats.longestStreak} days',
+                    '$longestStreak days',
                     Icons.local_fire_department,
                   ),
                 ),
@@ -308,7 +295,8 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Widget _buildRecentWorkoutsSection() {
-    final recentWorkouts = _statsController.getRecentWorkouts(days: 7);
+    // Get recent workouts (last 6 days) - returns List<Map<String, dynamic>> with workout names
+    final recentWorkouts = _statsController.getRecentWorkouts(days: 6);
     
     return Card(
       color: AppTheme.cardBackgroundColor,
@@ -318,7 +306,7 @@ class _StatsPageState extends State<StatsPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Recent Workouts (Last 7 Days)',
+              'Recent Workouts (Last 6 Days)',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -334,13 +322,122 @@ class _StatsPageState extends State<StatsPage> {
                 ),
               )
             else
-              ...recentWorkouts.take(5).map((workout) => _buildWorkoutItem(workout)).toList(),
+              ...recentWorkouts.map((workout) => _buildWorkoutItemFromMap(workout)).toList(),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildWorkoutItemFromMap(Map<String, dynamic> workout) {
+    // Support both new format (grouped by day) and old format (individual workouts)
+    final dayLabel = workout['day_label'] as String?; // "Day 1", "Day 2", etc.
+    final workoutNamesStr = workout['workout_names_str'] as String?; // "Chest, Back"
+    final workoutName = workout['workout_name'] ?? workout['name'] ?? 'Unknown Workout';
+    final date = workout['date'] ?? '';
+    
+    // If we have day_label and workout_names_str, use new format
+    if (dayLabel != null && workoutNamesStr != null) {
+      // Get count from workout map, or calculate from workout_names list
+      final workoutNamesList = workout['workout_names'] as List<String>?;
+      final workoutCount = workout['workout_count'] as int? ?? workoutNamesList?.length ?? 0;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              margin: const EdgeInsets.only(top: 6),
+              decoration: const BoxDecoration(
+                color: AppTheme.primaryColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$dayLabel: $workoutNamesStr ($workoutCount)',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                      color: AppTheme.textColor,
+                    ),
+                  ),
+                  if (date.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        date,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.check_circle,
+              color: Colors.green,
+              size: 20,
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // Fallback to old format (individual workouts)
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: AppTheme.primaryColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  workoutName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.textColor,
+                  ),
+                ),
+                if (date.isNotEmpty)
+                  Text(
+                    date,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const Icon(
+            Icons.check_circle,
+            color: Colors.green,
+            size: 20,
+          ),
+        ],
+      ),
+    );
+  }
+  
   Widget _buildWorkoutItem(DailyTrainingPlan workout) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -513,13 +610,6 @@ class _StatsPageState extends State<StatsPage> {
                     Icons.timer,
                   ),
                 ),
-                Expanded(
-                  child: _buildStatDetail(
-                    'Weight Lifted',
-                    '${((weeklyProgress['total_weight_lifted'] as double?) ?? 0.0).toStringAsFixed(1)} kg',
-                    Icons.fitness_center,
-                  ),
-                ),
               ],
             ),
           ],
@@ -610,16 +700,9 @@ class _StatsPageState extends State<StatsPage> {
             ),
             const SizedBox(height: 12),
             
-            // Additional stats
+            // Additional stats - Grid layout for Days Passed and Total Minutes
             Row(
               children: [
-                Expanded(
-                  child: _buildStatDetail(
-                    'Daily Average',
-                    '${((monthlyProgress['daily_average'] as double?) ?? 0.0).toStringAsFixed(1)}',
-                    Icons.trending_up,
-                  ),
-                ),
                 Expanded(
                   child: _buildStatDetail(
                     'Days Passed',
@@ -627,23 +710,12 @@ class _StatsPageState extends State<StatsPage> {
                     Icons.calendar_today,
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
+                const SizedBox(width: 16),
                 Expanded(
                   child: _buildStatDetail(
                     'Total Minutes',
                     '${monthlyProgress['total_minutes']}',
                     Icons.timer,
-                  ),
-                ),
-                Expanded(
-                  child: _buildStatDetail(
-                    'Weight Lifted',
-                    '${((monthlyProgress['total_weight_lifted'] as double?) ?? 0.0).toStringAsFixed(1)} kg',
-                    Icons.fitness_center,
                   ),
                 ),
               ],
@@ -711,183 +783,6 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 
-  Widget _buildRemainingTasksSection() {
-    final todaysRemaining = _statsController.getTodaysRemainingTasks();
-    final weeklyRemaining = _statsController.getWeeklyRemainingTasks();
-    final overdueTasks = _statsController.getOverdueTasks();
-    final upcomingTasks = _statsController.getUpcomingTasks();
-    
-    return Card(
-      color: AppTheme.cardBackgroundColor,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Remaining Tasks',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.textColor,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            // Task summary
-            Row(
-              children: [
-                Expanded(
-                  child: _buildTaskSummaryItem(
-                    'Today',
-                    todaysRemaining.length,
-                    Colors.blue,
-                  ),
-                ),
-                Expanded(
-                  child: _buildTaskSummaryItem(
-                    'This Week',
-                    weeklyRemaining.length,
-                    Colors.orange,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildTaskSummaryItem(
-                    'Overdue',
-                    overdueTasks.length,
-                    Colors.red,
-                  ),
-                ),
-                Expanded(
-                  child: _buildTaskSummaryItem(
-                    'Upcoming',
-                    upcomingTasks.length,
-                    Colors.green,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            
-            // Overdue tasks list
-            if (overdueTasks.isNotEmpty) ...[
-              const Text(
-                'Overdue Tasks',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.red,
-                ),
-              ),
-              const SizedBox(height: 8),
-              ...overdueTasks.take(3).map((task) => _buildTaskItem(task, true)).toList(),
-              if (overdueTasks.length > 3)
-                Text(
-                  '... and ${overdueTasks.length - 3} more',
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-            ],
-            
-            // Today's remaining tasks
-            if (todaysRemaining.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Text(
-                'Today\'s Remaining Tasks',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.textColor,
-                ),
-              ),
-              const SizedBox(height: 8),
-              ...todaysRemaining.take(3).map((task) => _buildTaskItem(task, false)).toList(),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTaskCompletionReportSection() {
-    final report = _statsController.getTaskCompletionReport();
-    
-    return Card(
-      color: AppTheme.cardBackgroundColor,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Task Completion Report',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.textColor,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            // Today's report
-            _buildReportItem(
-              'Today',
-              report['today']['completed'] as int,
-              report['today']['total'] as int,
-              report['today']['completion_rate'] as double,
-            ),
-            const SizedBox(height: 12),
-            
-            // Weekly report
-            _buildReportItem(
-              'This Week',
-              report['week']['completed'] as int,
-              report['week']['total'] as int,
-              report['week']['completion_rate'] as double,
-            ),
-            const SizedBox(height: 12),
-            
-            // Monthly report
-            _buildReportItem(
-              'This Month',
-              report['month']['completed'] as int,
-              report['month']['total'] as int,
-              report['month']['completion_rate'] as double,
-            ),
-            const SizedBox(height: 16),
-            
-            // Summary
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey[800],
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildSummaryItem(
-                    'Overdue',
-                    '${report['overdue']}',
-                    Colors.red,
-                  ),
-                  _buildSummaryItem(
-                    'Upcoming',
-                    '${report['upcoming']}',
-                    Colors.blue,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildCompletionRateIndicator(String label, double rate) {
     return Column(
@@ -982,146 +877,6 @@ class _StatsPageState extends State<StatsPage> {
           value: progress / 100,
           backgroundColor: Colors.grey[300],
           valueColor: AlwaysStoppedAnimation<Color>(color),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTaskSummaryItem(String label, int count, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            '$count',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppTheme.textColor,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTaskItem(DailyTrainingPlan task, bool isOverdue) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: isOverdue ? Colors.red : Colors.orange,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  task.workoutName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    color: AppTheme.textColor,
-                  ),
-                ),
-                Text(
-                  '${task.planCategory} • ${task.planDate}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (isOverdue)
-            const Icon(
-              Icons.warning,
-              color: Colors.red,
-              size: 16,
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReportItem(String period, int completed, int total, double rate) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          period,
-          style: const TextStyle(
-            color: AppTheme.textColor,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        Row(
-          children: [
-            Text(
-              '$completed/$total',
-              style: const TextStyle(
-                color: AppTheme.textColor,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: rate >= 80 ? Colors.green : rate >= 60 ? Colors.orange : Colors.red,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '${rate.toStringAsFixed(0)}%',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSummaryItem(String label, String value, Color color) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            color: AppTheme.textColor,
-          ),
         ),
       ],
     );

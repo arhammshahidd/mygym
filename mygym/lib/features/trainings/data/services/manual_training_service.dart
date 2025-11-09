@@ -360,19 +360,34 @@ class ManualTrainingService {
       totalDays = ((items.length + 1) / 2).ceil();
     }
 
-    // Rotation logic identical to frontend: dayRotationOffset = (dayIndex * 2) % items.length
-    const int workoutsPerDay = 2;
+    // Rotation logic for manual plans: dayRotationOffset = (dayIndex * workoutsPerDay) % items.length
+    // Distribution rule: 
+    // - If combined minutes > 80: show 1 workout per day
+    // - If combined minutes <= 80: show 2 workouts per day
+    const int workoutsPerDay = 2; // Base rotation for selecting workouts
     final List<Map<String, dynamic>> days = [];
     for (int d = 0; d < totalDays; d++) {
-      final int offset = (d * workoutsPerDay) % items.length;
-      final Map<String, dynamic> first = Map<String, dynamic>.from(items[offset]);
-      final Map<String, dynamic> second = Map<String, dynamic>.from(items[(offset + 1) % items.length]);
+      final int dayRotationOffset = (d * workoutsPerDay) % items.length;
+      final int firstIdx = dayRotationOffset;
+      final int secondIdx = (dayRotationOffset + 1) % items.length;
+      
+      final Map<String, dynamic> first = Map<String, dynamic>.from(items[firstIdx]);
+      final Map<String, dynamic> second = Map<String, dynamic>.from(items[secondIdx]);
 
       int m1 = _minutes(first);
       int m2 = _minutes(second);
       final int combined = m1 + m2;
 
-      final List<Map<String, dynamic>> dayWorkouts = combined > 80 ? [first] : [first, second];
+      // Manual Plan Distribution Rule:
+      // - If combined minutes > 80: show 1 workout per day (only first)
+      // - If combined minutes <= 80: show 2 workouts per day (both first and second)
+      final List<Map<String, dynamic>> dayWorkouts;
+      if (combined > 80) {
+        dayWorkouts = [first]; // 1 workout per day
+      } else {
+        dayWorkouts = [first, second]; // 2 workouts per day
+      }
+      
       final int totalMinutes = dayWorkouts.fold(0, (s, w) => s + _minutes(w));
 
       days.add({

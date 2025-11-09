@@ -14,12 +14,26 @@ class DailyTrainingService {
 
   /// Get user's daily training plans
   /// Optional date parameter to get plans for specific date
-  Future<List<Map<String, dynamic>>> getDailyPlans({String? date}) async {
+  /// Optional planType parameter to filter by plan type (web_assigned, manual, ai_generated)
+  /// Backend defaults to web_assigned if planType is not specified
+  /// 
+  /// BACKEND BEHAVIOR (getDailyPlans):
+  /// - Finds the first incomplete day (or today's plan if it exists)
+  /// - Returns only plans starting from that date
+  /// - Filters out completed past days
+  /// - Use this for displaying current/future plans in the UI
+  /// 
+  /// NOTE: For resume logic and stats, use getDailyTrainingPlans() instead to get ALL plans including completed ones
+  Future<List<Map<String, dynamic>>> getDailyPlans({String? date, String? planType}) async {
     try {
       final dio = await _authedDio();
       final queryParams = <String, dynamic>{};
       if (date != null) {
         queryParams['date'] = date;
+      }
+      if (planType != null && planType.isNotEmpty) {
+        queryParams['plan_type'] = planType;
+        print('📊 DailyTrainingService - Fetching daily plans for planType: $planType');
       }
       
       final res = await dio.get('/api/dailyTraining/mobile/plans', queryParameters: queryParams);
@@ -120,7 +134,7 @@ class DailyTrainingService {
     }
   }
 
-  /// Get training statistics
+  /// Get training statistics (legacy endpoint - kept for backward compatibility)
   Future<Map<String, dynamic>> getTrainingStats({int? userId}) async {
     try {
       final dio = await _authedDio();
@@ -144,6 +158,103 @@ class DailyTrainingService {
       if (e is DioException && e.response?.statusCode == 403) {
         print('🚫 403 Forbidden: User does not have permission to access training stats');
         print('💡 This is likely a backend permissions issue. Using local data only.');
+      }
+      rethrow;
+    }
+  }
+
+  /// Get user statistics from /api/stats/mobile endpoint
+  /// This is the new endpoint based on the daily_training_plans table stats record
+  /// Backend now supports planType parameter to get stats for a specific plan type
+  Future<Map<String, dynamic>> getStats({bool refresh = false, String? planType}) async {
+    try {
+      final dio = await _authedDio();
+      final queryParams = <String, dynamic>{};
+      if (refresh) {
+        queryParams['refresh'] = true;
+      }
+      if (planType != null && planType.isNotEmpty) {
+        queryParams['planType'] = planType;
+        print('📊 DailyTrainingService - Fetching stats for planType: $planType');
+      } else {
+        print('⚠️ DailyTrainingService - WARNING: planType is null or empty! Backend may return stats for wrong plan type.');
+        print('⚠️ DailyTrainingService - This can cause stats to show data from web_assigned plans instead of ai_generated/manual plans.');
+      }
+      
+      print('📊 DailyTrainingService - GET /api/stats/mobile');
+      print('📊 DailyTrainingService - Query parameters: $queryParams');
+      final res = await dio.get('/api/stats/mobile', queryParameters: queryParams);
+      print('🔍 User Stats API Response:');
+      print('Status: ${res.statusCode}');
+      print('Data: ${res.data}');
+      
+      if (res.statusCode == 200) {
+        final data = res.data;
+        if (data is Map<String, dynamic> && data['success'] == true) {
+          return data['data'] as Map<String, dynamic>;
+        } else if (data is Map<String, dynamic>) {
+          return data;
+        }
+      }
+      throw Exception('Failed to fetch user statistics: ${res.statusMessage}');
+    } catch (e) {
+      if (e is DioException && e.response?.statusCode == 403) {
+        print('🚫 403 Forbidden: User does not have permission to access user stats');
+        print('💡 This is likely a backend permissions issue. Using local data only.');
+      } else if (e is DioException && e.response?.statusCode == 404) {
+        print('⚠️ 404 Not Found: Stats record not found. Will auto-create on first sync.');
+      }
+      rethrow;
+    }
+  }
+
+  /// Sync/refresh user statistics manually
+  /// Calls POST /api/stats/mobile/sync to trigger stats recalculation
+  /// Backend now supports planType parameter to sync stats for a specific plan type
+  Future<Map<String, dynamic>> syncStats({String? planType}) async {
+    try {
+      final dio = await _authedDio();
+      
+      final payload = <String, dynamic>{};
+      if (planType != null && planType.isNotEmpty) {
+        payload['planType'] = planType;
+        print('📊 DailyTrainingService - Syncing stats for planType: $planType');
+      } else {
+        print('⚠️ DailyTrainingService - WARNING: planType is null or empty! Backend may sync stats for wrong plan type.');
+        print('⚠️ DailyTrainingService - This can cause stats to show data from web_assigned plans instead of ai_generated/manual plans.');
+      }
+      
+      print('📊 DailyTrainingService - POST /api/stats/mobile/sync');
+      print('📊 DailyTrainingService - Request payload: $payload');
+      final res = await dio.post('/api/stats/mobile/sync', data: payload);
+      print('🔍 Sync Stats API Response:');
+      print('Status: ${res.statusCode}');
+      print('Data: ${res.data}');
+      
+      if (res.statusCode == 200) {
+        final data = res.data;
+        if (data is Map<String, dynamic> && data['success'] == true) {
+          final responseData = data['data'];
+          // Handle case where backend returns null data (no stats record exists yet)
+          if (responseData == null) {
+            print('⚠️ DailyTrainingService - Sync response has null data (no stats record exists yet)');
+            return <String, dynamic>{}; // Return empty map instead of throwing error
+          }
+          if (responseData is Map<String, dynamic>) {
+            return responseData;
+          }
+          // If data is not a Map, return empty map
+          print('⚠️ DailyTrainingService - Sync response data is not a Map: ${responseData.runtimeType}');
+          return <String, dynamic>{};
+        } else if (data is Map<String, dynamic>) {
+          return data;
+        }
+      }
+      throw Exception('Failed to sync user statistics: ${res.statusMessage}');
+    } catch (e) {
+      if (e is DioException && e.response?.statusCode == 403) {
+        print('🚫 403 Forbidden: User does not have permission to sync stats');
+        print('💡 This is likely a backend permissions issue.');
       }
       rethrow;
     }
@@ -176,13 +287,37 @@ class DailyTrainingService {
 
   /// Store daily training plan data when a plan is started
   // Get daily training plans for mobile
-  Future<List<Map<String, dynamic>>> getDailyTrainingPlans({int? userId}) async {
+  /// Optional planType parameter to filter by plan type (web_assigned, manual, ai_generated)
+  /// Backend defaults to web_assigned if planType is not specified
+  /// Backend also filters out is_stats_record: true plans at SQL level
+  /// 
+  /// BACKEND BEHAVIOR (getDailyTrainingPlans):
+  /// - Returns ALL plans (completed and incomplete) for the specified plan type
+  /// - Does NOT filter out completed past days (unlike getDailyPlans)
+  /// - Use this for resume logic and stats calculations
+  /// 
+  /// NOTE: This is the preferred method for resume logic and stats, as it includes completed plans
+  /// 
+  /// IMPORTANT: If backend endpoint filters completed days by default, we may need to add
+  /// a query parameter (e.g., include_completed=true) to request all plans. Currently,
+  /// the presence of user_id parameter might signal to backend to return all plans.
+  Future<List<Map<String, dynamic>>> getDailyTrainingPlans({int? userId, String? planType}) async {
     try {
       final dio = await _authedDio();
       
-      final res = await dio.get('/api/dailyTraining/mobile/plans', queryParameters: {
-        if (userId != null) 'user_id': userId,
-      });
+      final queryParams = <String, dynamic>{};
+      if (userId != null) {
+        queryParams['user_id'] = userId;
+      }
+      if (planType != null && planType.isNotEmpty) {
+        queryParams['plan_type'] = planType;
+        print('📊 DailyTrainingService - Fetching daily training plans for planType: $planType');
+      }
+      // Add parameter to request all plans including completed ones
+      // Backend may use this to distinguish from getDailyPlans() which filters completed days
+      queryParams['include_completed'] = true;
+      
+      final res = await dio.get('/api/dailyTraining/mobile/plans', queryParameters: queryParams);
       
       print('🔍 DailyTrainingService - Get daily plans response status: ${res.statusCode}');
       
@@ -211,7 +346,14 @@ class DailyTrainingService {
       print('🔍 DailyTrainingService - Get daily plan $planId response status: ${res.statusCode}');
       
       if (res.statusCode == 200) {
-        return Map<String, dynamic>.from(res.data);
+        final data = res.data;
+        if (data is Map) {
+          // Handle API response format {success: true, data: {...}}
+          if (data.containsKey('success') && data.containsKey('data')) {
+            return Map<String, dynamic>.from(data['data'] ?? {});
+          }
+          return Map<String, dynamic>.from(data);
+        }
       }
       return {};
     } catch (e) {
@@ -299,23 +441,74 @@ class DailyTrainingService {
         int totalReps = 0;
         double totalWeight = 0.0;
 
-        for (final w in rawWorkouts) {
+        for (int workoutIndex = 0; workoutIndex < rawWorkouts.length; workoutIndex++) {
+          final w = rawWorkouts[workoutIndex];
           final Map<String, dynamic> m = Map<String, dynamic>.from(w as Map);
           final String exerciseName = (m['name'] ?? m['workout_name'] ?? m['muscle_group'] ?? 'Workout').toString();
           final int sets = int.tryParse(m['sets']?.toString() ?? '0') ?? 0;
           final int reps = int.tryParse(m['reps']?.toString() ?? '0') ?? 0;
-          final double weight = double.tryParse(m['weight_kg']?.toString() ?? m['weight']?.toString() ?? '0') ?? 0.0;
+          
+          // Extract weight - handle string ranges like "20-40"
+          double weight = 0.0;
+          double? parsedWeightMin;
+          double? parsedWeightMax;
+          
+          if (m['weight_kg'] is String && (m['weight_kg'] as String).contains('-')) {
+            // Parse string range like "20-40"
+            final parts = (m['weight_kg'] as String).split('-');
+            if (parts.length == 2) {
+              parsedWeightMin = double.tryParse(parts[0].trim());
+              parsedWeightMax = double.tryParse(parts[1].trim());
+              weight = parsedWeightMin ?? 0.0;
+            }
+          } else {
+            weight = double.tryParse(m['weight_kg']?.toString() ?? m['weight']?.toString() ?? '0') ?? 0.0;
+          }
+          
           final int minutes = int.tryParse(m['minutes']?.toString() ?? m['training_minutes']?.toString() ?? '0') ?? 0;
           final int exerciseType = int.tryParse(m['exercise_types']?.toString() ?? m['exercise_type']?.toString() ?? '0') ?? 0;
 
-          exercises.add({
+          // Extract weight_min_kg and weight_max_kg if available
+          if (parsedWeightMin == null || parsedWeightMax == null) {
+            final double? weightMinKg = m['weight_min_kg'] != null 
+                ? double.tryParse(m['weight_min_kg'].toString()) 
+                : null;
+            final double? weightMaxKg = m['weight_max_kg'] != null 
+                ? double.tryParse(m['weight_max_kg'].toString()) 
+                : null;
+            
+            if (weightMinKg != null) parsedWeightMin = weightMinKg;
+            if (weightMaxKg != null) parsedWeightMax = weightMaxKg;
+          }
+          
+          // item_id is now the 1-based index in the exercises_details array
+          // Since daily_training_plan_items table is removed, item_id is the 1-based array index
+          final int itemId = workoutIndex + 1; // Use 1-based index as item_id (backend expects 1-based)
+          
+          final exerciseData = {
+            'id': itemId, // Include ID so it can be used for completion
+            'item_id': itemId, // 1-based index in exercises_details array
             'exercise_name': exerciseName,
+            'workout_name': m['workout_name'] ?? exerciseName,
+            'name': exerciseName,
             'sets': sets,
             'reps': reps,
             'weight_kg': weight,
             'minutes': minutes,
+            'training_minutes': minutes,
             'exercise_type': exerciseType,
-          });
+            'exercise_types': exerciseType,
+          };
+          
+          // Add weight_min_kg and weight_max_kg if available
+          if (parsedWeightMin != null) {
+            exerciseData['weight_min_kg'] = parsedWeightMin;
+          }
+          if (parsedWeightMax != null) {
+            exerciseData['weight_max_kg'] = parsedWeightMax;
+          }
+          
+          exercises.add(exerciseData);
 
           totalMinutes += minutes;
           totalSets += sets;
@@ -360,6 +553,246 @@ class DailyTrainingService {
     } catch (e) {
       print('❌ DailyTrainingService - Error storing daily training plan: $e');
       rethrow;
+    }
+  }
+
+  /// Create daily plan from training approval or assignment
+  /// This uses the new endpoint that creates daily plans from training approvals/assignments
+  /// The endpoint accepts approval_id (for AI/Manual plans), assignment_id (for assigned plans), or web_plan_id
+  Future<Map<String, dynamic>> createDailyPlanFromApproval({
+    int? approvalId,
+    int? assignmentId,
+    String? planDate,
+    int? webPlanId,
+  }) async {
+    try {
+      final dio = await _authedDio();
+      
+      final payload = <String, dynamic>{};
+      
+      // For assigned plans, send assignment_id (prioritized by backend)
+      if (assignmentId != null) {
+        payload['assignment_id'] = assignmentId;
+      }
+      // For AI/Manual plans, send approval_id
+      else if (approvalId != null) {
+        payload['approval_id'] = approvalId;
+      }
+      
+      // Add web_plan_id if provided - backend can use this for lookup in either table
+      if (webPlanId != null) {
+        payload['web_plan_id'] = webPlanId;
+      }
+      
+      // Add plan_date if provided, otherwise backend will default to today
+      if (planDate != null) {
+        payload['plan_date'] = planDate;
+      }
+      
+      // Validate that at least one ID is provided
+      if (payload.isEmpty || (!payload.containsKey('assignment_id') && !payload.containsKey('approval_id') && !payload.containsKey('web_plan_id'))) {
+        throw Exception('At least one of assignment_id, approval_id, or web_plan_id must be provided');
+      }
+      
+      print('📤 Creating daily plan from training approval/assignment:');
+      print('Endpoint: /api/dailyTraining/mobile/plans/create-from-approval');
+      print('Payload: $payload');
+      if (assignmentId != null) {
+        print('📤 Using assignment_id (for assigned plans from training_plan_assignments)');
+      } else if (approvalId != null) {
+        print('📤 Using approval_id (for AI/Manual plans from training_approvals)');
+      }
+      if (webPlanId != null) {
+        print('📤 Also including web_plan_id: $webPlanId');
+      }
+      
+      final res = await dio.post('/api/dailyTraining/mobile/plans/create-from-approval', data: payload);
+      
+      print('🔍 Create Daily Plan From Approval API Response:');
+      print('Status: ${res.statusCode}');
+      print('Data: ${res.data}');
+      
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final data = res.data;
+        if (data is Map<String, dynamic> && data['success'] == true) {
+          return data['data'] as Map<String, dynamic>;
+        } else if (data is Map<String, dynamic>) {
+          return data;
+        }
+      }
+      throw Exception('Failed to create daily plan from approval: ${res.statusMessage}');
+    } on DioException catch (e) {
+      print('❌ DailyTrainingService - Error creating daily plan from approval: $e');
+      print('❌ DailyTrainingService - Request URL: ${e.requestOptions.uri}');
+      print('❌ DailyTrainingService - Request Payload: ${e.requestOptions.data}');
+      print('❌ DailyTrainingService - Status Code: ${e.response?.statusCode}');
+      print('❌ DailyTrainingService - Response Data: ${e.response?.data}');
+      
+      // Provide helpful error message for 404
+      if (e.response?.statusCode == 404) {
+        print('⚠️ DailyTrainingService - 404 Error: The endpoint may not be available yet.');
+        print('⚠️ DailyTrainingService - This usually means:');
+        print('⚠️   1. Backend server needs to be restarted for route ordering fix to take effect');
+        print('⚠️   2. The route /api/dailyTraining/mobile/plans/create-from-approval should be defined');
+        print('⚠️   3. Route should be ordered BEFORE /api/dailyTraining/mobile/plans/:id');
+      }
+      
+      // Provide helpful error message for 400 (Bad Request)
+      if (e.response?.statusCode == 400) {
+        print('⚠️ DailyTrainingService - 400 Bad Request Error: Invalid request format or parameters.');
+        print('⚠️ DailyTrainingService - This usually means:');
+        print('⚠️   1. Request payload format is incorrect (check approval_id, web_plan_id, plan_date)');
+        print('⚠️   2. Backend validation failed (check backend error message above)');
+        print('⚠️   3. Missing required fields or invalid field values');
+        
+        // Try to extract and display backend error message
+        if (e.response?.data != null) {
+          try {
+            final responseData = e.response!.data;
+            if (responseData is Map) {
+              final message = responseData['message'] ?? responseData['error'] ?? responseData['msg'];
+              if (message != null) {
+                print('⚠️ DailyTrainingService - Backend Error Message: $message');
+              }
+            } else if (responseData is String) {
+              print('⚠️ DailyTrainingService - Backend Error Response: $responseData');
+            }
+          } catch (_) {
+            print('⚠️ DailyTrainingService - Could not parse backend error message');
+          }
+        }
+      }
+      
+      rethrow;
+    } catch (e) {
+      print('❌ DailyTrainingService - Unexpected error creating daily plan from approval: $e');
+      rethrow;
+    }
+  }
+
+  /// Find daily plan by source (assignment_id/approval_id) and date
+  /// This is useful when you need to look up a daily plan after creation
+  Future<Map<String, dynamic>?> findDailyPlanBySource({
+    int? assignmentId,
+    int? approvalId,
+    int? webPlanId,
+    int? sourcePlanId,
+    String? planDate,
+  }) async {
+    try {
+      final dio = await _authedDio();
+
+      final queryParams = <String, dynamic>{};
+      if (assignmentId != null) {
+        queryParams['assignment_id'] = assignmentId;
+      }
+      if (approvalId != null) {
+        queryParams['approval_id'] = approvalId;
+      }
+      if (webPlanId != null) {
+        queryParams['web_plan_id'] = webPlanId;
+      }
+      if (sourcePlanId != null) {
+        queryParams['source_plan_id'] = sourcePlanId;
+      }
+      if (planDate != null) {
+        queryParams['plan_date'] = planDate;
+      }
+
+      // Validate that at least one ID is provided
+      if (queryParams.isEmpty) {
+        throw Exception('At least one of assignment_id, approval_id, web_plan_id, or source_plan_id must be provided');
+      }
+
+      print('📤 Finding daily plan by source:');
+      print('Endpoint: /api/dailyTraining/mobile/plans/find');
+      print('Query params: $queryParams');
+
+      final res = await dio.get('/api/dailyTraining/mobile/plans/find', queryParameters: queryParams);
+
+      print('🔍 Find Daily Plan API Response:');
+      print('Status: ${res.statusCode}');
+      print('Data: ${res.data}');
+
+      if (res.statusCode == 200) {
+        final data = res.data;
+        if (data is Map<String, dynamic> && data['success'] == true) {
+          return data['data'] as Map<String, dynamic>?;
+        } else if (data is Map<String, dynamic>) {
+          return data;
+        }
+      }
+      return null;
+    } on DioException catch (e) {
+      print('❌ DailyTrainingService - Error finding daily plan by source: $e');
+      print('❌ DailyTrainingService - Request URL: ${e.requestOptions.uri}');
+      print('❌ DailyTrainingService - Status Code: ${e.response?.statusCode}');
+      print('❌ DailyTrainingService - Response Data: ${e.response?.data}');
+      return null;
+    } catch (e) {
+      print('❌ DailyTrainingService - Unexpected error finding daily plan by source: $e');
+      return null;
+    }
+  }
+
+  /// Delete daily training plans by source (approval_id, assignment_id, etc.)
+  /// This is used to clean up daily plans when a parent plan is deleted
+  Future<void> deleteDailyPlansBySource({
+    int? approvalId,
+    int? assignmentId,
+    int? sourcePlanId,
+  }) async {
+    try {
+      final dio = await _authedDio();
+
+      final queryParams = <String, dynamic>{};
+      if (approvalId != null) {
+        queryParams['approval_id'] = approvalId;
+      }
+      if (assignmentId != null) {
+        queryParams['assignment_id'] = assignmentId;
+      }
+      if (sourcePlanId != null) {
+        queryParams['source_plan_id'] = sourcePlanId;
+      }
+
+      // Validate that at least one ID is provided
+      if (queryParams.isEmpty) {
+        throw Exception('At least one of approval_id, assignment_id, or source_plan_id must be provided');
+      }
+
+      print('🗑️ Deleting daily plans by source:');
+      print('Endpoint: /api/dailyTraining/mobile/plans/delete-by-source');
+      print('Query params: $queryParams');
+
+      final res = await dio.delete('/api/dailyTraining/mobile/plans/delete-by-source', queryParameters: queryParams);
+
+      print('🗑️ Delete Daily Plans API Response:');
+      print('Status: ${res.statusCode}');
+      print('Data: ${res.data}');
+
+      if (res.statusCode == 200 || res.statusCode == 204) {
+        print('✅ Daily plans deleted successfully from database');
+        return;
+      }
+      throw Exception('Failed to delete daily plans: HTTP ${res.statusCode}');
+    } on DioException catch (e) {
+      // If endpoint doesn't exist (404), log warning but don't fail
+      // Backend should handle cascading deletes when parent plan is deleted
+      if (e.response?.statusCode == 404) {
+        print('⚠️ Delete daily plans endpoint not found (404). Backend should handle cascading deletes.');
+        return;
+      }
+      print('❌ DailyTrainingService - Error deleting daily plans by source: $e');
+      print('❌ DailyTrainingService - Request URL: ${e.requestOptions.uri}');
+      print('❌ DailyTrainingService - Status Code: ${e.response?.statusCode}');
+      print('❌ DailyTrainingService - Response Data: ${e.response?.data}');
+      // Don't throw - backend should handle cascading deletes
+      return;
+    } catch (e) {
+      print('❌ DailyTrainingService - Unexpected error deleting daily plans by source: $e');
+      // Don't throw - backend should handle cascading deletes
+      return;
     }
   }
 }

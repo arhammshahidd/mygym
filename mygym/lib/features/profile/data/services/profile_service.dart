@@ -38,9 +38,10 @@ class ProfileService {
       print('🔐 Error Message: ${e.message}');
       
       // Handle specific HTTP errors
+      // Note: 401/403 errors are handled by the ApiClient interceptor to prevent infinite loops
+      // We just throw the exception here, the interceptor will handle logout
       if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
-        print('🔐 Token expired or invalid - clearing token');
-        await _authService.logout();
+        print('🔐 Token expired or invalid - interceptor will handle logout');
         throw Exception('Authentication failed - please login again');
       } else if (e.response?.statusCode == 404) {
         print('🔐 Profile endpoint not found - creating fallback user profile');
