@@ -945,19 +945,34 @@ class StatsController extends GetxController {
       final planAssignmentId = planRaw['assignment_id'] as int?;
       String? planTypeRaw = planRaw['plan_type'] as String?;
 
-      // Some records (especially older synced ones) may have null/empty plan_type.
+      // Some records (especially older synced ones) may have null/empty plan_type or incorrect plan_type.
       // Infer the most likely plan type based on identifying fields so we don't drop valid plans.
       // IMPORTANT: Also consider the active plan's plan type when inferring to avoid mismatches
-      if (planTypeRaw == null || planTypeRaw.isEmpty) {
+      // CRITICAL: Check assignment indicators FIRST before checking approval_id to avoid misclassifying assigned plans as manual
+      if (planTypeRaw == null || planTypeRaw.isEmpty || planTypeRaw == 'manual') {
         final sourcePlanType = planRaw['source_plan_type']?.toString();
-        print('🔍 Stats - Plan has null/empty plan_type, inferring from fields. sourcePlanType=$sourcePlanType, planRaw keys: ${planRaw.keys.toList()}');
+        print('🔍 Stats - Plan has null/empty/incorrect plan_type ($planTypeRaw), inferring from fields. sourcePlanType=$sourcePlanType, planRaw keys: ${planRaw.keys.toList()}');
         print('🔍 Stats - Active plan type: $planType (will use this as fallback if inference fails)');
         
-        if (planRaw.containsKey('assignment_id') ||
-            planRaw.containsKey('source_assignment_id') ||
-            sourcePlanType == 'web_assigned') {
+        // PRIORITY 1: Check for assignment indicators FIRST (before approval_id)
+        // This ensures assigned plans are correctly identified even if plan_type is incorrectly set to 'manual'
+        // CRITICAL: If active plan is 'web_assigned' and source_plan_id matches assignment ID, infer as 'web_assigned'
+        // This handles cases where backend doesn't set plan_type correctly or doesn't include assignment indicator fields
+        final hasAssignmentIndicators = planRaw.containsKey('assignment_id') ||
+            planRaw.containsKey('source_assignment_id');
+        final sourcePlanIdMatchesAssignment = planType == 'web_assigned' && 
+            (planId != null && sourcePlanId == planId || 
+             assignmentId != null && sourcePlanId == assignmentId);
+        
+        if (hasAssignmentIndicators ||
+            sourcePlanType == 'web_assigned' ||
+            sourcePlanIdMatchesAssignment) {
           planTypeRaw = 'web_assigned';
-          print('🔍 Stats - Inferred plan_type as web_assigned');
+          if (sourcePlanIdMatchesAssignment) {
+            print('🔍 Stats - Inferred plan_type as web_assigned (active plan is web_assigned and source_plan_id=$sourcePlanId matches assignment ID ${assignmentId ?? planId})');
+          } else {
+            print('🔍 Stats - Inferred plan_type as web_assigned (found assignment indicators or source_plan_type=web_assigned)');
+          }
         } else if (sourcePlanType == 'ai_generated') {
           planTypeRaw = 'ai_generated';
           print('🔍 Stats - Inferred plan_type as ai_generated (from source_plan_type)');
@@ -978,7 +993,7 @@ class StatsController extends GetxController {
           }
         } else if (planType != null && planType.isNotEmpty) {
           // Fallback: Use active plan's type if IDs match (for AI plans especially)
-          if (planId != null && sourcePlanId == planId || approvalId != null && sourcePlanId == approvalId) {
+          if (planId != null && sourcePlanId == planId || approvalId != null && sourcePlanId == approvalId || assignmentId != null && sourcePlanId == assignmentId) {
             planTypeRaw = planType;
             print('🔍 Stats - Inferred plan_type as $planType (from active plan type, IDs match)');
           } else {
@@ -993,9 +1008,26 @@ class StatsController extends GetxController {
       // CRITICAL: Match by plan type first - MUST match exactly
       // This ensures assigned plans and manual/AI plans are completely isolated
       // Manual plans (plan_type='manual') and assigned plans (plan_type='web_assigned') should never interfere
+      // EXCEPTION: If active plan is 'web_assigned' and source_plan_id matches assignment ID, override plan_type even if it was 'manual'
+      // This handles backend bugs where plan_type is incorrectly set to 'manual' for assigned plans
       if (planTypeRaw != planType) {
-        print('❌ Stats - Plan rejected due to plan_type mismatch: plan id=${planRaw['id']}, planTypeRaw=$planTypeRaw != active planType=$planType');
-        return false; // Reject any plans with different plan type immediately
+        // Special case: If active plan is 'web_assigned' and source_plan_id matches assignment ID,
+        // this is likely a backend bug where plan_type wasn't set correctly - override it
+        final sourcePlanIdMatches = planType == 'web_assigned' && 
+            (planId != null && sourcePlanId == planId || 
+             assignmentId != null && sourcePlanId == assignmentId);
+        final hasAssignmentIndicators = planRaw.containsKey('assignment_id') || 
+            planRaw.containsKey('source_assignment_id');
+        
+        if (planType == 'web_assigned' && (hasAssignmentIndicators || sourcePlanIdMatches)) {
+          print('⚠️ Stats - Plan has plan_type=$planTypeRaw but active plan is web_assigned and (has assignment indicators OR source_plan_id matches) - overriding to web_assigned');
+          print('⚠️ Stats - source_plan_id=$sourcePlanId, planId=$planId, assignmentId=$assignmentId, hasAssignmentIndicators=$hasAssignmentIndicators');
+          planTypeRaw = 'web_assigned';
+        } else {
+          print('❌ Stats - Plan rejected due to plan_type mismatch: plan id=${planRaw['id']}, planTypeRaw=$planTypeRaw != active planType=$planType');
+          print('❌ Stats - source_plan_id=$sourcePlanId, planId=$planId, assignmentId=$assignmentId');
+          return false; // Reject any plans with different plan type immediately
+        }
       }
       
       // For assigned plans, match by assignment_id or source_assignment_id

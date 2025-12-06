@@ -2,6 +2,9 @@ import 'package:get/get.dart';
 import 'package:flutter/material.dart';
 import '../../data/services/auth_service.dart';
 import '../../../profile/presentation/controllers/profile_controller.dart';
+import '../../../trainings/presentation/controllers/schedules_controller.dart';
+import '../../../trainings/presentation/controllers/plans_controller.dart';
+import '../../../stats/presentation/controllers/stats_controller.dart';
 import '../../../../shared/widgets/main_tab_screen.dart';
 import '../pages/login_page.dart';
 
@@ -81,6 +84,38 @@ class AuthController extends GetxController {
     try {
       _isLoading.value = true;
       _errorMessage.value = '';
+      
+      // CRITICAL: Clear all previous user data BEFORE logging in new user
+      // This ensures no data from previous user is shown to new user
+      try {
+        print('🧹 AuthController - Clearing all previous user data before login...');
+        
+        // Clear SchedulesController data
+        if (Get.isRegistered<SchedulesController>()) {
+          final schedulesController = Get.find<SchedulesController>();
+          await schedulesController.clearAllUserData();
+        }
+        
+        // Clear PlansController data
+        if (Get.isRegistered<PlansController>()) {
+          final plansController = Get.find<PlansController>();
+          await plansController.clearAllUserData();
+        }
+        
+        // Clear StatsController data
+        if (Get.isRegistered<StatsController>()) {
+          final statsController = Get.find<StatsController>();
+          statsController.userStats.value = null;
+          statsController.trainingStats.value = null;
+          statsController.dailyPlans.clear();
+          statsController.dailyPlansRaw.clear();
+        }
+        
+        print('✅ AuthController - All previous user data cleared');
+      } catch (e) {
+        print('⚠️ AuthController - Error clearing previous user data: $e');
+        // Continue with login even if clearing fails
+      }
       
       await _authService.login(phone: phone, password: password);
       _isLoggedIn.value = true;

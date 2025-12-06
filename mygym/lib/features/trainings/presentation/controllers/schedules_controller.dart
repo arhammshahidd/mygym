@@ -37,6 +37,9 @@ class SchedulesController extends GetxController {
   final RxMap<String, int> _workoutRemainingMinutes = <String, int>{}.obs;
   final RxMap<String, bool> _workoutCompleted = <String, bool>{}.obs;
   
+  // Track active workout timers to prevent memory leaks
+  final Map<String, Timer> _activeTimers = {};
+  
   // Guard to prevent multiple simultaneous day completion submissions
   bool _isSubmittingCompletion = false;
   final Map<String, bool> _submissionInProgress = {}; // Track submissions per planId+day
@@ -54,6 +57,12 @@ class SchedulesController extends GetxController {
 
   @override
   void onClose() {
+    // Cancel all active timers to prevent memory leaks
+    for (final timer in _activeTimers.values) {
+      timer.cancel();
+    }
+    _activeTimers.clear();
+    
     _realtime.disconnect();
     super.onClose();
   }
@@ -111,7 +120,6 @@ class SchedulesController extends GetxController {
         print('📋 Schedules - Fetching ASSIGNED training plans for user ID: $userId...');
         print('📋 Schedules - API Endpoint: /api/trainingPlans/assignments/user/$userId');
         print('📋 Schedules - This should show assigned training plans (not manual plans)');
-        print('🔍 DEBUG: Expected to find assignment with user_id: 2 (from database)');
         try {
           final assignmentsRes = await _manualService.getUserAssignments(userId);
           print('📋 Schedules - Assignments result: ${assignmentsRes.length} items');
@@ -134,7 +142,15 @@ class SchedulesController extends GetxController {
           }
           
           // Filter to show ONLY truly assigned plans (not manual plans)
+          // CRITICAL: Also validate that assignment belongs to current user
           final filteredAssignments = assignmentsRes.where((assignment) {
+            // CRITICAL: First check if assignment belongs to current user
+            final assignmentUserId = assignment['user_id'] as int?;
+            if (assignmentUserId != null && assignmentUserId != userId) {
+              print('❌ Schedules - REJECTED: Assignment ${assignment['id']} belongs to user $assignmentUserId, but current user is $userId');
+              return false;
+            }
+            
             // Check if this is a truly assigned plan
             final planType = assignment['plan_type']?.toString().toLowerCase();
             final assignmentId = assignment['assignment_id'];
@@ -171,7 +187,7 @@ class SchedulesController extends GetxController {
             print('🔍   - web_plan_id: $webPlanId');
             print('🔍   - status: $status');
             print('🔍   - created_by: ${assignment['created_by']}');
-            print('🔍   - user_id: ${assignment['user_id']}');
+            print('🔍   - user_id: $assignmentUserId (current user: $userId)');
             print('🔍   - isAssigned: $isAssigned');
             print('🔍   - isManualPlan: $isManualPlan');
             print('🔍   - Will include: ${isAssigned && !isManualPlan}');
@@ -260,44 +276,10 @@ class SchedulesController extends GetxController {
           }
         } catch (e) {
           print('❌ Schedules - Error fetching assignments: $e');
-          // Fallback: try with user ID 2
-          try {
-            final fallbackRes = await _manualService.getUserAssignments(2);
-            print('🔍 DEBUG: Fallback assignments result: ${fallbackRes.length} items');
-            
-            // DEBUG: Print fallback assignment data
-            for (int i = 0; i < fallbackRes.length; i++) {
-              final assignment = fallbackRes[i];
-              print('🔍 DEBUG Fallback Assignment $i:');
-              print('🔍   - Keys: ${assignment.keys.toList()}');
-              print('🔍   - Values: $assignment');
-              }
-            
-            // Filter fallback assignments the same way
-            final filteredFallback = fallbackRes.where((assignment) {
-              final planType = assignment['plan_type']?.toString().toLowerCase();
-              final assignmentId = assignment['assignment_id'];
-              final assignedAt = assignment['assigned_at'];
-              final assignedBy = assignment['assigned_by'];
-              final isAssigned = assignmentId != null || 
-                                assignedAt != null ||
-                                assignedBy != null ||
-                                planType == 'assigned' ||
-                                planType == 'ai_generated';
-              
-              final isManualPlan = planType == 'manual' || 
-                                  assignment['created_by'] != null ||
-                                  assignment['user_id'] == 2; // Plans created by user 2
-              
-              return isAssigned && !isManualPlan;
-            }).toList();
-            
-            assignments.assignAll(filteredFallback.map((e) => Map<String, dynamic>.from(e)));
-            print('✅ Schedules - Fallback assigned plans loaded: ${assignments.length} items');
-          } catch (fallbackError) {
-            print('❌ Schedules - Fallback also failed: $fallbackError');
-            assignments.clear();
-          }
+          // SECURITY: Don't use fallback with hardcoded user ID - this could expose another user's data
+          // Clear assignments to show empty state instead
+          assignments.clear();
+          print('⚠️ Schedules - Assignments cleared due to fetch error (no fallback to prevent data leakage)');
         }
       } else {
         assignments.clear();
@@ -345,11 +327,16 @@ class SchedulesController extends GetxController {
       print('  - completion_data count: ${completionData.length}');
       print('  - completion_data: $completionData');
       print('🔍 Submitting completion to API via DailyTrainingService');
+      print('🔍 API Endpoint: POST /api/dailyTraining/mobile/complete');
+      print('🔍 Request payload: {daily_plan_id: $dailyPlanId, completion_data: $completionData}');
       
       final result = await _dailyTrainingService.submitCompletion(
         dailyPlanId: dailyPlanId,
         completionData: completionData,
       );
+      
+      print('✅ SchedulesController - API call completed successfully');
+      print('✅ SchedulesController - Response received from /api/dailyTraining/mobile/complete');
       
       print('✅ SchedulesController - Completion submitted successfully');
       print('✅ SchedulesController - Backend response: $result');
@@ -797,6 +784,14 @@ class SchedulesController extends GetxController {
     final int? scheduleId = int.tryParse(schedule['id']?.toString() ?? '');
     if (scheduleId == null) return;
     
+    // Cancel all active timers for this schedule
+    final schedulePrefix = '${scheduleId}_';
+    final timersToCancel = _activeTimers.keys.where((key) => key.startsWith(schedulePrefix)).toList();
+    for (final key in timersToCancel) {
+      _activeTimers[key]?.cancel();
+      _activeTimers.remove(key);
+    }
+    
     _startedSchedules[scheduleId] = false;
     if (_activeSchedule.value != null && (_activeSchedule.value!['id']?.toString() ?? '') == scheduleId.toString()) {
       _activeSchedule.value = null;
@@ -836,46 +831,79 @@ class SchedulesController extends GetxController {
 
   // Workout tracking methods
   void startWorkout(String workoutKey, int totalMinutes) {
+    print('🚀 SchedulesController - startWorkout() CALLED');
+    print('🚀 SchedulesController - workoutKey: $workoutKey');
+    print('🚀 SchedulesController - totalMinutes: $totalMinutes');
+    
     _workoutStarted[workoutKey] = true;
     _workoutRemainingMinutes[workoutKey] = totalMinutes;
     _workoutCompleted[workoutKey] = false;
     
+    print('✅ SchedulesController - Workout started: $workoutKey (${totalMinutes} minutes)');
+    print('✅ SchedulesController - Starting timer for workout...');
+    
     // Start timer
     _startWorkoutTimer(workoutKey);
+    
+    print('✅ SchedulesController - Timer started for workout: $workoutKey');
   }
 
   void _startWorkoutTimer(String workoutKey) {
-    Timer.periodic(const Duration(minutes: 1), (timer) {
+    print('⏱️ SchedulesController - _startWorkoutTimer() called for: $workoutKey');
+    
+    // Cancel existing timer for this workout if any
+    _activeTimers[workoutKey]?.cancel();
+    
+    print('⏱️ SchedulesController - Creating Timer.periodic (1 minute interval) for: $workoutKey');
+    
+    final timer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      print('⏱️ SchedulesController - Timer tick for workout: $workoutKey');
       if (!(_workoutStarted[workoutKey] ?? false)) {
         timer.cancel();
+        _activeTimers.remove(workoutKey);
         return;
       }
       
       final remaining = _workoutRemainingMinutes[workoutKey] ?? 0;
       if (remaining <= 1) {
         // Workout completed
+        print('✅ SchedulesController - Workout timer completed for key: $workoutKey');
+        print('✅ SchedulesController - Marking workout as completed: $workoutKey');
         _workoutCompleted[workoutKey] = true;
         _workoutStarted[workoutKey] = false;
         _workoutRemainingMinutes[workoutKey] = 0;
         timer.cancel();
+        _activeTimers.remove(workoutKey);
+        
+        print('✅ SchedulesController - Workout marked as completed. Current completed workouts: ${_workoutCompleted.keys.where((k) => _workoutCompleted[k] == true).toList()}');
 
         // Submit single workout completion immediately to stats
         _submitSingleWorkoutCompletion(workoutKey);
         
         // Check if all workouts for the day are completed
+        print('🔍 SchedulesController - Calling _checkDayCompletion() after workout completion...');
         _checkDayCompletion();
       } else {
         _workoutRemainingMinutes[workoutKey] = remaining - 1;
       }
     });
+    
+    // Store timer for cleanup
+    _activeTimers[workoutKey] = timer;
   }
 
   Future<void> _checkDayCompletion() async {
+    print('🚀 SchedulesController - _checkDayCompletion() CALLED');
     final activeSchedule = _activeSchedule.value;
-    if (activeSchedule == null) return;
+    if (activeSchedule == null) {
+      print('⚠️ SchedulesController - No active schedule - cannot check day completion');
+      return;
+    }
     
     final planId = int.tryParse(activeSchedule['id']?.toString() ?? '') ?? 0;
     final currentDay = getCurrentDay(planId);
+    
+    print('🚀 SchedulesController - Checking completion for plan $planId, day $currentDay');
     
     // CRITICAL: Create a unique key for this submission to prevent duplicate submissions
     final submissionKey = '${planId}_${currentDay}';
@@ -883,6 +911,8 @@ class SchedulesController extends GetxController {
     // Guard: Prevent multiple simultaneous submissions for the same day
     if (_isSubmittingCompletion || _submissionInProgress[submissionKey] == true) {
       print('⚠️ SchedulesController - Submission already in progress for plan $planId, day $currentDay - skipping duplicate check');
+      print('⚠️ SchedulesController - _isSubmittingCompletion: $_isSubmittingCompletion');
+      print('⚠️ SchedulesController - _submissionInProgress[$submissionKey]: ${_submissionInProgress[submissionKey]}');
       return;
     }
     
@@ -890,28 +920,71 @@ class SchedulesController extends GetxController {
     final dayWorkouts = _getDayWorkouts(activeSchedule, currentDay);
     final workoutKeys = dayWorkouts.map((workout) => '${planId}_${currentDay}_${workout['name']}').toList();
     
-    print('🔍 Checking day completion for plan $planId, day $currentDay');
-    print('🔍 Day workouts: ${dayWorkouts.map((w) => w['name']).toList()}');
-    print('🔍 Workout keys: $workoutKeys');
-    print('🔍 Completed workouts: ${_workoutCompleted.keys.toList()}');
+    print('🔍 SchedulesController - Checking day completion for plan $planId, day $currentDay');
+    print('🔍 SchedulesController - Day workouts: ${dayWorkouts.map((w) => w['name']).toList()}');
+    print('🔍 SchedulesController - Workout keys: $workoutKeys');
+    print('🔍 SchedulesController - Completed workouts: ${_workoutCompleted.keys.toList()}');
+    
+    // Check completion status for each workout
+    print('🔍 SchedulesController - Checking completion status for ${workoutKeys.length} workouts...');
+    for (final key in workoutKeys) {
+      final isCompleted = _workoutCompleted[key] ?? false;
+      print('🔍 SchedulesController - Workout key "$key": completed=$isCompleted');
+      
+      // If not completed, check if the key exists in _workoutCompleted at all
+      if (!isCompleted && !_workoutCompleted.containsKey(key)) {
+        print('⚠️ SchedulesController - Workout key "$key" not found in _workoutCompleted map');
+        print('⚠️ SchedulesController - This might indicate a key mismatch between startWorkout() and _checkDayCompletion()');
+        print('⚠️ SchedulesController - All workout keys in map: ${_workoutCompleted.keys.toList()}');
+      }
+    }
     
     // Check if all workouts are completed
     bool allCompleted = workoutKeys.every((key) => _workoutCompleted[key] ?? false);
-    print('🔍 All workouts completed: $allCompleted');
+    print('🔍 SchedulesController - All workouts completed: $allCompleted (required: ${workoutKeys.length} workouts)');
+    
+    if (!allCompleted) {
+      final incompleteWorkouts = workoutKeys.where((key) => !(_workoutCompleted[key] ?? false)).toList();
+      print('⚠️ SchedulesController - Incomplete workouts: $incompleteWorkouts');
+      print('⚠️ SchedulesController - Day $currentDay is NOT ready for submission - waiting for all workouts to complete');
+      return; // Exit early - day is not complete
+    }
     
     if (allCompleted && workoutKeys.isNotEmpty) {
+      print('✅✅✅ SchedulesController - ========== ALL WORKOUTS COMPLETED FOR DAY $currentDay ==========');
+      print('✅✅✅ SchedulesController - Proceeding with submission to backend...');
+      print('✅ SchedulesController - ALL WORKOUTS COMPLETED - Proceeding with submission');
+      print('✅ SchedulesController - Plan ID: $planId, Day: $currentDay');
+      print('✅ SchedulesController - Workout count: ${workoutKeys.length}');
+      
       // Mark submission as in progress IMMEDIATELY to prevent duplicate calls
       _isSubmittingCompletion = true;
       _submissionInProgress[submissionKey] = true;
       
+      print('🔒 SchedulesController - Submission guard set: _isSubmittingCompletion=true, _submissionInProgress[$submissionKey]=true');
+      
       try {
-        print('🎉 Day $currentDay completed! Submitting completion...');
+        print('🎉 SchedulesController - ========== DAY $currentDay COMPLETED - STARTING SUBMISSION ==========');
+        print('🎉 SchedulesController - Day $currentDay completed! Submitting completion...');
+        print('🎉 SchedulesController - Plan ID: $planId');
+        print('🎉 SchedulesController - Current Day: $currentDay');
+        print('🎉 SchedulesController - Day Workouts: ${dayWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
         
         // CRITICAL: Submit completion BEFORE updating the day
         // This ensures we submit Day 1 data when currentDay is 1, not Day 2 data
-        await _submitDailyTrainingCompletion(activeSchedule, currentDay, dayWorkouts);
+        final submissionSuccess = await _submitDailyTrainingCompletion(activeSchedule, currentDay, dayWorkouts);
         
-        print('✅ Day $currentDay completion submitted successfully');
+        // CRITICAL: Only increment day if submission was successful
+        if (!submissionSuccess) {
+          print('❌ SchedulesController - ========== SUBMISSION FAILED - DAY WILL NOT BE INCREMENTED ==========');
+          print('❌ SchedulesController - Day $currentDay completion submission failed');
+          print('❌ SchedulesController - Backend returned an error - day will remain at $currentDay');
+          print('❌ SchedulesController - User must retry completing Day $currentDay workouts');
+          print('❌ SchedulesController - This prevents data loss and incorrect day progression');
+          return; // Exit early - don't increment day
+        }
+        
+        print('✅ SchedulesController - Day $currentDay completion submitted successfully');
         
         // ONLY AFTER successful submission, move to next day
         final newDay = currentDay + 1;
@@ -928,6 +1001,29 @@ class SchedulesController extends GetxController {
           final nextDayPlanId = await _createDailyPlanForDay(activeSchedule, newDay);
           if (nextDayPlanId != null) {
             print('✅ Schedules - Created daily plan for Day $newDay with daily_plan_id: $nextDayPlanId');
+            
+            // CRITICAL: Verify that Day $newDay is NOT marked as completed when created
+            // This prevents the backend from incorrectly marking Day 2 as completed when Day 1 is submitted
+            try {
+              await Future.delayed(const Duration(milliseconds: 500)); // Small delay for backend to save
+              final verifyNextDayPlan = await _dailyTrainingService.getDailyTrainingPlan(nextDayPlanId);
+              if (verifyNextDayPlan.isNotEmpty) {
+                final isCompleted = verifyNextDayPlan['is_completed'] as bool? ?? false;
+                final completedAt = verifyNextDayPlan['completed_at'] as String?;
+                
+                if (isCompleted && completedAt != null) {
+                  print('❌ SchedulesController - CRITICAL ERROR: Day $newDay plan was created but is ALREADY marked as completed!');
+                  print('❌ SchedulesController - completed_at: $completedAt');
+                  print('❌ SchedulesController - This is a BACKEND bug - Day $newDay should NOT be completed when created.');
+                  print('❌ SchedulesController - The backend is incorrectly marking Day $newDay as completed when Day $currentDay is submitted.');
+                  print('❌ SchedulesController - This needs to be fixed in the backend - frontend cannot fix this.');
+                } else {
+                  print('✅ SchedulesController - Verified Day $newDay plan is NOT marked as completed (correct state)');
+                }
+              }
+            } catch (verifyError) {
+              print('⚠️ SchedulesController - Could not verify Day $newDay plan completion status: $verifyError');
+            }
           } else {
             print('⚠️ Schedules - Failed to create daily plan for Day $newDay (will be created on-demand when needed)');
           }
@@ -953,6 +1049,10 @@ class SchedulesController extends GetxController {
         
         // Clear completed workouts for next day
         for (String key in workoutKeys) {
+          // Cancel timer if active
+          _activeTimers[key]?.cancel();
+          _activeTimers.remove(key);
+          
           _workoutCompleted.remove(key);
           _workoutStarted.remove(key);
           _workoutRemainingMinutes.remove(key);
@@ -966,17 +1066,29 @@ class SchedulesController extends GetxController {
         // Debug: Check what workouts will be shown for the new day
         final newDayWorkouts = _getDayWorkouts(activeSchedule, newDay);
         print('🔍 New day $newDay workouts: ${newDayWorkouts.map((w) => w['name']).toList()}');
+        
+        print('✅✅✅ SchedulesController - ========== DAY $currentDay COMPLETION FLOW FINISHED SUCCESSFULLY ==========');
+        print('✅✅✅ SchedulesController - Day $currentDay was submitted to backend');
+        print('✅✅✅ SchedulesController - Day incremented from $currentDay to $newDay');
+        print('✅✅✅ SchedulesController - API call was made: POST /api/dailyTraining/mobile/complete');
       } catch (e) {
-        print('❌ SchedulesController - Error during day completion: $e');
-        print('❌ SchedulesController - Error type: ${e.runtimeType}');
-        print('❌ SchedulesController - Error details: ${e.toString()}');
-        print('❌ SchedulesController - Stack trace: ${StackTrace.current}');
+        print('❌❌❌ SchedulesController - ========== ERROR DURING DAY COMPLETION ==========');
+        print('❌❌❌ SchedulesController - Day $currentDay completion FAILED - API call was NOT made!');
+        print('❌❌❌ SchedulesController - Error during day completion: $e');
+        print('❌❌❌ SchedulesController - Error type: ${e.runtimeType}');
+        print('❌❌❌ SchedulesController - Error details: ${e.toString()}');
+        print('❌❌❌ SchedulesController - Plan ID: $planId, Day: $currentDay');
+        print('❌❌❌ SchedulesController - Stack trace: ${StackTrace.current}');
+        print('❌❌❌ SchedulesController - Day was NOT incremented due to error');
+        print('❌❌❌ SchedulesController - This means Day $currentDay completion was NOT saved to backend!');
         // Don't update day if submission failed
         // Error is logged above - don't rethrow to allow finally block to clear guard
       } finally {
         // Always clear the submission flag, even if there was an error
+        print('🔓 SchedulesController - Clearing submission guard: _isSubmittingCompletion=false, removing _submissionInProgress[$submissionKey]');
         _isSubmittingCompletion = false;
         _submissionInProgress.remove(submissionKey);
+        print('🔓 SchedulesController - Submission guard cleared');
         print('✅ SchedulesController - Submission guard cleared for plan $planId, day $currentDay');
       }
     }
@@ -989,7 +1101,7 @@ class SchedulesController extends GetxController {
     final planId = int.tryParse(active['id']?.toString() ?? '') ?? 0;
     final currentDay = getCurrentDay(planId);
     return _getDayWorkouts(active, currentDay);
-        }
+  }
 
   // Helper: build workout key for a workout item of the active schedule
   String getWorkoutKeyForItem(Map<String, dynamic> item) {
@@ -1717,6 +1829,12 @@ class SchedulesController extends GetxController {
           for (final workout in dayWorkouts) {
             final workoutName = workout['name']?.toString() ?? workout['workout_name']?.toString() ?? '';
             final workoutKey = '${scheduleId}_${day}_$workoutName';
+            
+            // Cancel timer if active
+            _activeTimers[workoutKey]?.cancel();
+            _activeTimers.remove(workoutKey);
+            
+            print('✅ SchedulesController - Marking workout as completed from database: $workoutKey (Day $day)');
             _workoutCompleted[workoutKey] = true;
             _workoutStarted[workoutKey] = false;
             _workoutRemainingMinutes[workoutKey] = 0;
@@ -1763,14 +1881,29 @@ class SchedulesController extends GetxController {
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = _profileController.user?.id ?? 0;
+      if (userId == 0) {
+        print('⚠️ Schedules - No user ID, skipping active schedule load');
+        return;
+      }
+      
       final key = 'activeSchedule_user_$userId';
       final String? data = prefs.getString(key);
       
       if (data != null && data.isNotEmpty) {
         final Map<String, dynamic> snapshot = jsonDecode(data);
+        
+        // CRITICAL: Validate that the cached schedule belongs to the current user
+        final scheduleUserId = snapshot['user_id'] as int?;
+        if (scheduleUserId != null && scheduleUserId != userId) {
+          print('❌ Schedules - Cached active schedule ${snapshot['id']} belongs to user $scheduleUserId, but current user is $userId - clearing invalid cache');
+          await prefs.remove(key);
+          _activeSchedule.value = null;
+          return;
+        }
+        
         _activeSchedule.value = snapshot;
         final scheduleId = int.tryParse(snapshot['id']?.toString() ?? '');
-        print('📱 Schedules - Loaded active schedule snapshot from cache: ${snapshot['id']}');
+        print('📱 Schedules - Loaded active schedule snapshot from cache: ${snapshot['id']} (user_id: $scheduleUserId, validated for current user: $userId)');
         
         // Also load the current day for this schedule (if it exists)
         // IMPORTANT: Always check database first (source of truth), then fall back to cache
@@ -1785,6 +1918,11 @@ class SchedulesController extends GetxController {
             // completedDay is 1-based (from daily_plans), _currentDay is now also 1-based
             // If completedDay = 9 (Day 9 completed), we should resume at Day 10 (1-based)
             final nextDay = completedDay + 1; // completedDay is 1-based, next day is completedDay + 1
+              print('📱 Schedules - ⚠️ CRITICAL: Found completed day $completedDay in database');
+              print('📱 Schedules - ⚠️ This means Day $completedDay was marked as completed');
+              print('📱 Schedules - ⚠️ If Day 1 was just completed, this should be Day 1');
+              print('📱 Schedules - ⚠️ If Day 2 is showing as completed when only Day 1 was done, this is a BACKEND bug');
+              print('📱 Schedules - ⚠️ Resuming at day $nextDay (1-based)');
               _currentDay[scheduleId.toString()] = nextDay;
               _persistCurrentDayToCache(scheduleId, nextDay);
               print('📱 Schedules - ✅ Restored active schedule: found completed day $completedDay (1-based) in database, resuming at day $nextDay (1-based)');
@@ -1794,6 +1932,53 @@ class SchedulesController extends GetxController {
               final cachedDay = _currentDay[scheduleId.toString()];
               if (cachedDay != null) {
                 print('📱 Schedules - Loaded current day $cachedDay for schedule $scheduleId from cache (no completed days in database)');
+                
+                // CRITICAL: Validate that cached day is valid
+                // Before resetting, check backend API to see if it confirms the day
+                // This prevents false resets when database check misses completed days
+                if (cachedDay > 1) {
+                  print('⚠️ Schedules - ⚠️ WARNING: Cache shows Day $cachedDay, but no completed days found in database!');
+                  print('⚠️ Schedules - Checking backend API to verify if Day $cachedDay is correct...');
+                  
+                  try {
+                    // Check backend API to see what day it thinks we should be on
+                    final backendDay = await _getCurrentDayFromBackendPlans(scheduleId);
+                    if (backendDay != null && backendDay > 0) {
+                      if (backendDay == cachedDay) {
+                        // Backend confirms cached day is correct - trust it
+                        print('✅ Schedules - Backend API confirms Day $cachedDay is correct - keeping cached day');
+                        // Keep the cached day, don't reset
+                      } else if (backendDay < cachedDay) {
+                        // Backend says we should be on a lower day - use backend's value
+                        print('⚠️ Schedules - Backend says Day $backendDay, but cache says Day $cachedDay - using backend value');
+                        _currentDay[scheduleId.toString()] = backendDay;
+                        _persistCurrentDayToCache(scheduleId, backendDay);
+                      } else {
+                        // Backend says we should be on a higher day - use backend's value
+                        print('⚠️ Schedules - Backend says Day $backendDay, but cache says Day $cachedDay - using backend value');
+                        _currentDay[scheduleId.toString()] = backendDay;
+                        _persistCurrentDayToCache(scheduleId, backendDay);
+                      }
+                    } else {
+                      // Backend didn't return a day - be conservative and reset to Day 1
+                      print('⚠️ Schedules - Backend API did not return a day, and no completed days in database');
+                      print('⚠️ Schedules - This means Day ${cachedDay - 1} was never completed, but cache thinks we\'re on Day $cachedDay');
+                      print('⚠️ Schedules - Resetting to Day 1 to prevent skipping incomplete days');
+                      _currentDay[scheduleId.toString()] = 1;
+                      _persistCurrentDayToCache(scheduleId, 1);
+                      print('✅ Schedules - Reset to Day 1 (cache was invalid - Day ${cachedDay - 1} was never completed)');
+                    }
+                  } catch (e) {
+                    print('⚠️ Schedules - Error checking backend API for day validation: $e');
+                    print('⚠️ Schedules - Keeping cached day $cachedDay (error prevented validation)');
+                    // On error, keep the cached day rather than resetting
+                  }
+                }
+              } else {
+                // No cache, start at Day 1
+                _currentDay[scheduleId.toString()] = 1;
+                _persistCurrentDayToCache(scheduleId, 1);
+                print('📱 Schedules - No cached day found, starting at Day 1');
               }
             }
             
@@ -1875,6 +2060,48 @@ class SchedulesController extends GetxController {
       print('🗑️ Schedules - Cleared active schedule snapshot');
     } catch (e) {
       print('❌ Schedules - Error clearing active schedule snapshot: $e');
+    }
+  }
+
+  Future<void> _clearActiveScheduleFromCache() async {
+    await _clearActiveScheduleSnapshotIfStopped();
+  }
+
+  /// Clear all user data when user logs out or switches users
+  /// CRITICAL: This ensures no data from previous user is shown to new user
+  Future<void> clearAllUserData() async {
+    try {
+      print('🧹 SchedulesController - Clearing all user data (user switch/logout)...');
+      
+      // Clear in-memory state
+      _activeSchedule.value = null;
+      _startedSchedules.clear();
+      _currentDay.clear();
+      _workoutStarted.clear();
+      _workoutRemainingMinutes.clear();
+      _workoutCompleted.clear();
+      _completedWorkouts.clear();
+      _workoutTimers.clear();
+      assignments.clear();
+      
+      // Clear cache for current user (if available)
+      final prefs = await SharedPreferences.getInstance();
+      final userId = _profileController.user?.id ?? 0;
+      if (userId > 0) {
+        await prefs.remove('activeSchedule_user_$userId');
+        await prefs.remove('startedSchedules_user_$userId');
+        // Clear all day caches for this user
+        final allKeys = prefs.getKeys();
+        for (final key in allKeys) {
+          if (key.startsWith('schedule_day_') && key.endsWith('_user_$userId')) {
+            await prefs.remove(key);
+          }
+        }
+      }
+      
+      print('✅ SchedulesController - All user data cleared');
+    } catch (e) {
+      print('❌ SchedulesController - Error clearing user data: $e');
     }
   }
 
@@ -2024,6 +2251,25 @@ class SchedulesController extends GetxController {
       }).toList();
       
       print('📅 SchedulesController - Found ${assignmentPlans.length} plans for assignment $scheduleId');
+      
+      // CRITICAL: Log all completed plans to verify if Day 1 was submitted
+      final completedPlansBeforeFiltering = assignmentPlans.where((plan) {
+        final isCompleted = plan['is_completed'] as bool? ?? false;
+        final completedAt = plan['completed_at'] as String?;
+        return isCompleted && completedAt != null && completedAt.isNotEmpty;
+      }).toList();
+      
+      if (completedPlansBeforeFiltering.isNotEmpty) {
+        print('📅 SchedulesController - ⚠️ CRITICAL: Found ${completedPlansBeforeFiltering.length} completed plans in database:');
+        for (final plan in completedPlansBeforeFiltering) {
+          print('  - Plan id=${plan['id']}, plan_date=${plan['plan_date']}, is_completed=${plan['is_completed']}, completed_at=${plan['completed_at']}');
+        }
+        print('📅 SchedulesController - ⚠️ If Day 1 was just completed, there should be exactly 1 completed plan (Day 1)');
+        print('📅 SchedulesController - ⚠️ If Day 2 is also completed, this is a BACKEND bug');
+      } else {
+        print('📅 SchedulesController - ✅ No completed plans found in database - Day 1 was NOT submitted');
+        print('📅 SchedulesController - ✅ This means workouts were completed but submission did not happen');
+      }
       
       // Extract start_date from assignment (actualPlan already extracted above)
       // We need this BEFORE filtering by date range. However, in some edge‑cases
@@ -2670,13 +2916,21 @@ class SchedulesController extends GetxController {
   }
 
   // Submit daily training completion to API
-  Future<void> _submitDailyTrainingCompletion(
+  // Returns true if submission was successful, false otherwise
+  Future<bool> _submitDailyTrainingCompletion(
     Map<String, dynamic> activeSchedule,
     int currentDay,
     List<Map<String, dynamic>> dayWorkouts,
   ) async {
+    print('🚀🚀🚀 SchedulesController - ========== _submitDailyTrainingCompletion() CALLED ==========');
+    print('🚀🚀🚀 SchedulesController - This function is responsible for calling the API endpoint');
+    print('🚀🚀🚀 SchedulesController - Day: $currentDay');
+    print('🚀🚀🚀 SchedulesController - Day workouts count: ${dayWorkouts.length}');
+    print('🚀🚀🚀 SchedulesController - Day workouts: ${dayWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+    
     try {
       final planId = int.tryParse(activeSchedule['id']?.toString() ?? '') ?? 0;
+      print('🚀🚀🚀 SchedulesController - Plan ID: $planId');
       
       // CRITICAL: Validate that we're submitting for the correct day
       // Double-check that the current day hasn't changed during async operations
@@ -2692,7 +2946,8 @@ class SchedulesController extends GetxController {
         print('❌ SchedulesController - Actual day is GREATER than requested - day was incremented before submission!');
         print('❌ SchedulesController - This submission is for the WRONG day - ABORTING to prevent incorrect data storage');
         print('❌ SchedulesController - This likely means the day was updated before submission completed');
-        return; // Don't submit if day has been incremented
+        print('❌ SchedulesController - Returning false - submission aborted due to day mismatch');
+        return false; // Don't submit if day has been incremented
       } else if (actualCurrentDay != currentDay && actualCurrentDay < currentDay) {
         // If actualCurrentDay is less, it might be uninitialized - log but allow submission
         print('⚠️ SchedulesController - Day mismatch: requested=$currentDay, actual=$actualCurrentDay (actual is less)');
@@ -2875,12 +3130,89 @@ class SchedulesController extends GetxController {
       
       print('✅ SchedulesController - daily_plan_id validated: $dailyPlanId (valid for submission)');
       
+      // CRITICAL: Verify that the daily_plan_id corresponds to the correct day BEFORE submission
+      // This prevents submitting completion for the wrong day
+      try {
+        print('🔍 SchedulesController - Verifying daily_plan_id $dailyPlanId corresponds to Day $currentDay...');
+        final verifyPlan = await _dailyTrainingService.getDailyTrainingPlan(dailyPlanId);
+        if (verifyPlan.isNotEmpty) {
+          final verifyPlanDate = verifyPlan['plan_date'] as String?;
+          final verifyIsCompleted = verifyPlan['is_completed'] as bool? ?? false;
+          final verifyCompletedAt = verifyPlan['completed_at'] as String?;
+          
+          // Map plan_date to day number to verify it matches currentDay
+          final assignmentDetails = await getAssignmentDetails(planId);
+          Map<String, dynamic> actualPlan = assignmentDetails;
+          if (assignmentDetails.containsKey('success') && assignmentDetails.containsKey('data')) {
+            actualPlan = assignmentDetails['data'] ?? {};
+          }
+          
+          final dailyPlansRaw = actualPlan['daily_plans'];
+          List<Map<String, dynamic>> dailyPlans = [];
+          if (dailyPlansRaw != null) {
+            if (dailyPlansRaw is String) {
+              try {
+                final parsed = jsonDecode(dailyPlansRaw) as List?;
+                if (parsed != null) {
+                  dailyPlans = parsed.cast<Map<String, dynamic>>();
+                }
+              } catch (e) {}
+            } else if (dailyPlansRaw is List) {
+              dailyPlans = dailyPlansRaw.cast<Map<String, dynamic>>();
+            }
+          }
+          
+          final dateToDayNumber = <String, int>{};
+          for (final dp in dailyPlans) {
+            final dayNum = int.tryParse(dp['day']?.toString() ?? '') ?? 0;
+            final dateStr = dp['date']?.toString();
+            if (dayNum > 0 && dateStr != null) {
+              final d = DateTime.tryParse(dateStr);
+              if (d != null) {
+                final normalized = DateTime.utc(d.year, d.month, d.day).toIso8601String().split('T').first;
+                dateToDayNumber[normalized] = dayNum;
+              }
+            }
+          }
+          
+          if (verifyPlanDate != null) {
+            final verifyDate = DateTime.tryParse(verifyPlanDate);
+            if (verifyDate != null) {
+              final normalized = DateTime.utc(verifyDate.year, verifyDate.month, verifyDate.day).toIso8601String().split('T').first;
+              final mappedDay = dateToDayNumber[normalized];
+              
+              if (mappedDay != null && mappedDay != currentDay) {
+                print('❌ SchedulesController - CRITICAL ERROR: daily_plan_id $dailyPlanId corresponds to Day $mappedDay, not Day $currentDay!');
+                print('❌ SchedulesController - This would cause Day $mappedDay to be marked as completed instead of Day $currentDay!');
+                print('❌ SchedulesController - ABORTING submission to prevent incorrect data storage');
+                throw Exception('daily_plan_id $dailyPlanId corresponds to Day $mappedDay, not Day $currentDay');
+              }
+              
+              if (verifyIsCompleted && verifyCompletedAt != null) {
+                print('❌ SchedulesController - CRITICAL ERROR: daily_plan_id $dailyPlanId is already marked as completed!');
+                print('❌ SchedulesController - completed_at: $verifyCompletedAt');
+                print('❌ SchedulesController - This day should not be completed yet - ABORTING submission');
+                throw Exception('daily_plan_id $dailyPlanId is already marked as completed');
+              }
+              
+              print('✅ SchedulesController - Verified daily_plan_id $dailyPlanId corresponds to Day $currentDay and is not yet completed');
+            }
+          }
+        }
+      } catch (e) {
+        print('❌ SchedulesController - CRITICAL: Validation failed before submission: $e');
+        rethrow; // Don't proceed with submission if validation fails
+      }
+      
       // Create completion data for each workout
       // CRITICAL: Get item IDs from the ASSIGNMENT's exercises_details, not the daily plan's
       // The item_id should be the 1-based index in the assignment's full exercises_details array,
       // not the daily plan's subset. This ensures we submit the correct item_ids that match
       // the backend's expectations.
       Map<String, int> workoutNameToItemId = {};
+      List<Map<String, dynamic>> allExercises = [];
+      final dayWorkoutNames = dayWorkouts.map((w) => (w['name'] ?? w['workout_name'] ?? '').toString().toLowerCase()).toSet();
+      
       try {
         // Get assignment details to access the full exercises_details array
         final assignmentDetails = await getAssignmentDetails(planId);
@@ -2891,7 +3223,6 @@ class SchedulesController extends GetxController {
         
         // Parse the assignment's exercises_details (full array, not daily subset)
         dynamic exercisesDetails = actualPlan['exercises_details'];
-        List<Map<String, dynamic>> allExercises = [];
         if (exercisesDetails is List && exercisesDetails.isNotEmpty) {
           allExercises = exercisesDetails.cast<Map<String, dynamic>>();
             } else if (exercisesDetails is String) {
@@ -2908,9 +3239,6 @@ class SchedulesController extends GetxController {
         print('📊 SchedulesController - Assignment exercises_details for item_id mapping:');
         print('  - Total exercises in assignment: ${allExercises.length}');
         print('  - Expected workouts for Day $currentDay: ${dayWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
-        
-        // Get the set of workout names for the current day (for validation)
-        final dayWorkoutNames = dayWorkouts.map((w) => (w['name'] ?? w['workout_name'] ?? '').toString().toLowerCase()).toSet();
         
         // Map workout names to item IDs using the ASSIGNMENT's full exercises_details array
         // item_id is the 1-based index in the assignment's exercises_details array
@@ -3004,12 +3332,76 @@ class SchedulesController extends GetxController {
                      workoutNameToItemId[workoutName] ??
                      0;
         
-        // CRITICAL: If item_id is 0, we cannot submit this workout - it means we couldn't find it in the assignment
+        // CRITICAL: If item_id is 0, try fallback strategies before skipping
         if (itemId == 0) {
-          print('❌ SchedulesController - CRITICAL ERROR: Could not find item_id for workout "$workoutName" in assignment exercises_details');
-          print('❌ SchedulesController - This workout will NOT be submitted - skipping to prevent incorrect data storage');
-          print('❌ SchedulesController - Available mappings: ${workoutNameToItemId.keys.toList()}');
-          continue; // Skip this workout - don't submit it with wrong item_id
+          print('⚠️ SchedulesController - Could not find item_id for workout "$workoutName" in assignment exercises_details');
+          print('⚠️ SchedulesController - Workout name: "$workoutName" (lowercase: "$workoutNameLower")');
+          print('⚠️ SchedulesController - Available mappings: ${workoutNameToItemId.keys.toList()}');
+          print('⚠️ SchedulesController - Attempting fallback strategies...');
+          
+          // FALLBACK 1: Try to find by matching workout properties (sets, reps, weight, minutes)
+          bool foundByProperties = false;
+          for (int i = 0; i < allExercises.length; i++) {
+            final exercise = allExercises[i];
+            final exerciseName = (exercise['workout_name'] ?? exercise['name'] ?? exercise['exercise_name'] ?? '').toString().trim();
+            final exerciseNameLower = exerciseName.toLowerCase();
+            
+            // Check if this exercise is in dayWorkouts (same day)
+            final isInDayWorkouts = dayWorkoutNames.contains(exerciseNameLower);
+            if (!isInDayWorkouts) continue;
+            
+            // Try to match by properties
+            final workoutSets = int.tryParse(workout['sets']?.toString() ?? '0') ?? 0;
+            final workoutReps = int.tryParse(workout['reps']?.toString() ?? '0') ?? 0;
+            final workoutWeight = double.tryParse(workout['weight_kg']?.toString() ?? '0') ?? 0.0;
+            final workoutMinutes = int.tryParse(workout['minutes']?.toString() ?? '0') ?? 0;
+            
+            final exerciseSets = int.tryParse(exercise['sets']?.toString() ?? '0') ?? 0;
+            final exerciseReps = int.tryParse(exercise['reps']?.toString() ?? '0') ?? 0;
+            final exerciseWeight = double.tryParse(exercise['weight_kg']?.toString() ?? '0') ?? 0.0;
+            final exerciseMinutes = int.tryParse(exercise['minutes']?.toString() ?? '0') ?? 0;
+            
+            if (workoutSets == exerciseSets && workoutReps == exerciseReps && 
+                workoutWeight == exerciseWeight && workoutMinutes == exerciseMinutes) {
+              itemId = i + 1; // 1-based index
+              foundByProperties = true;
+              print('✅ SchedulesController - Found item_id $itemId by matching properties for workout "$workoutName"');
+              break;
+            }
+          }
+          
+          // FALLBACK 2: Use index in dayWorkouts as last resort (not ideal, but better than skipping)
+          if (!foundByProperties && workoutIndex < dayWorkouts.length) {
+            // Try to find the workout's position in the assignment's exercises_details
+            // by matching it to exercises that are in dayWorkouts
+            final dayWorkoutIndex = workoutIndex;
+            final matchingDayExercises = <int>[];
+            
+            for (int i = 0; i < allExercises.length; i++) {
+              final exercise = allExercises[i];
+              final exerciseName = (exercise['workout_name'] ?? exercise['name'] ?? exercise['exercise_name'] ?? '').toString().trim();
+              final exerciseNameLower = exerciseName.toLowerCase();
+              if (dayWorkoutNames.contains(exerciseNameLower)) {
+                matchingDayExercises.add(i + 1); // 1-based index
+              }
+            }
+            
+            if (dayWorkoutIndex < matchingDayExercises.length) {
+              itemId = matchingDayExercises[dayWorkoutIndex];
+              print('⚠️ SchedulesController - Using fallback: item_id $itemId (index $dayWorkoutIndex in day workouts) for workout "$workoutName"');
+              print('⚠️ SchedulesController - This is a fallback - name matching failed, but using position-based item_id');
+            } else {
+              print('❌ SchedulesController - CRITICAL ERROR: All fallback strategies failed for workout "$workoutName"');
+              print('❌ SchedulesController - This workout will NOT be submitted - skipping to prevent incorrect data storage');
+              print('❌ SchedulesController - ⚠️ WARNING: If ALL workouts have item_id=0, completionData will be empty and API call will NOT be made!');
+              continue; // Skip this workout - all fallbacks failed
+            }
+          } else if (!foundByProperties) {
+            print('❌ SchedulesController - CRITICAL ERROR: All fallback strategies failed for workout "$workoutName"');
+            print('❌ SchedulesController - This workout will NOT be submitted - skipping to prevent incorrect data storage');
+            print('❌ SchedulesController - ⚠️ WARNING: If ALL workouts have item_id=0, completionData will be empty and API call will NOT be made!');
+            continue; // Skip this workout - all fallbacks failed
+          }
         } else {
           print('✅ SchedulesController - Found item_id $itemId (1-based index in assignment array) for workout "$workoutName"');
         }
@@ -3087,21 +3479,41 @@ class SchedulesController extends GetxController {
       
       print('✅ SchedulesController - Validation passed: completionData count matches dayWorkouts count');
       
-      if (completionData.isNotEmpty) {
-        // Submit to API using the correct daily_plan_id (dailyPlanId is guaranteed to be non-null at this point)
-        try {
-          print('📤 SchedulesController - Submitting daily training completion to API:');
-          print('  - daily_plan_id: $dailyPlanId');
-          print('  - currentDay: $currentDay (ONLY Day $currentDay workouts should be submitted)');
-          print('  - completion_data count: ${completionData.length}');
-          print('  - completion_data: $completionData');
+      // CRITICAL: Check if completionData is empty - this would prevent API call
+      if (completionData.isEmpty) {
+        print('❌ SchedulesController - ========== CRITICAL ERROR: completionData is EMPTY ==========');
+        print('❌ SchedulesController - API call will NOT be made because completionData is empty!');
+        print('❌ SchedulesController - This means no workouts were added to completionData');
+        print('❌ SchedulesController - Plan ID: $planId, Day: $currentDay');
+        print('❌ SchedulesController - Day workouts count: ${dayWorkouts.length}');
+        print('❌ SchedulesController - Day workouts: ${dayWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList()}');
+        print('❌ SchedulesController - Possible causes:');
+        print('  1. All workouts were skipped due to missing item_id (most likely)');
+        print('  2. dayWorkouts is empty');
+        print('  3. Workout name mismatch preventing item_id lookup');
+        print('❌ SchedulesController - Available item_id mappings: ${workoutNameToItemId.entries.map((e) => '${e.key}: ${e.value}').join(", ")}');
+        print('❌ SchedulesController - Day $currentDay completion will NOT be saved to database!');
+        print('❌ SchedulesController - This is a CRITICAL issue - the API endpoint will NOT be called!');
+        throw Exception('Cannot submit completion: completionData is empty - no workouts to submit. All workouts likely have item_id=0 due to name mismatch.');
+      }
+      
+      // Submit to API using the correct daily_plan_id (dailyPlanId is guaranteed to be non-null at this point)
+      try {
+        print('📤 SchedulesController - ========== CALLING API: POST /api/dailyTraining/mobile/complete ==========');
+        print('📤 SchedulesController - Submitting daily training completion to API:');
+        print('  - daily_plan_id: $dailyPlanId');
+        print('  - currentDay: $currentDay (ONLY Day $currentDay workouts should be submitted)');
+        print('  - completion_data count: ${completionData.length}');
+        print('  - completion_data: $completionData');
+        print('📤 SchedulesController - Endpoint: POST /api/dailyTraining/mobile/complete');
+        print('📤 SchedulesController - Payload: {daily_plan_id: $dailyPlanId, completion_data: $completionData}');
+        
+        await _submitCompletionToAPI(
+          dailyPlanId: dailyPlanId!,
+          completionData: completionData,
+        );
           
-          await _submitCompletionToAPI(
-            dailyPlanId: dailyPlanId!,
-            completionData: completionData,
-          );
-          
-          print('✅ Daily training completion submitted successfully with daily_plan_id: $dailyPlanId');
+        print('✅ Daily training completion submitted successfully with daily_plan_id: $dailyPlanId');
           
           // CRITICAL: Verify completion was persisted (backend now uses transactions)
           // Check both is_completed AND completed_at (backend requires both)
@@ -3249,6 +3661,19 @@ class SchedulesController extends GetxController {
               }
               print('❌ SchedulesController - This is a BACKEND bug - the backend is marking multiple days as completed in a single transaction.');
               print('❌ SchedulesController - Backend should ONLY mark the specific daily_plan_id ($dailyPlanId) as completed, not other days.');
+              
+              // CRITICAL: Check if the next day (currentDay + 1) is incorrectly marked as completed
+              // If so, prevent progression to avoid showing incorrect state
+              final nextDay = currentDay + 1;
+              final nextDayIncorrectlyCompleted = incorrectlyCompleted.where((bad) => bad['day'] == nextDay).isNotEmpty;
+              if (nextDayIncorrectlyCompleted) {
+                print('❌ SchedulesController - CRITICAL: Day $nextDay is incorrectly marked as completed!');
+                print('❌ SchedulesController - This will prevent the user from starting Day $nextDay workouts.');
+                print('❌ SchedulesController - This is a BACKEND bug that needs to be fixed.');
+                print('❌ SchedulesController - Frontend cannot fix this - backend must be corrected.');
+                // Don't throw - let the error be logged but continue
+                // The backend bug needs to be fixed, but we shouldn't crash the app
+              }
           } else {
               print('✅ SchedulesController - Verification passed: Only Day $currentDay was marked as completed (no backend bug detected)');
           }
@@ -3282,14 +3707,49 @@ class SchedulesController extends GetxController {
             }
           } catch (_) {}
           
-          // CRITICAL: Log this as a critical failure that needs attention
-          // The completion was NOT saved to the database
-          print('❌ SchedulesController - ⚠️⚠️⚠️ CRITICAL: Workout completion was NOT saved to database ⚠️⚠️⚠️');
-          print('❌ SchedulesController - User completed Day $currentDay workouts but they were not persisted');
-          print('❌ SchedulesController - This needs immediate attention - check backend logs and fix the issue');
+          // CRITICAL: Even if API call failed, check if the day was actually completed in the database
+          // The backend might have completed the day even though it returned an error (backend bug)
+          // This ensures we don't block progression if the backend actually saved the data
+          print('🔍 SchedulesController - API call failed, but checking database to see if Day $currentDay was actually completed...');
+          bool dayWasActuallyCompleted = false;
           
-          // Don't throw - continue with stats refresh even if submission failed
-          // But ensure the error is prominently logged so it's not missed
+          if (dailyPlanId != null) {
+            try {
+              await Future.delayed(const Duration(milliseconds: 1000)); // Wait for backend to potentially save
+              final checkDailyPlan = await _dailyTrainingService.getDailyTrainingPlan(dailyPlanId);
+              
+              if (checkDailyPlan.isNotEmpty) {
+                final isCompleted = checkDailyPlan['is_completed'] as bool? ?? false;
+                final completedAt = checkDailyPlan['completed_at'] as String?;
+                
+                if (isCompleted && completedAt != null && completedAt.isNotEmpty) {
+                  dayWasActuallyCompleted = true;
+                  print('✅ SchedulesController - Day $currentDay WAS actually completed in database despite API error!');
+                  print('✅ SchedulesController - is_completed: $isCompleted, completed_at: $completedAt');
+                  print('✅ SchedulesController - Backend completed the day but returned an error (backend bug)');
+                  print('✅ SchedulesController - Proceeding with day progression since data was saved');
+                } else {
+                  print('❌ SchedulesController - Day $currentDay was NOT completed in database');
+                  print('❌ SchedulesController - is_completed: $isCompleted, completed_at: ${completedAt != null ? "set" : "null"}');
+                }
+              }
+            } catch (checkError) {
+              print('⚠️ SchedulesController - Could not check if day was completed: $checkError');
+            }
+          }
+          
+          if (dayWasActuallyCompleted) {
+            // Day was completed despite API error - return true to allow progression
+            print('✅ SchedulesController - Returning true - day was completed in database, allowing progression');
+            return true;
+          } else {
+            // Day was NOT completed - return false to prevent progression
+            print('❌ SchedulesController - ⚠️⚠️⚠️ CRITICAL: Workout completion was NOT saved to database ⚠️⚠️⚠️');
+            print('❌ SchedulesController - User completed Day $currentDay workouts but they were not persisted');
+            print('❌ SchedulesController - This needs immediate attention - check backend logs and fix the issue');
+            print('❌ SchedulesController - Returning false - submission FAILED, day will NOT be incremented');
+            return false; // Return false to indicate failure
+          }
         }
         
         // CRITICAL: Refresh stats after completion (same as manual plans do)
@@ -3303,12 +3763,15 @@ class SchedulesController extends GetxController {
         } catch (e) {
           print('⚠️ SchedulesController - Error refreshing stats after completion: $e');
         }
-      } else {
-        print('⚠️ SchedulesController - No completion data to submit');
-      }
+        
+        // Return true to indicate successful submission
+        print('✅ SchedulesController - Returning true - submission SUCCEEDED, day can be incremented');
+        return true;
     } catch (e) {
-      print('❌ Failed to submit daily training completion: $e');
-      // Don't throw error to avoid breaking the workout flow
+      print('❌ SchedulesController - Failed to submit daily training completion: $e');
+      print('❌ SchedulesController - Error type: ${e.runtimeType}');
+      print('❌ SchedulesController - Returning false - submission FAILED, day will NOT be incremented');
+      return false; // Return false to indicate failure
     }
   }
 
@@ -3899,11 +4362,29 @@ class SchedulesController extends GetxController {
   }
 
   /// Check for active plans from any tab (Plans, Schedules, etc.)
+  /// CRITICAL: Only returns active plans that belong to the current user
   Future<Map<String, dynamic>?> _getAnyActivePlan() async {
+    final currentUserId = _profileController.user?.id;
+    if (currentUserId == null) {
+      print('⚠️ SchedulesController - No current user ID, cannot check for active plans');
+      return null;
+    }
+    
     // Check Schedules tab active plan
     if (_activeSchedule.value != null) {
-      print('🔍 SchedulesController - Found active plan in Schedules tab: ${_activeSchedule.value!['id']}');
-      return _activeSchedule.value;
+      final schedule = _activeSchedule.value!;
+      final scheduleUserId = schedule['user_id'] as int?;
+      
+      // CRITICAL: Validate that the active schedule belongs to the current user
+      if (scheduleUserId != null && scheduleUserId == currentUserId) {
+        print('🔍 SchedulesController - Found active plan in Schedules tab: ${schedule['id']} (user_id: $scheduleUserId matches current user: $currentUserId)');
+        return schedule;
+      } else {
+        print('❌ SchedulesController - Active schedule ${schedule['id']} belongs to user $scheduleUserId, but current user is $currentUserId - clearing invalid active plan');
+        // Clear invalid active plan (belongs to different user)
+        _activeSchedule.value = null;
+        await _clearActiveScheduleFromCache();
+      }
     }
     
     // Check Plans tab active plan
@@ -3911,15 +4392,24 @@ class SchedulesController extends GetxController {
       if (Get.isRegistered<PlansController>()) {
         final plansController = Get.find<PlansController>();
         if (plansController.activePlan != null) {
-          print('🔍 SchedulesController - Found active plan in Plans tab: ${plansController.activePlan!['id']}');
-          return plansController.activePlan;
+          final plan = plansController.activePlan!;
+          final planUserId = plan['user_id'] as int?;
+          
+          // CRITICAL: Validate that the active plan belongs to the current user
+          if (planUserId != null && planUserId == currentUserId) {
+            print('🔍 SchedulesController - Found active plan in Plans tab: ${plan['id']} (user_id: $planUserId matches current user: $currentUserId)');
+            return plan;
+          } else {
+            print('❌ SchedulesController - Active plan ${plan['id']} belongs to user $planUserId, but current user is $currentUserId - this should be cleared by PlansController');
+            // Don't clear here - PlansController should handle it, but log the issue
+          }
         }
       }
     } catch (e) {
       print('⚠️ SchedulesController - Could not check PlansController: $e');
     }
     
-    print('🔍 SchedulesController - No active plans found in any tab');
+    print('🔍 SchedulesController - No active plans found in any tab for current user: $currentUserId');
     return null;
   }
 

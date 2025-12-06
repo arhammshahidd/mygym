@@ -1271,11 +1271,29 @@ class PlansController extends GetxController {
   }
 
   /// Check for active plans from any tab (Plans, Schedules, etc.)
+  /// CRITICAL: Only returns active plans that belong to the current user
   Future<Map<String, dynamic>?> _getAnyActivePlan() async {
+    final currentUserId = _profileController.user?.id;
+    if (currentUserId == null) {
+      print('⚠️ PlansController - No current user ID, cannot check for active plans');
+      return null;
+    }
+    
     // Check Plans tab active plan
     if (_activePlan.value != null) {
-      print('🔍 PlansController - Found active plan in Plans tab: ${_activePlan.value!['id']}');
-      return _activePlan.value;
+      final plan = _activePlan.value!;
+      final planUserId = plan['user_id'] as int?;
+      
+      // CRITICAL: Validate that the active plan belongs to the current user
+      if (planUserId != null && planUserId == currentUserId) {
+        print('🔍 PlansController - Found active plan in Plans tab: ${plan['id']} (user_id: $planUserId matches current user: $currentUserId)');
+        return plan;
+      } else {
+        print('❌ PlansController - Active plan ${plan['id']} belongs to user $planUserId, but current user is $currentUserId - clearing invalid active plan');
+        // Clear invalid active plan (belongs to different user)
+        _activePlan.value = null;
+        await _clearActivePlanFromCache();
+      }
     }
     
     // Check Schedules tab active plan
@@ -1283,15 +1301,24 @@ class PlansController extends GetxController {
       if (Get.isRegistered<SchedulesController>()) {
         final schedulesController = Get.find<SchedulesController>();
         if (schedulesController.activeSchedule != null) {
-          print('🔍 PlansController - Found active plan in Schedules tab: ${schedulesController.activeSchedule!['id']}');
-          return schedulesController.activeSchedule;
+          final schedule = schedulesController.activeSchedule!;
+          final scheduleUserId = schedule['user_id'] as int?;
+          
+          // CRITICAL: Validate that the active schedule belongs to the current user
+          if (scheduleUserId != null && scheduleUserId == currentUserId) {
+            print('🔍 PlansController - Found active plan in Schedules tab: ${schedule['id']} (user_id: $scheduleUserId matches current user: $currentUserId)');
+            return schedule;
+          } else {
+            print('❌ PlansController - Active schedule ${schedule['id']} belongs to user $scheduleUserId, but current user is $currentUserId - this should be cleared by SchedulesController');
+            // Don't clear here - SchedulesController should handle it, but log the issue
+          }
         }
       }
     } catch (e) {
       print('⚠️ PlansController - Could not check SchedulesController: $e');
     }
     
-    print('🔍 PlansController - No active plans found in any tab');
+    print('🔍 PlansController - No active plans found in any tab for current user: $currentUserId');
     return null;
   }
 
@@ -2773,14 +2800,29 @@ class PlansController extends GetxController {
     try {
       final prefs = await SharedPreferences.getInstance();
       final userId = _profileController.user?.id ?? 0;
+      if (userId == 0) {
+        print('⚠️ Plans - No user ID, skipping active plan load');
+        return;
+      }
+      
       final key = 'activePlan_user_$userId';
       final String? data = prefs.getString(key);
       
       if (data != null && data.isNotEmpty) {
         final Map<String, dynamic> snapshot = jsonDecode(data);
+        
+        // CRITICAL: Validate that the cached plan belongs to the current user
+        final planUserId = snapshot['user_id'] as int?;
+        if (planUserId != null && planUserId != userId) {
+          print('❌ Plans - Cached active plan ${snapshot['id']} belongs to user $planUserId, but current user is $userId - clearing invalid cache');
+          await prefs.remove(key);
+          _activePlan.value = null;
+          return;
+        }
+        
         _activePlan.value = snapshot;
         final planId = int.tryParse(snapshot['id']?.toString() ?? '');
-        print('📱 Plans - Loaded active plan snapshot from cache: $planId');
+        print('📱 Plans - Loaded active plan snapshot from cache: $planId (user_id: $planUserId, validated for current user: $userId)');
         
         // When restoring active plan, check database for completed days
         if (planId != null) {
@@ -2870,6 +2912,50 @@ class PlansController extends GetxController {
       print('🗑️ Plans - Cleared active plan snapshot');
     } catch (e) {
       print('❌ Plans - Error clearing active plan snapshot: $e');
+    }
+  }
+
+  Future<void> _clearActivePlanFromCache() async {
+    await _clearActivePlanSnapshotIfStopped();
+  }
+
+  /// Clear all user data when user logs out or switches users
+  /// CRITICAL: This ensures no data from previous user is shown to new user
+  Future<void> clearAllUserData() async {
+    try {
+      print('🧹 PlansController - Clearing all user data (user switch/logout)...');
+      
+      // Clear in-memory state
+      _activePlan.value = null;
+      _startedPlans.clear();
+      _currentDay.clear();
+      _workoutStarted.clear();
+      _workoutRemainingMinutes.clear();
+      _workoutCompleted.clear();
+      manualPlans.clear();
+      aiGeneratedPlans.clear();
+      planToApprovalId.clear();
+      planApprovalStatus.clear();
+      
+      // Clear cache for current user (if available)
+      final prefs = await SharedPreferences.getInstance();
+      final userId = _profileController.user?.id ?? 0;
+      if (userId > 0) {
+        await prefs.remove('activePlan_user_$userId');
+        await prefs.remove('startedPlans_user_$userId');
+        await prefs.remove('planApprovalIds_user_$userId');
+        // Clear all day caches for this user
+        final allKeys = prefs.getKeys();
+        for (final key in allKeys) {
+          if ((key.startsWith('plan_day_') || key.startsWith('planDay_')) && key.endsWith('_user_$userId')) {
+            await prefs.remove(key);
+          }
+        }
+      }
+      
+      print('✅ PlansController - All user data cleared');
+    } catch (e) {
+      print('❌ PlansController - Error clearing user data: $e');
     }
   }
 

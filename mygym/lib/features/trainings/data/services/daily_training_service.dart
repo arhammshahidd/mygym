@@ -84,6 +84,12 @@ class DailyTrainingService {
     required int dailyPlanId,
     required List<Map<String, dynamic>> completionData,
   }) async {
+    print('🚀 DailyTrainingService.submitCompletion - START');
+    print('🚀 DailyTrainingService.submitCompletion - Called with:');
+    print('  - daily_plan_id: $dailyPlanId');
+    print('  - completion_data count: ${completionData.length}');
+    print('  - completion_data: $completionData');
+    
     final dio = await _authedDio();
     
     final payload = {
@@ -91,13 +97,17 @@ class DailyTrainingService {
       'completion_data': completionData,
     };
     
-    print('🔍 Submitting daily training completion:');
-    print('Endpoint: /api/dailyTraining/mobile/complete');
-    print('Payload: $payload');
+    print('🔍 DailyTrainingService - Submitting daily training completion:');
+    print('🔍 DailyTrainingService - Endpoint: POST /api/dailyTraining/mobile/complete');
+    print('🔍 DailyTrainingService - Payload: $payload');
+    print('🔍 DailyTrainingService - About to make HTTP POST request...');
       // Do not print Authorization header
     
     try {
+      print('📡 DailyTrainingService - Making HTTP POST request to /api/dailyTraining/mobile/complete');
       final res = await dio.post('/api/dailyTraining/mobile/complete', data: payload);
+      print('✅ DailyTrainingService - HTTP POST request completed');
+      print('✅ DailyTrainingService - Response status: ${res.statusCode}');
       print('🔍 Daily Training Completion API Response:');
       print('Status: ${res.statusCode}');
       print('Data: ${res.data}');
@@ -110,8 +120,10 @@ class DailyTrainingService {
       }
       throw Exception('Failed to submit daily training completion: ${res.statusMessage}');
     } catch (e) {
+      print('❌ DailyTrainingService - ERROR: API call to /api/dailyTraining/mobile/complete FAILED');
       print('❌ Daily Training Completion Error Details:');
       print('Error: $e');
+      print('Error type: ${e.runtimeType}');
       if (e is DioException) {
         print('Status Code: ${e.response?.statusCode}');
         print('Response Data: ${e.response?.data}');
