@@ -110,6 +110,8 @@ class PlansController extends GetxController {
       await _manualService.testApiConnectivity();
       
       // Fetch manual training plans (Plans-specific)
+      // NOTE: Backend now filters out plans with web_plan_id (mirrored assigned plans)
+      // Frontend filtering below is a defense-in-depth measure
       try {
         final manualRes = await _manualService.listPlans();
         
@@ -122,6 +124,7 @@ class PlansController extends GetxController {
           print('⚠️ Plans - 4. Backend is returning empty list');
           
           // Try alternative endpoint as fallback
+          // NOTE: This endpoint may return assigned plans, but they will be filtered out below
           print('🔄 Plans - Trying alternative endpoint: /api/trainingPlans/');
           try {
             final dio = await _manualService.getAuthedDio();
@@ -140,9 +143,10 @@ class PlansController extends GetxController {
               print('🔄 Plans - Alternative endpoint returned ${altPlans.length} plans');
               if (altPlans.isNotEmpty) {
                 print('🔄 Plans - First alternative plan: ${altPlans.first}');
-                // Use alternative data if manual endpoint is empty
+                // CRITICAL: Add plans from alternative endpoint - they will be filtered below
+                // to exclude assigned plans (web_assigned, assigned, etc.)
                 manualRes.addAll(altPlans);
-                print('🔄 Plans - Added ${altPlans.length} plans from alternative endpoint');
+                print('🔄 Plans - Added ${altPlans.length} plans from alternative endpoint (will be filtered)');
               }
             }
           } catch (e) {
@@ -169,6 +173,9 @@ class PlansController extends GetxController {
         }
         
         // Filter to show ONLY manual plans created by the user (not assigned plans)
+        // NOTE: Backend (/api/appManualTraining/) now filters out plans with web_plan_id
+        // This frontend filtering is a defense-in-depth measure to catch any edge cases
+        // or plans from the alternative endpoint fallback
         final uniquePlans = <Map<String, dynamic>>[];
         final seenIds = <int>{};
         
@@ -182,7 +189,11 @@ class PlansController extends GetxController {
           final webPlanId = planMap['web_plan_id'];
           
           // Check if this is an assigned plan (exclude these)
+          // CRITICAL: web_assigned plans belong in Schedules tab, not Plans tab
+          // ANY indicator of assignment means this plan belongs in Schedules tab
+          // Backend should have filtered these out, but we check again as a safety measure
           final isAssignedPlan = planType == 'assigned' || 
+                                planType == 'web_assigned' ||
                                 assignedBy != null || 
                                 assignmentId != null ||
                                 webPlanId != null ||
@@ -190,14 +201,12 @@ class PlansController extends GetxController {
                                 planType == 'daily' ||
                                 planType == 'schedule';
           
-          // Include manual plans created by the user, including approved ones
-          // Also include plans that don't have explicit plan_type but are created by user
-          // Be more permissive to avoid filtering out valid plans
-          // Handle cases where createdBy might be null but plan is still valid
-          final isManualPlan = (planType == 'manual' || planType == null || planType == '') && 
+          // Include ONLY manual plans created by the user
+          // CRITICAL: If plan has ANY assignment indicators, it's NOT a manual plan
+          // Even if plan_type is null/empty, if it has assignedBy/assignmentId/webPlanId, exclude it
+          final isManualPlan = !isAssignedPlan && // Must NOT be an assigned plan
+                              (planType == 'manual' || planType == null || planType == '') && 
                               (createdBy == null || createdBy == userId); // Allow null createdBy or match userId
-                              // Removed strict checks for assignedBy, assignmentId, webPlanId
-                              // as these might be set by the backend during updates
           
           print('🔍   - plan_type: $planType');
           print('🔍   - created_by: $createdBy (type: ${createdBy.runtimeType})');
@@ -272,16 +281,11 @@ class PlansController extends GetxController {
         
         if (!isClosed) manualPlans.assignAll(uniquePlans);
         
-        // TEMPORARY DEBUG: If no plans found, show ALL plans for debugging
+        // CRITICAL: Do NOT show all plans if filtering results in empty list
+        // This ensures assigned plans never appear in Plans tab
         if (uniquePlans.isEmpty && manualRes.isNotEmpty) {
-          print('🔍 DEBUG: No plans passed filtering, showing ALL plans for debugging:');
-          final allPlans = manualRes.map((e) => Map<String, dynamic>.from(e)).toList();
-          // Normalize all plans too
-          for (final plan in allPlans) {
-            _normalizePlanItemsForMinutes(plan);
-          }
-          if (!isClosed) manualPlans.assignAll(allPlans);
-          print('🔍 DEBUG: Temporarily showing ${allPlans.length} plans without filtering');
+          print('⚠️ Plans - No manual plans passed filtering after checking ${manualRes.length} plans');
+          print('⚠️ Plans - This is expected if all plans are assigned plans (belong in Schedules tab)');
         }
       } catch (e) {
         print('⚠️ Plans - Failed to load manual plans: $e');
@@ -3239,6 +3243,8 @@ class PlansController extends GetxController {
       print('🔍 Plans - Current plan IDs before refresh: $currentPlanIds');
       
       // Filter to show ONLY manual plans created by the user (not assigned plans)
+      // NOTE: Backend (/api/appManualTraining/) now filters out plans with web_plan_id
+      // This frontend filtering is a defense-in-depth measure
       final uniquePlans = <Map<String, dynamic>>[];
       final seenIds = <int>{};
       
@@ -3252,7 +3258,11 @@ class PlansController extends GetxController {
         final webPlanId = planMap['web_plan_id'];
         
         // Check if this is an assigned plan (exclude these)
+        // CRITICAL: web_assigned plans belong in Schedules tab, not Plans tab
+        // ANY indicator of assignment means this plan belongs in Schedules tab
+        // Backend should have filtered these out, but we check again as a safety measure
         final isAssignedPlan = planType == 'assigned' || 
+                              planType == 'web_assigned' ||
                               assignedBy != null || 
                               assignmentId != null ||
                               webPlanId != null ||
@@ -3260,13 +3270,12 @@ class PlansController extends GetxController {
                               planType == 'daily' ||
                               planType == 'schedule';
         
-        // Include manual plans created by the user, including approved ones
-        // Also include plans that don't have explicit plan_type but are created by user
-        // Be more permissive to avoid filtering out valid plans
-        // Handle cases where createdBy might be null but plan is still valid
-        final isManualPlan = (planType == 'manual' || planType == null || planType == '') && 
+        // Include ONLY manual plans created by the user
+        // CRITICAL: If plan has ANY assignment indicators, it's NOT a manual plan
+        // Even if plan_type is null/empty, if it has assignedBy/assignmentId/webPlanId, exclude it
+        final isManualPlan = !isAssignedPlan && // Must NOT be an assigned plan
+                            (planType == 'manual' || planType == null || planType == '') && 
                             (createdBy == null || createdBy == userId); // Allow null createdBy or match userId
-                            // Removed strict checks for assignedBy, assignmentId, webPlanId
         
         if (planId != null && !seenIds.contains(planId) && isManualPlan && !isAssignedPlan) {
           seenIds.add(planId);

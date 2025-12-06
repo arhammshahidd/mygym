@@ -128,6 +128,19 @@ class DailyTrainingService {
           print('💡 This is likely a backend permissions issue. Data will be stored locally.');
         } else if (e.response?.statusCode == 401) {
           print('🔐 401 Unauthorized: Token may be expired or invalid');
+        } else if (e.response?.statusCode == 500) {
+          print('❌ 500 Internal Server Error: Backend encountered an error');
+          final responseData = e.response?.data;
+          if (responseData is Map) {
+            final errorMsg = responseData['error']?.toString() ?? responseData['message']?.toString();
+            if (errorMsg != null) {
+              print('❌ Backend error message: $errorMsg');
+              if (errorMsg.contains('isSequentialNextDay')) {
+                print('❌ CRITICAL: Backend bug detected - isSequentialNextDay is not defined');
+                print('❌ This needs to be fixed in the backend code');
+              }
+            }
+          }
         }
       }
       rethrow;

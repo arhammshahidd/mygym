@@ -377,14 +377,18 @@ class _DashboardPageState extends State<DashboardPage> {
     final hasActive = (activeSchedule != null || activePlan != null) && workouts.isNotEmpty;
     
     // Get current day from the correct controller/source
-    int currentDay = _activeTrainingDayIndex;
+    // IMPORTANT:
+    // - SchedulesController.getCurrentDay() returns a 1-based day number (Day 1, Day 2, ...)
+    // - PlansController.getCurrentDay() returns a 0-based index (Day 1 = 0, Day 2 = 1, ...)
+    // Here we normalize everything to a **1-based display day**.
+    int currentDay = _activeTrainingDayIndex + 1; // persisted index is 0-based
     
     // Priority 1: If we have an active schedule, use its current day
     if (activeSchedule != null) {
       final scheduleId = int.tryParse(activeSchedule['id']?.toString() ?? '');
       if (scheduleId != null && scheduleId > 0) {
         currentDay = _schedulesController.getCurrentDay(scheduleId);
-        print('🔍 Dashboard - Using schedule current day: $currentDay (Day $currentDay) for schedule ID: $scheduleId');
+        print('🔍 Dashboard - Using schedule current day (1-based): Day $currentDay for schedule ID: $scheduleId');
       }
     }
     // Priority 2: If we have _activeTrainingPlanId set, use it
@@ -393,15 +397,16 @@ class _DashboardPageState extends State<DashboardPage> {
       if (activeSchedule != null) {
         // Active schedule day
         currentDay = _schedulesController.getCurrentDay(_activeTrainingPlanId!);
-        print('🔍 Dashboard - Using schedule current day via _activeTrainingPlanId: $currentDay (Day $currentDay)');
+        print('🔍 Dashboard - Using schedule current day via _activeTrainingPlanId (1-based): Day $currentDay');
       } else if (activePlan != null) {
-        // Active manual/AI plan day
-        currentDay = _plansController.getCurrentDay(_activeTrainingPlanId!);
-        print('🔍 Dashboard - Using plan current day via _activeTrainingPlanId: $currentDay (Day $currentDay)');
+        // Active manual/AI plan day (PlansController returns 0-based index)
+        final idx = _plansController.getCurrentDay(_activeTrainingPlanId!);
+        currentDay = idx + 1;
+        print('🔍 Dashboard - Using plan current day via _activeTrainingPlanId: index=$idx → Day $currentDay');
       }
     }
     
-    print('🔍 Dashboard - Final currentDay: $currentDay (will display as Day $currentDay)');
+    print('🔍 Dashboard - Final currentDay (1-based): Day $currentDay');
 
     String _resolvePlanTitle(Map<String, dynamic> plan) {
       return plan['exercise_plan_category']?.toString()
@@ -417,7 +422,8 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Day ${currentDay + 1}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppTheme.textColor)),
+          // currentDay is already normalized to 1-based (Day 1, Day 2, ...)
+          Text('Day $currentDay', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppTheme.textColor)),
           const SizedBox(height: 8),
           if (hasActive)
             Column(
