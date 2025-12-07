@@ -323,9 +323,9 @@ class DailyTrainingService {
   /// 
   /// NOTE: This is the preferred method for resume logic and stats, as it includes completed plans
   /// 
-  /// IMPORTANT: If backend endpoint filters completed days by default, we may need to add
-  /// a query parameter (e.g., include_completed=true) to request all plans. Currently,
-  /// the presence of user_id parameter might signal to backend to return all plans.
+  /// NOTE: Backend behavior is determined by query parameters:
+  /// - When user_id is present → Backend returns ALL plans (completed + incomplete)
+  /// - When user_id is NOT present → Backend filters out completed past days (returns only incomplete/future plans)
   Future<List<Map<String, dynamic>>> getDailyTrainingPlans({int? userId, String? planType}) async {
     try {
       final dio = await _authedDio();
@@ -348,10 +348,21 @@ class DailyTrainingService {
       
       if (res.statusCode == 200) {
         final data = res.data;
-        if (data is List) {
+        
+        // Handle schema-compliant response: { "success": true, "data": [...] }
+        if (data is Map<String, dynamic>) {
+          // Validate success field (schema requirement)
+          if (data.containsKey('success') && data['success'] == true) {
+            if (data['data'] is List) {
+              return List<Map<String, dynamic>>.from(data['data']);
+            }
+          } else if (data['data'] is List) {
+            // Fallback: if success field is missing but data exists, still parse it
+            return List<Map<String, dynamic>>.from(data['data']);
+          }
+        } else if (data is List) {
+          // Handle direct array response (backward compatibility)
           return List<Map<String, dynamic>>.from(data);
-        } else if (data is Map && data['data'] is List) {
-          return List<Map<String, dynamic>>.from(data['data']);
         }
       }
       return [];

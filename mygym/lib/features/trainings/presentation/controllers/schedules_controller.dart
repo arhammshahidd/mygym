@@ -713,57 +713,15 @@ class SchedulesController extends GetxController {
       // Continue anyway - database check will still work
     }
     
-    // CRITICAL: ALWAYS check backend/database for completed days when starting a plan
+    // CRITICAL: Calculate resume day using reliable method
     // This ensures we resume from the correct day even after stopping and restarting
     // We should NOT rely on cached values as they might be stale
-    int? resolvedDay;
-    try {
-      print('📅 SchedulesController - Starting plan $scheduleId - checking database for current day...');
-      
-      // Priority 1: Check database for last completed day (MOST RELIABLE - direct DB query)
-      // This is the source of truth for which days have been completed
-      final completedDay = await _getLastCompletedDayFromDatabase(scheduleId);
-      if (completedDay != null && completedDay > 0) {
-        // If Day 1 is completed, we should start at Day 2
-        resolvedDay = completedDay + 1;
-        print('📅 SchedulesController - ✅ Database shows last completed day: $completedDay, resuming at Day $resolvedDay');
-      } else {
-        print('📅 SchedulesController - No completed days found in database, checking backend API...');
-        
-        // Priority 2: Fallback to backend daily plans API (returns first incomplete day)
-        // Only use this if database check didn't find any completed days
-        final backendDay = await _getCurrentDayFromBackendPlans(scheduleId);
-        if (backendDay != null && backendDay > 0) {
-          resolvedDay = backendDay;
-          print('📅 SchedulesController - ✅ Backend returned current day: Day $resolvedDay');
-        } else {
-          print('📅 SchedulesController - ⚠️ No completed days found and backend did not return a day, starting from Day 1');
-          resolvedDay = 1; // Start from Day 1 if no completed days
-        }
-      }
-    } catch (e) {
-      print('⚠️ SchedulesController - Error checking backend/database for current day: $e');
-      print('📅 SchedulesController - Falling back to Day 1 due to error');
-      resolvedDay = 1; // Default to Day 1 on error
-    }
+    final resumeDay = await _getResumeDay(scheduleId);
     
-    // CRITICAL: Always use the resolved day from backend/database, not cache
-    // This ensures we show the correct day even after stopping and restarting
-    if (resolvedDay != null && resolvedDay > 0) {
-      final oldCachedDay = _currentDay[scheduleId.toString()];
-      _currentDay[scheduleId.toString()] = resolvedDay;
-      _persistCurrentDayToCache(scheduleId, resolvedDay);
-      
-      if (oldCachedDay != null && oldCachedDay != resolvedDay) {
-        print('📅 SchedulesController - ⚠️ Day changed from cached Day $oldCachedDay to resolved Day $resolvedDay (using backend/database value)');
-      }
-      print('📅 SchedulesController - ✅ Starting/resuming plan $scheduleId at Day $resolvedDay');
-    } else {
-      // Fallback: should never happen, but just in case
-      _currentDay[scheduleId.toString()] = 1;
-      _persistCurrentDayToCache(scheduleId, 1);
-      print('📅 SchedulesController - ⚠️ Fallback: Starting plan $scheduleId at Day 1');
-    }
+    _currentDay[scheduleId.toString()] = resumeDay;
+    _persistCurrentDayToCache(scheduleId, resumeDay);
+    
+    print('📅 SchedulesController - ✅ Starting/resuming plan $scheduleId at Day $resumeDay');
     
     // Store daily training plans for assigned plan (plan_type = 'web_assigned')
     try {
@@ -916,6 +874,21 @@ class SchedulesController extends GetxController {
       return;
     }
     
+    // CRITICAL: Check if this day is already completed in the database BEFORE checking workout completion
+    // This prevents submitting Day 2 when only Day 1 should be submitted
+    try {
+      final completedDay = await _getLastCompletedDayFromDatabase(planId);
+      if (completedDay != null && completedDay >= currentDay) {
+        print('⚠️ SchedulesController - Day $currentDay is already completed in database (last completed: Day $completedDay)');
+        print('⚠️ SchedulesController - Skipping completion check to prevent duplicate submission');
+        print('⚠️ SchedulesController - This prevents submitting Day 2 when only Day 1 should be submitted');
+        return; // Exit early - day is already completed
+      }
+    } catch (e) {
+      print('⚠️ SchedulesController - Error checking database for completed day: $e');
+      // Continue with completion check if database check fails
+    }
+    
     // Get all workouts for current day - CAPTURE THIS BEFORE ANY STATE CHANGES
     final dayWorkouts = _getDayWorkouts(activeSchedule, currentDay);
     final workoutKeys = dayWorkouts.map((workout) => '${planId}_${currentDay}_${workout['name']}').toList();
@@ -986,50 +959,106 @@ class SchedulesController extends GetxController {
         
         print('✅ SchedulesController - Day $currentDay completion submitted successfully');
         
-        // ONLY AFTER successful submission, move to next day
+        // CRITICAL: Verify Day 1 was actually completed in database before incrementing
+        // This prevents incrementing if backend transaction failed or was rolled back
+        final verified = await _verifyDayCompletion(planId, currentDay);
+        if (!verified) {
+          print('❌ SchedulesController - Day $currentDay completion NOT verified in database');
+          print('❌ SchedulesController - Backend may have failed to persist completion');
+          print('❌ SchedulesController - NOT incrementing day to prevent data inconsistency');
+          print('❌ SchedulesController - User should retry completing Day $currentDay');
+          return; // Don't increment day if verification fails
+        }
+        
+        print('✅ SchedulesController - Day $currentDay completion verified in database');
+        
+        // ONLY AFTER successful submission AND verification, move to next day
         final newDay = currentDay + 1;
         _currentDay[planId.toString()] = newDay;
         _persistCurrentDayToCache(planId, newDay);
         
+        // CRITICAL: Verify the day was actually set correctly
+        final verifyDay = _currentDay[planId.toString()];
+        if (verifyDay != newDay) {
+          print('❌ SchedulesController - CRITICAL ERROR: Day increment failed!');
+          print('❌ SchedulesController - Expected: $newDay, Actual: $verifyDay');
+          print('❌ SchedulesController - Manually setting day to $newDay...');
+          _currentDay[planId.toString()] = newDay;
+          _persistCurrentDayToCache(planId, newDay);
+        }
+        
         print('🔍 Day progression: $currentDay → $newDay for plan $planId');
         print('🔍 Current day state: ${_currentDay.value}');
+        print('🔍 Verified day for plan $planId: ${_currentDay[planId.toString()]}');
         
-        // CRITICAL: Create the next day's plan in the database proactively
-        // This ensures Day 2's plan exists when the user starts Day 2
-        try {
-          print('📤 Schedules - Creating daily plan for Day $newDay proactively...');
-          final nextDayPlanId = await _createDailyPlanForDay(activeSchedule, newDay);
-          if (nextDayPlanId != null) {
-            print('✅ Schedules - Created daily plan for Day $newDay with daily_plan_id: $nextDayPlanId');
-            
-            // CRITICAL: Verify that Day $newDay is NOT marked as completed when created
-            // This prevents the backend from incorrectly marking Day 2 as completed when Day 1 is submitted
-            try {
-              await Future.delayed(const Duration(milliseconds: 500)); // Small delay for backend to save
-              final verifyNextDayPlan = await _dailyTrainingService.getDailyTrainingPlan(nextDayPlanId);
-              if (verifyNextDayPlan.isNotEmpty) {
-                final isCompleted = verifyNextDayPlan['is_completed'] as bool? ?? false;
-                final completedAt = verifyNextDayPlan['completed_at'] as String?;
-                
-                if (isCompleted && completedAt != null) {
-                  print('❌ SchedulesController - CRITICAL ERROR: Day $newDay plan was created but is ALREADY marked as completed!');
-                  print('❌ SchedulesController - completed_at: $completedAt');
-                  print('❌ SchedulesController - This is a BACKEND bug - Day $newDay should NOT be completed when created.');
-                  print('❌ SchedulesController - The backend is incorrectly marking Day $newDay as completed when Day $currentDay is submitted.');
-                  print('❌ SchedulesController - This needs to be fixed in the backend - frontend cannot fix this.');
-                } else {
-                  print('✅ SchedulesController - Verified Day $newDay plan is NOT marked as completed (correct state)');
-                }
+        // CRITICAL: Wait for backend transaction to fully settle before creating next day
+        // This prevents race conditions where Day 2 might be affected by Day 1's transaction
+        print('⏳ SchedulesController - Waiting for backend transaction to settle before creating Day $newDay...');
+        await Future.delayed(const Duration(seconds: 2)); // Wait longer for backend to complete
+        
+        // CRITICAL: Check if Day 2 plan already exists before creating
+        // This prevents duplicate creation and interference with backend operations
+        final existingDay2Plan = await _checkIfDayPlanExists(activeSchedule, newDay);
+        if (existingDay2Plan != null) {
+          print('✅ SchedulesController - Day $newDay plan already exists (daily_plan_id: $existingDay2Plan)');
+          print('✅ SchedulesController - Skipping creation to avoid duplicate and backend interference');
+          
+          // Verify that existing Day 2 plan is NOT completed
+          try {
+            final verifyExistingPlan = await _dailyTrainingService.getDailyTrainingPlan(existingDay2Plan);
+            if (verifyExistingPlan.isNotEmpty) {
+              final isCompleted = verifyExistingPlan['is_completed'] as bool? ?? false;
+              final completedAt = verifyExistingPlan['completed_at'] as String?;
+              
+              if (isCompleted && completedAt != null) {
+                print('❌ SchedulesController - CRITICAL ERROR: Existing Day $newDay plan is ALREADY marked as completed!');
+                print('❌ SchedulesController - completed_at: $completedAt');
+                print('❌ SchedulesController - This is a BACKEND bug - Day $newDay should NOT be completed when Day $currentDay is submitted.');
+                print('❌ SchedulesController - The backend transaction incorrectly marked Day $newDay as completed.');
+              } else {
+                print('✅ SchedulesController - Verified existing Day $newDay plan is NOT marked as completed (correct state)');
               }
-            } catch (verifyError) {
-              print('⚠️ SchedulesController - Could not verify Day $newDay plan completion status: $verifyError');
             }
-          } else {
-            print('⚠️ Schedules - Failed to create daily plan for Day $newDay (will be created on-demand when needed)');
+          } catch (verifyError) {
+            print('⚠️ SchedulesController - Could not verify existing Day $newDay plan completion status: $verifyError');
           }
-        } catch (e) {
-          print('⚠️ Schedules - Error creating daily plan for Day $newDay: $e');
-          print('⚠️ Schedules - Plan will be created on-demand when Day $newDay is accessed');
+        } else {
+          // Day 2 plan doesn't exist, create it now
+          try {
+            print('📤 SchedulesController - Day $newDay plan does not exist, creating proactively...');
+            final nextDayPlanId = await _createDailyPlanForDay(activeSchedule, newDay);
+            if (nextDayPlanId != null) {
+              print('✅ SchedulesController - Created daily plan for Day $newDay with daily_plan_id: $nextDayPlanId');
+              
+              // CRITICAL: Verify that Day $newDay is NOT marked as completed when created
+              // This prevents the backend from incorrectly marking Day 2 as completed when Day 1 is submitted
+              try {
+                await Future.delayed(const Duration(milliseconds: 500)); // Small delay for backend to save
+                final verifyNextDayPlan = await _dailyTrainingService.getDailyTrainingPlan(nextDayPlanId);
+                if (verifyNextDayPlan.isNotEmpty) {
+                  final isCompleted = verifyNextDayPlan['is_completed'] as bool? ?? false;
+                  final completedAt = verifyNextDayPlan['completed_at'] as String?;
+                  
+                  if (isCompleted && completedAt != null) {
+                    print('❌ SchedulesController - CRITICAL ERROR: Day $newDay plan was created but is ALREADY marked as completed!');
+                    print('❌ SchedulesController - completed_at: $completedAt');
+                    print('❌ SchedulesController - This is a BACKEND bug - Day $newDay should NOT be completed when created.');
+                    print('❌ SchedulesController - The backend is incorrectly marking Day $newDay as completed when Day $currentDay is submitted.');
+                    print('❌ SchedulesController - This needs to be fixed in the backend - frontend cannot fix this.');
+                  } else {
+                    print('✅ SchedulesController - Verified Day $newDay plan is NOT marked as completed (correct state)');
+                  }
+                }
+              } catch (verifyError) {
+                print('⚠️ SchedulesController - Could not verify Day $newDay plan completion status: $verifyError');
+              }
+            } else {
+              print('⚠️ SchedulesController - Failed to create daily plan for Day $newDay (will be created on-demand when needed)');
+            }
+          } catch (e) {
+            print('⚠️ SchedulesController - Error creating daily plan for Day $newDay: $e');
+            print('⚠️ SchedulesController - Plan will be created on-demand when Day $newDay is accessed');
+          }
         }
         
         // CRITICAL: Refresh stats after completing a day to ensure stats are updated
@@ -1060,17 +1089,42 @@ class SchedulesController extends GetxController {
         
         print('🔍 Moved to day $newDay, cleared workout states');
         
-        // Force UI update
+        // CRITICAL: Force UI update to show Day 2
+        // Use refreshUI() method to ensure comprehensive UI refresh
         refreshUI();
         
-        // Debug: Check what workouts will be shown for the new day
+        // Debug: Verify new day state and workouts
         final newDayWorkouts = _getDayWorkouts(activeSchedule, newDay);
-        print('🔍 New day $newDay workouts: ${newDayWorkouts.map((w) => w['name']).toList()}');
+        final workoutNames = newDayWorkouts.map((w) => w['name'] ?? w['workout_name'] ?? 'Unknown').toList();
+        final currentDayAfterIncrement = _currentDay[planId.toString()];
+        
+        print('🔍 Day $currentDay → Day $newDay transition verification:');
+        print('  - Current day in map: $currentDayAfterIncrement (expected: $newDay)');
+        print('  - Day $newDay workouts: ${workoutNames.length} workout(s) - ${workoutNames.join(", ")}');
+        
+        if (currentDayAfterIncrement != newDay) {
+          print('❌ SchedulesController - CRITICAL ERROR: Day mismatch after increment!');
+          print('❌ SchedulesController - Expected: $newDay, Got: $currentDayAfterIncrement');
+          print('❌ SchedulesController - Fixing day value...');
+          _currentDay[planId.toString()] = newDay;
+          _persistCurrentDayToCache(planId, newDay);
+          _currentDay.refresh();
+          if (!isClosed) update();
+        } else {
+          print('✅ SchedulesController - Day increment verified: Day $newDay is correctly set');
+        }
+        
+        // CRITICAL: DO NOT sync with database immediately after completion
+        // This prevents triggering another completion check which might submit Day 2
+        // The day has already been incremented correctly, so we don't need to sync
+        // Sync will happen naturally when the user navigates or the app refreshes
+        print('✅ SchedulesController - Day incremented to $newDay - skipping immediate database sync to prevent duplicate submissions');
         
         print('✅✅✅ SchedulesController - ========== DAY $currentDay COMPLETION FLOW FINISHED SUCCESSFULLY ==========');
         print('✅✅✅ SchedulesController - Day $currentDay was submitted to backend');
         print('✅✅✅ SchedulesController - Day incremented from $currentDay to $newDay');
         print('✅✅✅ SchedulesController - API call was made: POST /api/dailyTraining/mobile/complete');
+        print('✅✅✅ SchedulesController - UI should now show Day $newDay workouts');
       } catch (e) {
         print('❌❌❌ SchedulesController - ========== ERROR DURING DAY COMPLETION ==========');
         print('❌❌❌ SchedulesController - Day $currentDay completion FAILED - API call was NOT made!');
@@ -1759,11 +1813,28 @@ class SchedulesController extends GetxController {
   // Force UI refresh
   void refreshUI() {
     print('🔄 SchedulesController - Refreshing UI...');
+    final activeSchedule = _activeSchedule.value;
+    if (activeSchedule != null) {
+      final planId = int.tryParse(activeSchedule['id']?.toString() ?? '') ?? 0;
+      final currentDay = _currentDay[planId.toString()] ?? 1;
+      print('🔄 SchedulesController - Current day for plan $planId: $currentDay');
+    }
     _currentDay.refresh();
     _workoutStarted.refresh();
     _workoutCompleted.refresh();
     _workoutRemainingMinutes.refresh();
     _activeSchedule.refresh(); // Also refresh active schedule to trigger UI updates
+    if (!isClosed) {
+      update();
+      // Trigger a second update after a microtask to ensure UI rebuilds
+      Future.microtask(() {
+        if (!isClosed) {
+          _currentDay.refresh();
+          update();
+          print('🔄 SchedulesController - Second UI update triggered');
+        }
+      });
+    }
     print('🔄 SchedulesController - UI refresh completed');
   }
 
@@ -1906,112 +1977,47 @@ class SchedulesController extends GetxController {
         print('📱 Schedules - Loaded active schedule snapshot from cache: ${snapshot['id']} (user_id: $scheduleUserId, validated for current user: $userId)');
         
         // Also load the current day for this schedule (if it exists)
-        // IMPORTANT: Always check database first (source of truth), then fall back to cache
+        // IMPORTANT: Calculate resume day using reliable method (don't trust cache)
         if (scheduleId != null) {
           try {
             // CRITICAL: Wait a bit for controllers to initialize before checking database
             // This ensures stats controller is ready when we check for completed days
             await Future.delayed(const Duration(milliseconds: 500));
-            print('📱 Schedules - Checking database for completed days when restoring active schedule...');
-            final completedDay = await _getLastCompletedDayFromDatabase(scheduleId);
-            if (completedDay != null) {
-            // completedDay is 1-based (from daily_plans), _currentDay is now also 1-based
-            // If completedDay = 9 (Day 9 completed), we should resume at Day 10 (1-based)
-            final nextDay = completedDay + 1; // completedDay is 1-based, next day is completedDay + 1
-              print('📱 Schedules - ⚠️ CRITICAL: Found completed day $completedDay in database');
-              print('📱 Schedules - ⚠️ This means Day $completedDay was marked as completed');
-              print('📱 Schedules - ⚠️ If Day 1 was just completed, this should be Day 1');
-              print('📱 Schedules - ⚠️ If Day 2 is showing as completed when only Day 1 was done, this is a BACKEND bug');
-              print('📱 Schedules - ⚠️ Resuming at day $nextDay (1-based)');
-              _currentDay[scheduleId.toString()] = nextDay;
-              _persistCurrentDayToCache(scheduleId, nextDay);
-              print('📱 Schedules - ✅ Restored active schedule: found completed day $completedDay (1-based) in database, resuming at day $nextDay (1-based)');
-            } else {
-              // No completed days in database, fall back to cache
-              await _loadCurrentDayFromCache(scheduleId);
-              final cachedDay = _currentDay[scheduleId.toString()];
-              if (cachedDay != null) {
-                print('📱 Schedules - Loaded current day $cachedDay for schedule $scheduleId from cache (no completed days in database)');
-                
-                // CRITICAL: Validate that cached day is valid
-                // Before resetting, check backend API to see if it confirms the day
-                // This prevents false resets when database check misses completed days
-                if (cachedDay > 1) {
-                  print('⚠️ Schedules - ⚠️ WARNING: Cache shows Day $cachedDay, but no completed days found in database!');
-                  print('⚠️ Schedules - Checking backend API to verify if Day $cachedDay is correct...');
-                  
-                  try {
-                    // Check backend API to see what day it thinks we should be on
-                    final backendDay = await _getCurrentDayFromBackendPlans(scheduleId);
-                    if (backendDay != null && backendDay > 0) {
-                      if (backendDay == cachedDay) {
-                        // Backend confirms cached day is correct - trust it
-                        print('✅ Schedules - Backend API confirms Day $cachedDay is correct - keeping cached day');
-                        // Keep the cached day, don't reset
-                      } else if (backendDay < cachedDay) {
-                        // Backend says we should be on a lower day - use backend's value
-                        print('⚠️ Schedules - Backend says Day $backendDay, but cache says Day $cachedDay - using backend value');
-                        _currentDay[scheduleId.toString()] = backendDay;
-                        _persistCurrentDayToCache(scheduleId, backendDay);
-                      } else {
-                        // Backend says we should be on a higher day - use backend's value
-                        print('⚠️ Schedules - Backend says Day $backendDay, but cache says Day $cachedDay - using backend value');
-                        _currentDay[scheduleId.toString()] = backendDay;
-                        _persistCurrentDayToCache(scheduleId, backendDay);
-                      }
-                    } else {
-                      // Backend didn't return a day - be conservative and reset to Day 1
-                      print('⚠️ Schedules - Backend API did not return a day, and no completed days in database');
-                      print('⚠️ Schedules - This means Day ${cachedDay - 1} was never completed, but cache thinks we\'re on Day $cachedDay');
-                      print('⚠️ Schedules - Resetting to Day 1 to prevent skipping incomplete days');
-                      _currentDay[scheduleId.toString()] = 1;
-                      _persistCurrentDayToCache(scheduleId, 1);
-                      print('✅ Schedules - Reset to Day 1 (cache was invalid - Day ${cachedDay - 1} was never completed)');
-                    }
-                  } catch (e) {
-                    print('⚠️ Schedules - Error checking backend API for day validation: $e');
-                    print('⚠️ Schedules - Keeping cached day $cachedDay (error prevented validation)');
-                    // On error, keep the cached day rather than resetting
-                  }
-                }
-              } else {
-                // No cache, start at Day 1
-                _currentDay[scheduleId.toString()] = 1;
-                _persistCurrentDayToCache(scheduleId, 1);
-                print('📱 Schedules - No cached day found, starting at Day 1');
-              }
-            }
+            print('📱 Schedules - Calculating resume day when restoring active schedule...');
             
-            // CRITICAL: Refresh stats when restoring active schedule to show completed plans
-            // This ensures stats are loaded before checking for completed days
-            try {
-              final statsController = Get.find<StatsController>();
-              print('🔄 Schedules - Refreshing stats after restoring active schedule $scheduleId...');
-              await statsController.refreshStats(forceSync: true);
-              // Small delay to ensure stats are fully processed
-              await Future.delayed(const Duration(milliseconds: 500));
-              print('✅ Schedules - Stats refreshed after restoring active schedule');
-            } catch (e) {
-              print('⚠️ Schedules - Error refreshing stats after restoring active schedule: $e');
-            }
+            // Use the reliable resume calculation method
+            final resumeDay = await _getResumeDay(scheduleId);
+            
+            _currentDay[scheduleId.toString()] = resumeDay;
+            _persistCurrentDayToCache(scheduleId, resumeDay);
+            
+            print('📱 Schedules - ✅ Restored active schedule: resuming at Day $resumeDay');
           } catch (e) {
-            print('⚠️ Schedules - Error checking database when restoring active schedule: $e');
-            // If database check fails, fall back to cache
+            print('⚠️ Schedules - Error calculating resume day when restoring active schedule: $e');
+            // If resume calculation fails, fall back to cache
             await _loadCurrentDayFromCache(scheduleId);
             final cachedDay = _currentDay[scheduleId.toString()];
             if (cachedDay != null) {
-              print('📱 Schedules - Loaded current day $cachedDay for schedule $scheduleId from cache (after database error)');
+              print('📱 Schedules - Loaded current day $cachedDay for schedule $scheduleId from cache (after resume calculation error)');
+            } else {
+              // If no cache, start at Day 1
+              _currentDay[scheduleId.toString()] = 1;
+              _persistCurrentDayToCache(scheduleId, 1);
+              print('📱 Schedules - No cache found, starting at Day 1');
             }
-            
-            // CRITICAL: Refresh stats even if database check fails
-            try {
-              final statsController = Get.find<StatsController>();
-              print('🔄 Schedules - Refreshing stats after restoring active schedule (database error path)...');
-              await statsController.refreshStats(forceSync: true);
-              print('✅ Schedules - Stats refreshed after restoring active schedule');
-            } catch (e) {
-              print('⚠️ Schedules - Error refreshing stats after restoring active schedule: $e');
-            }
+          }
+          
+          // Refresh stats after restoring active schedule
+          // This ensures stats are loaded before checking for completed days
+          try {
+            final statsController = Get.find<StatsController>();
+            print('🔄 Schedules - Refreshing stats after restoring active schedule $scheduleId...');
+            await statsController.refreshStats(forceSync: true);
+            // Small delay to ensure stats are fully processed
+            await Future.delayed(const Duration(milliseconds: 500));
+            print('✅ Schedules - Stats refreshed after restoring active schedule');
+          } catch (e) {
+            print('⚠️ Schedules - Error refreshing stats after restoring active schedule: $e');
           }
         }
       }
@@ -3021,22 +3027,60 @@ class SchedulesController extends GetxController {
               '  - Index ${i + 1} (Day ${i + 1}): id=${dp['id']}, daily_plan_id=${dp['daily_plan_id']}, plan_date=${dp['plan_date']}, is_completed=${dp['is_completed']}, completed_at=${dp['completed_at']}');
         }
 
+        // CRITICAL: Filter out already completed plans to prevent submitting Day 2 when only Day 1 should be submitted
+        // Only select plans that are NOT completed for the current day
+        final incompletePlans = realDailyPlans.where((dp) {
+          final isCompleted = dp['is_completed'] as bool? ?? false;
+          final completedAt = dp['completed_at'] as String?;
+          return !isCompleted || completedAt == null || completedAt.isEmpty;
+        }).toList();
+        
+        print('📅 SchedulesController - Filtered to ${incompletePlans.length} incomplete plans (out of ${realDailyPlans.length} total)');
+        print('📅 SchedulesController - CRITICAL: Only incomplete plans will be used for submission to prevent duplicate submissions');
+
         Map<String, dynamic>? matchingRow;
         final targetIndex = currentDay - 1; // currentDay is 1‑based
-        if (targetIndex >= 0 && targetIndex < realDailyPlans.length) {
-          matchingRow = realDailyPlans[targetIndex];
+        
+        // CRITICAL: Use incomplete plans only - this ensures we don't submit Day 2 if Day 1 is being submitted
+        if (targetIndex >= 0 && targetIndex < incompletePlans.length) {
+          matchingRow = incompletePlans[targetIndex];
+          
+          // CRITICAL: Double-check that this plan is NOT already completed
+          final isCompleted = matchingRow['is_completed'] as bool? ?? false;
+          final completedAt = matchingRow['completed_at'] as String?;
+          if (isCompleted && completedAt != null && completedAt.isNotEmpty) {
+            print('❌ SchedulesController - CRITICAL ERROR: Day $currentDay plan is ALREADY completed!');
+            print('❌ SchedulesController - completed_at: $completedAt');
+            print('❌ SchedulesController - This day should not be submitted again - ABORTING');
+            print('❌ SchedulesController - This prevents submitting Day 2 when only Day 1 should be submitted');
+            throw Exception('Day $currentDay is already completed - cannot submit again');
+          }
+          
           print(
-              '✅ SchedulesController - Mapped Day $currentDay → index ${targetIndex + 1}, id=${matchingRow['id']}, daily_plan_id=${matchingRow['daily_plan_id']}, plan_date=${matchingRow['plan_date']}');
+              '✅ SchedulesController - Mapped Day $currentDay → index ${targetIndex + 1}, id=${matchingRow['id']}, daily_plan_id=${matchingRow['daily_plan_id']}, plan_date=${matchingRow['plan_date']}, is_completed=${matchingRow['is_completed']}');
         } else {
           print(
-              '⚠️ SchedulesController - No matching daily_training_plans row: currentDay=$currentDay, availableRows=${realDailyPlans.length}');
-          print('⚠️ SchedulesController - This means Day $currentDay plan does not exist in database yet');
-          if (realDailyPlans.isNotEmpty) {
-            print('⚠️ SchedulesController - Available days: ${realDailyPlans.map((dp) => "Day ${realDailyPlans.indexOf(dp) + 1} (id=${dp['id']}, date=${dp['plan_date']})").join(", ")}');
+              '⚠️ SchedulesController - No matching incomplete daily_training_plans row: currentDay=$currentDay, availableIncompleteRows=${incompletePlans.length}');
+          print('⚠️ SchedulesController - This means Day $currentDay plan does not exist in database yet or is already completed');
+          if (incompletePlans.isNotEmpty) {
+            print('⚠️ SchedulesController - Available incomplete days: ${incompletePlans.map((dp) => "Day ${incompletePlans.indexOf(dp) + 1} (id=${dp['id']}, date=${dp['plan_date']}, is_completed=${dp['is_completed']})").join(", ")}');
           }
         }
 
         if (matchingRow != null) {
+          // CRITICAL: Verify this plan is NOT already completed before using it
+          final isCompleted = matchingRow['is_completed'] as bool? ?? false;
+          final completedAt = matchingRow['completed_at'] as String?;
+          
+          if (isCompleted && completedAt != null && completedAt.isNotEmpty) {
+            print('❌ SchedulesController - CRITICAL ERROR: Day $currentDay plan is ALREADY completed!');
+            print('❌ SchedulesController - completed_at: $completedAt');
+            print('❌ SchedulesController - This day should not be submitted again');
+            print('❌ SchedulesController - This prevents submitting Day 2 when only Day 1 should be submitted');
+            print('❌ SchedulesController - ABORTING submission to prevent duplicate completion');
+            throw Exception('Day $currentDay is already completed - cannot submit again. This prevents submitting Day 2 with Day 1.');
+          }
+          
           // Use the exact daily_plan_id/id from this row
           dailyPlanId = matchingRow['daily_plan_id'] != null
               ? int.tryParse(matchingRow['daily_plan_id']?.toString() ?? '')
@@ -3051,10 +3095,13 @@ class SchedulesController extends GetxController {
                 .toList();
             }
 
-          print('✅ SchedulesController - Mapped Day $currentDay → daily_plan_id=$dailyPlanId (plan_date=$dpDate, workouts=${workoutNames.join(", ")})');
+          print('✅ SchedulesController - Mapped Day $currentDay → daily_plan_id=$dailyPlanId (plan_date=$dpDate, workouts=${workoutNames.join(", ")}, is_completed=$isCompleted)');
         } else {
-          print('⚠️ SchedulesController - Could not find matching daily_training_plans row for plan $planId, Day $currentDay');
-          print('⚠️ SchedulesController - Available rows: ${assignmentDailyPlans.map((dp) => "id=${dp['id']}, plan_date=${dp['plan_date']}").join("; ")}');
+          print('⚠️ SchedulesController - Could not find matching incomplete daily_training_plans row for plan $planId, Day $currentDay');
+          print('⚠️ SchedulesController - This means Day $currentDay plan does not exist or is already completed');
+          if (incompletePlans.isNotEmpty) {
+            print('⚠️ SchedulesController - Available incomplete rows: ${incompletePlans.map((dp) => "id=${dp['id']}, plan_date=${dp['plan_date']}, is_completed=${dp['is_completed']}").join("; ")}');
+          }
         }
       } catch (e) {
         print('⚠️ SchedulesController - Could not resolve daily_plan_id for completion: $e');
@@ -3778,6 +3825,242 @@ class SchedulesController extends GetxController {
   // Refresh schedules data
   Future<void> refreshSchedules() async {
     await loadSchedulesData();
+  }
+
+  /// Verify that a specific day was actually completed in the database
+  /// This ensures the backend transaction successfully persisted the completion
+  /// Returns true if the day is verified as completed, false otherwise
+  Future<bool> _verifyDayCompletion(int planId, int day) async {
+    try {
+      print('🔍 SchedulesController - Verifying Day $day completion in database for plan $planId...');
+      
+      // Get all daily plans for this assignment
+      final allDailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: 'web_assigned');
+      final assignmentDailyPlans = allDailyPlans.where((dp) {
+        final dpPlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+        final dpPlanType = dp['plan_type']?.toString();
+        final isStatsRecord = dp['is_stats_record'] as bool? ?? false;
+        return dpPlanId == planId && dpPlanType == 'web_assigned' && !isStatsRecord;
+      }).toList();
+      
+      // Sort by plan_date to map days correctly
+      assignmentDailyPlans.sort((a, b) {
+        final ad = DateTime.tryParse(a['plan_date']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final bd = DateTime.tryParse(b['plan_date']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        return ad.compareTo(bd);
+      });
+      
+      // Get the plan for the specified day (day is 1-based)
+      final targetIndex = day - 1;
+      if (targetIndex >= 0 && targetIndex < assignmentDailyPlans.length) {
+        final dayPlan = assignmentDailyPlans[targetIndex];
+        final isCompleted = dayPlan['is_completed'] as bool? ?? false;
+        final completedAt = dayPlan['completed_at'] as String?;
+        
+        if (isCompleted && completedAt != null && completedAt.isNotEmpty) {
+          print('✅ SchedulesController - Day $day completion verified: is_completed=true, completed_at=$completedAt');
+          return true;
+        } else {
+          print('❌ SchedulesController - Day $day completion NOT verified: is_completed=$isCompleted, completed_at=$completedAt');
+          return false;
+        }
+      } else {
+        print('❌ SchedulesController - Day $day plan not found in database (available days: ${assignmentDailyPlans.length})');
+        return false;
+      }
+    } catch (e) {
+      print('❌ SchedulesController - Error verifying Day $day completion: $e');
+      return false;
+    }
+  }
+  
+  /// Calculate the resume day for a schedule by finding the highest completed day
+  /// This is more reliable than relying on cache or single database queries
+  /// Returns the day number (1-based) to resume at, or 1 if no completed days found
+  Future<int> _getResumeDay(int scheduleId) async {
+    try {
+      print('📅 SchedulesController - Calculating resume day for schedule $scheduleId');
+      
+      // Strategy 1: Query backend for daily plans (includes most recent completed day)
+      final dailyPlans = await _dailyTrainingService.getDailyPlans(planType: 'web_assigned');
+      
+      // Filter for this schedule
+      final schedulePlans = dailyPlans.where((p) {
+        final sourceId = p['source_assignment_id'] as int? ?? p['source_plan_id'] as int?;
+        final isStatsRecord = p['is_stats_record'] as bool? ?? false;
+        return sourceId == scheduleId && !isStatsRecord;
+      }).toList();
+      
+      print('📅 SchedulesController - Found ${schedulePlans.length} plans for schedule $scheduleId');
+      
+      // Debug logging
+      print('🔍 DEBUG: All schedule plans:');
+      for (final plan in schedulePlans) {
+        final planDate = plan['plan_date']?.toString();
+        final isCompleted = plan['is_completed'];
+        final completedAt = plan['completed_at'];
+        final id = plan['id'];
+        print('  - Plan $id: date=$planDate, is_completed=$isCompleted, completed_at=$completedAt');
+      }
+      
+      if (schedulePlans.isEmpty) {
+        print('📅 SchedulesController - No plans found, starting at Day 1');
+        return 1;
+      }
+      
+      // Get assignment details for date mapping
+      final assignmentDetails = await getAssignmentDetails(scheduleId);
+      Map<String, dynamic> actualPlan = assignmentDetails;
+      if (assignmentDetails.containsKey('success') && assignmentDetails.containsKey('data')) {
+        actualPlan = assignmentDetails['data'] ?? {};
+      }
+      
+      // Parse daily_plans to get day numbers
+      final dailyPlansRaw = actualPlan['daily_plans'];
+      List<Map<String, dynamic>> assignmentDailyPlans = [];
+      if (dailyPlansRaw != null) {
+        if (dailyPlansRaw is String) {
+          try {
+            final parsed = jsonDecode(dailyPlansRaw) as List?;
+            if (parsed != null) {
+              assignmentDailyPlans = parsed.cast<Map<String, dynamic>>();
+            }
+          } catch (e) {
+            print('⚠️ SchedulesController - Error parsing daily_plans JSON: $e');
+          }
+        } else if (dailyPlansRaw is List) {
+          assignmentDailyPlans = dailyPlansRaw.cast<Map<String, dynamic>>();
+        }
+      }
+      
+      // Build date -> day number map
+      final dateToDay = <String, int>{};
+      for (final dp in assignmentDailyPlans) {
+        final dayNum = int.tryParse(dp['day']?.toString() ?? '') ?? 0;
+        final dateStr = dp['date']?.toString();
+        if (dayNum > 0 && dateStr != null) {
+          // Normalize date to YYYY-MM-DD
+          final date = DateTime.tryParse(dateStr);
+          if (date != null) {
+            final normalized = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+            dateToDay[normalized] = dayNum;
+          }
+        }
+      }
+      
+      print('🔍 DEBUG: Date to day mapping:');
+      dateToDay.forEach((date, day) {
+        print('  - $date → Day $day');
+      });
+      
+      // Find the highest completed day
+      int highestCompletedDay = 0;
+      
+      for (final plan in schedulePlans) {
+        final planDate = plan['plan_date']?.toString();
+        final isCompleted = plan['is_completed'] as bool? ?? false;
+        final completedAt = plan['completed_at'] as String?;
+        
+        if (planDate != null && isCompleted && completedAt != null && completedAt.isNotEmpty) {
+          // Find day number for this plan_date
+          final date = DateTime.tryParse(planDate);
+          if (date != null) {
+            final normalized = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+            final dayNum = dateToDay[normalized];
+            
+            if (dayNum != null && dayNum > highestCompletedDay) {
+              highestCompletedDay = dayNum;
+              print('✅ SchedulesController - Found completed Day $dayNum (date: $normalized)');
+            }
+          }
+        }
+      }
+      
+      // Resume day = highest completed day + 1
+      final resumeDay = highestCompletedDay + 1;
+      
+      print('📅 SchedulesController - Resume calculation: highestCompletedDay=$highestCompletedDay, resumeDay=$resumeDay');
+      
+      // Safety check: don't exceed total days
+      final totalDays = assignmentDailyPlans.length;
+      if (resumeDay > totalDays && totalDays > 0) {
+        print('⚠️ SchedulesController - Resume day $resumeDay exceeds total days $totalDays, using last day');
+        return totalDays;
+      }
+      
+      // Ensure resume day is at least 1
+      if (resumeDay < 1) {
+        print('⚠️ SchedulesController - Resume day $resumeDay is less than 1, using Day 1');
+        return 1;
+      }
+      
+      return resumeDay;
+      
+    } catch (e) {
+      print('❌ SchedulesController - Error calculating resume day: $e');
+      print('❌ SchedulesController - Stack trace: ${StackTrace.current}');
+      return 1; // Fallback to Day 1 on error
+    }
+  }
+
+  /// Check if a daily plan already exists for a specific day
+  /// Returns the daily_plan_id if it exists, null otherwise
+  Future<int?> _checkIfDayPlanExists(Map<String, dynamic> schedule, int dayIndex) async {
+    try {
+      final planId = int.tryParse(schedule['id']?.toString() ?? '') ?? 0;
+      if (planId == 0) return null;
+      
+      // Get assignment details to calculate plan_date
+      final assignmentDetails = await getAssignmentDetails(planId);
+      Map<String, dynamic> actualPlan = assignmentDetails;
+      if (assignmentDetails.containsKey('success') && assignmentDetails.containsKey('data')) {
+        actualPlan = assignmentDetails['data'] ?? {};
+      }
+      
+      // Get start_date and calculate plan_date for the day
+      final startDateStr = actualPlan['start_date']?.toString();
+      if (startDateStr == null) return null;
+      
+      final startDate = DateTime.tryParse(startDateStr);
+      if (startDate == null) return null;
+      
+      // Calculate plan_date: Day 1 = start_date, Day 2 = start_date + 1, etc.
+      final dayOffset = dayIndex - 1; // dayIndex is 1-based, so Day 1 = offset 0
+      final planDate = startDate.add(Duration(days: dayOffset));
+      final planDateStr = '${planDate.year}-${planDate.month.toString().padLeft(2, '0')}-${planDate.day.toString().padLeft(2, '0')}';
+      
+      print('🔍 SchedulesController - Checking if Day $dayIndex plan exists (plan_date: $planDateStr)...');
+      
+      // Get all daily plans for this assignment
+      final allDailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: 'web_assigned');
+      final matchingPlan = allDailyPlans.firstWhereOrNull((dp) {
+        final dpPlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+        final dpPlanType = dp['plan_type']?.toString();
+        final isStatsRecord = dp['is_stats_record'] as bool? ?? false;
+        final dpPlanDate = dp['plan_date']?.toString().split('T').first;
+        
+        return dpPlanId == planId && 
+               dpPlanType == 'web_assigned' && 
+               !isStatsRecord &&
+               dpPlanDate == planDateStr;
+      });
+      
+      if (matchingPlan != null) {
+        final dailyPlanId = matchingPlan['daily_plan_id'] != null
+            ? int.tryParse(matchingPlan['daily_plan_id']?.toString() ?? '')
+            : (matchingPlan['id'] != null ? int.tryParse(matchingPlan['id']?.toString() ?? '') : null);
+        print('✅ SchedulesController - Day $dayIndex plan exists: daily_plan_id=$dailyPlanId');
+        return dailyPlanId;
+      } else {
+        print('ℹ️ SchedulesController - Day $dayIndex plan does not exist yet');
+        return null;
+      }
+    } catch (e) {
+      print('⚠️ SchedulesController - Error checking if Day $dayIndex plan exists: $e');
+      return null;
+    }
   }
 
   /// Create daily plan for a specific day on-demand using the new endpoint

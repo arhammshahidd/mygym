@@ -9,6 +9,7 @@ import 'features/trainings/presentation/controllers/plans_controller.dart';
 import 'features/food/presentation/controllers/nutrition_controller.dart';
 import 'features/stats/presentation/controllers/stats_controller.dart';
 import 'shared/widgets/main_tab_screen.dart';
+import 'shared/widgets/splash_screen.dart';
 
 void main() {
   // Add error handling for Flutter web disposed view issues
@@ -37,11 +38,26 @@ class MyApp extends StatelessWidget {
       initialBinding: AppBinding(),
       initialRoute: '/',
       getPages: [
-        GetPage(name: '/', page: () => const AuthWrapper()),
+        GetPage(name: '/', page: () => const SplashWrapper()),
+        GetPage(name: '/home', page: () => const AuthWrapper()),
         GetPage(name: '/MainTabScreen', page: () => const MainTabScreen()),
         GetPage(name: '/login', page: () => const LoginPage()),
       ],
-      unknownRoute: GetPage(name: '/', page: () => const AuthWrapper()),
+      unknownRoute: GetPage(name: '/', page: () => const SplashWrapper()),
+    );
+  }
+}
+
+class SplashWrapper extends StatelessWidget {
+  const SplashWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return SplashScreen(
+      onAnimationComplete: () {
+        // Navigate to AuthWrapper after splash screen animation completes
+        Get.offAll(() => const AuthWrapper());
+      },
     );
   }
 }

@@ -174,10 +174,59 @@ class PlansController extends GetxController {
         
         // Filter to show ONLY manual plans created by the user (not assigned plans)
         // NOTE: Backend (/api/appManualTraining/) now filters out plans with web_plan_id
+        // AND plans matching assignments by date range (two-layer filter)
         // This frontend filtering is a defense-in-depth measure to catch any edge cases
         // or plans from the alternative endpoint fallback
+        // 
+        // BACKEND FIX: The backend now uses a two-layer filter:
+        // 1. Primary: whereNull('web_plan_id') - excludes plans with web_plan_id set
+        // 2. Secondary: Date range matching - excludes plans whose start_date and end_date
+        //    exactly match any assignment (catches edge cases where web_plan_id might be NULL)
         final uniquePlans = <Map<String, dynamic>>[];
         final seenIds = <int>{};
+        
+        // Try to get assignments to cross-reference for date range matching
+        // This helps catch assigned plans that might have web_plan_id = NULL
+        // BACKEND FIX: Some assigned plans may have web_plan_id = NULL but match assignments by date range
+        // This cross-reference ensures we catch those edge cases
+        List<Map<String, dynamic>> assignments = [];
+        try {
+          if (Get.isRegistered<SchedulesController>()) {
+            final schedulesController = Get.find<SchedulesController>();
+            // Ensure assignments are loaded if not already
+            if (schedulesController.assignments.isEmpty) {
+              print('🔍 Plans - Assignments not loaded, loading now for cross-reference...');
+              await schedulesController.loadSchedulesData();
+            }
+            assignments = List<Map<String, dynamic>>.from(schedulesController.assignments);
+            print('🔍 Plans - Found ${assignments.length} assignments for cross-reference');
+            
+            // Log all assignment IDs for debugging
+            if (assignments.isNotEmpty) {
+              final assignmentIds = assignments.map((a) => a['id']?.toString() ?? 'N/A').toList();
+              final webPlanIds = assignments.map((a) => a['web_plan_id']?.toString() ?? 'N/A').toList();
+              print('🔍 Plans - Assignment IDs: $assignmentIds');
+              print('🔍 Plans - Assignment web_plan_ids: $webPlanIds');
+            }
+          }
+        } catch (e) {
+          print('⚠️ Plans - Could not access SchedulesController for assignments: $e');
+          print('⚠️ Plans - Will rely on other assignment indicators (web_plan_id, assigned_by, etc.)');
+        }
+        
+        // CRITICAL: Create a set of all assignment-related IDs for quick lookup
+        // This includes assignment IDs, web_plan_ids, and plan_ids from assignments
+        final Set<int> assignmentRelatedIds = {};
+        for (final assignment in assignments) {
+          final assignId = int.tryParse(assignment['id']?.toString() ?? '');
+          final assignWebPlanId = int.tryParse(assignment['web_plan_id']?.toString() ?? '');
+          final assignPlanId = int.tryParse(assignment['plan_id']?.toString() ?? '');
+          
+          if (assignId != null) assignmentRelatedIds.add(assignId);
+          if (assignWebPlanId != null) assignmentRelatedIds.add(assignWebPlanId);
+          if (assignPlanId != null) assignmentRelatedIds.add(assignPlanId);
+        }
+        print('🔍 Plans - Assignment-related IDs set: $assignmentRelatedIds');
         
         for (final plan in manualRes) {
           final planMap = Map<String, dynamic>.from(plan);
@@ -187,19 +236,98 @@ class PlansController extends GetxController {
           final assignedBy = planMap['assigned_by'];
           final assignmentId = planMap['assignment_id'];
           final webPlanId = planMap['web_plan_id'];
+          final startDate = planMap['start_date'];
+          final endDate = planMap['end_date'];
           
           // Check if this is an assigned plan (exclude these)
           // CRITICAL: web_assigned plans belong in Schedules tab, not Plans tab
           // ANY indicator of assignment means this plan belongs in Schedules tab
           // Backend should have filtered these out, but we check again as a safety measure
-          final isAssignedPlan = planType == 'assigned' || 
+          final trainerId = planMap['trainer_id'];
+          final assignedAt = planMap['assigned_at'];
+          final status = planMap['status']?.toString().toUpperCase();
+          
+          bool isAssignedPlan = planType == 'assigned' || 
                                 planType == 'web_assigned' ||
                                 assignedBy != null || 
                                 assignmentId != null ||
                                 webPlanId != null ||
+                                trainerId != null || // Has trainer_id (assigned by trainer)
+                                assignedAt != null || // Has assigned_at timestamp
+                                status == 'PLANNED' || // Status indicates assigned plan
+                                status == 'ACTIVE' ||
                                 planType == 'ai_generated' ||
                                 planType == 'daily' ||
                                 planType == 'schedule';
+          
+        // CRITICAL: Check if this plan ID is in the assignment-related IDs set
+        // This is the fastest way to check if a plan is linked to any assignment
+        if (!isAssignedPlan && planId != null && assignmentRelatedIds.contains(planId)) {
+          isAssignedPlan = true;
+          print('⚠️ Plans - Plan $planId is in assignment-related IDs set - excluding from manual plans');
+        }
+        
+        // CRITICAL: Also check if this plan ID matches any assignment's web_plan_id or plan ID
+        // This catches cases where the plan is linked to an assignment (redundant but thorough)
+        if (!isAssignedPlan && assignments.isNotEmpty) {
+          for (final assignment in assignments) {
+            final assignWebPlanId = assignment['web_plan_id'];
+            final assignPlanId = assignment['plan_id'];
+            final assignId = assignment['id'];
+            
+            // If plan ID matches assignment's web_plan_id, plan_id, or assignment id, it's assigned
+            if (planId != null && (
+                (assignWebPlanId != null && planId == int.tryParse(assignWebPlanId.toString())) ||
+                (assignPlanId != null && planId == int.tryParse(assignPlanId.toString())) ||
+                (assignId != null && planId == int.tryParse(assignId.toString()))
+              )) {
+              isAssignedPlan = true;
+              print('⚠️ Plans - Plan $planId matches assignment ${assignment['id']} by ID - excluding from manual plans');
+              break;
+            }
+          }
+        }
+          
+          // CRITICAL: Additional check for edge cases where web_plan_id might be NULL
+          // but the plan matches an assignment by date range (backend fix scenario)
+          // Check if plan's date range matches any assignment's date range
+          if (!isAssignedPlan && startDate != null && endDate != null && assignments.isNotEmpty) {
+            try {
+              final planStartDate = DateTime.tryParse(startDate.toString());
+              final planEndDate = DateTime.tryParse(endDate.toString());
+              
+              if (planStartDate != null && planEndDate != null) {
+                // Normalize dates to compare only date part (ignore time)
+                final planStartNormalized = DateTime(planStartDate.year, planStartDate.month, planStartDate.day);
+                final planEndNormalized = DateTime(planEndDate.year, planEndDate.month, planEndDate.day);
+                
+                for (final assignment in assignments) {
+                  final assignmentStartDate = assignment['start_date'];
+                  final assignmentEndDate = assignment['end_date'];
+                  
+                  if (assignmentStartDate != null && assignmentEndDate != null) {
+                    final assignStart = DateTime.tryParse(assignmentStartDate.toString());
+                    final assignEnd = DateTime.tryParse(assignmentEndDate.toString());
+                    
+                    if (assignStart != null && assignEnd != null) {
+                      final assignStartNormalized = DateTime(assignStart.year, assignStart.month, assignStart.day);
+                      final assignEndNormalized = DateTime(assignEnd.year, assignEnd.month, assignEnd.day);
+                      
+                      // If dates exactly match, this is likely an assigned plan
+                      if (planStartNormalized == assignStartNormalized && 
+                          planEndNormalized == assignEndNormalized) {
+                        isAssignedPlan = true;
+                        print('⚠️ Plans - Plan $planId matches assignment ${assignment['id']} by date range - excluding from manual plans');
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              print('⚠️ Plans - Error checking date range match: $e');
+            }
+          }
           
           // Include ONLY manual plans created by the user
           // CRITICAL: If plan has ANY assignment indicators, it's NOT a manual plan
@@ -208,24 +336,30 @@ class PlansController extends GetxController {
                               (planType == 'manual' || planType == null || planType == '') && 
                               (createdBy == null || createdBy == userId); // Allow null createdBy or match userId
           
+          print('🔍 Plans - Checking plan $planId:');
           print('🔍   - plan_type: $planType');
           print('🔍   - created_by: $createdBy (type: ${createdBy.runtimeType})');
           print('🔍   - userId: $userId (type: ${userId.runtimeType})');
           print('🔍   - assigned_by: $assignedBy');
           print('🔍   - assignment_id: $assignmentId');
           print('🔍   - web_plan_id: $webPlanId');
-          print('🔍   - isManualPlan: $isManualPlan');
+          print('🔍   - trainer_id: $trainerId');
+          print('🔍   - assigned_at: $assignedAt');
+          print('🔍   - status: $status');
+          print('🔍   - start_date: $startDate');
+          print('🔍   - end_date: $endDate');
           print('🔍   - isAssignedPlan: $isAssignedPlan');
+          print('🔍   - isManualPlan: $isManualPlan');
           print('🔍   - Will include: ${isManualPlan && !isAssignedPlan}');
           print('🔍   - createdBy == userId: ${createdBy == userId}');
           print('🔍   - createdBy == null: ${createdBy == null}');
           print('🔍   - (createdBy == null || createdBy == userId): ${createdBy == null || createdBy == userId}');
           
           if (!isManualPlan) {
-            print('❌ REJECTED: Not identified as manual plan (plan_type: $planType, created_by: $createdBy)');
+            print('❌ Plans - REJECTED: Not identified as manual plan (plan_type: $planType, created_by: $createdBy)');
           }
           if (isAssignedPlan) {
-            print('❌ REJECTED: Identified as assigned plan');
+            print('❌ Plans - REJECTED: Identified as assigned plan (has assignment indicators)');
           }
           
           if (planId != null && !seenIds.contains(planId) && isManualPlan && !isAssignedPlan) {
@@ -279,11 +413,39 @@ class PlansController extends GetxController {
           _normalizePlanItemsForMinutes(plan);
         }
         
-        if (!isClosed) manualPlans.assignAll(uniquePlans);
+        // FINAL SAFETY CHECK: Remove any plans that might have slipped through
+        // Double-check all plans against assignment-related IDs
+        final finalFilteredPlans = uniquePlans.where((plan) {
+          final planId = int.tryParse(plan['id']?.toString() ?? '');
+          if (planId == null) return false;
+          
+          // If plan ID is in assignment-related IDs, exclude it
+          if (assignmentRelatedIds.contains(planId)) {
+            print('⚠️ Plans - FINAL CHECK: Removing plan $planId (found in assignment-related IDs)');
+            return false;
+          }
+          
+          // Double-check assignment indicators
+          final hasWebPlanId = plan['web_plan_id'] != null;
+          final hasAssignedBy = plan['assigned_by'] != null;
+          final hasAssignmentId = plan['assignment_id'] != null;
+          final hasTrainerId = plan['trainer_id'] != null;
+          
+          if (hasWebPlanId || hasAssignedBy || hasAssignmentId || hasTrainerId) {
+            print('⚠️ Plans - FINAL CHECK: Removing plan $planId (has assignment indicators)');
+            return false;
+          }
+          
+          return true;
+        }).toList();
+        
+        print('🔍 Plans - Final filtered plans: ${finalFilteredPlans.length} (removed ${uniquePlans.length - finalFilteredPlans.length} in final check)');
+        
+        if (!isClosed) manualPlans.assignAll(finalFilteredPlans);
         
         // CRITICAL: Do NOT show all plans if filtering results in empty list
         // This ensures assigned plans never appear in Plans tab
-        if (uniquePlans.isEmpty && manualRes.isNotEmpty) {
+        if (finalFilteredPlans.isEmpty && manualRes.isNotEmpty) {
           print('⚠️ Plans - No manual plans passed filtering after checking ${manualRes.length} plans');
           print('⚠️ Plans - This is expected if all plans are assigned plans (belong in Schedules tab)');
         }
@@ -1035,15 +1197,26 @@ class PlansController extends GetxController {
             print('📤 PlansController - Plan category: $planCategory');
             print('📤 PlansController - User level: $userLevel');
             
-            // BACKEND BEHAVIOR (syncDailyPlansFromManualPlanHelper):
+            // BACKEND BEHAVIOR (syncDailyPlansFromManualPlanHelper / syncDailyPlansFromAIPlanHelper):
             // - Finds the last completed daily plan by plan_date (not completed_at)
             // - Skips days with plan_date <= lastCompletedDate
             // - Creates/updates only days after the last completed date
             // - This preserves completed days and continues from the next day
+            // - Handles duplicate key errors using the new unique constraint:
+            //   (user_id, plan_date, plan_type, source_plan_id)
+            // 
+            // CRITICAL: Multiple Plans Support (Backend Schema Change)
+            // The backend now supports multiple plans of the same type on the same date by including
+            // source_plan_id in the unique constraint: (user_id, plan_date, plan_type, source_plan_id)
+            // This means multiple manual plans (e.g., "Home Workout" + "Gym Workout") or multiple
+            // AI plans (e.g., "Beginner Plan" + "Advanced Plan") can have daily plans on the same
+            // date, distinguished by their source_plan_id (approval_id or plan_id).
+            // Each plan tracks completion independently.
             // 
             // FRONTEND BEHAVIOR:
             // - Stores all daily plans when plan is started
             // - Backend sync handles skipping completed days automatically
+            // - Backend handles duplicate key conflicts for multiple plans on same date
             try {
               final result = await _dailyTrainingService.storeDailyTrainingPlan(
                 planId: planId,
@@ -3003,6 +3176,11 @@ class PlansController extends GetxController {
       // For manual/AI plans, source_plan_id can be either approval_id OR plan_id (if approval_id is null)
       // CRITICAL: STRICTLY filter by plan_type to avoid picking up assigned plan data
       // Manual plans and assigned plans are completely independent and should never interfere
+      // 
+      // CRITICAL: Multiple Plans Support
+      // With the new schema, multiple plans of the same type can exist on the same date if they
+      // have different source_plan_id values. We must filter by BOTH plan_type AND source_plan_id
+      // to ensure we only get plans for this specific plan, not other plans of the same type.
       final planPlans = allPlans.where((plan) {
         final sourcePlanId = plan['source_plan_id'] as int?;
         final planTypeRaw = plan['plan_type'] as String?;
@@ -3330,9 +3508,58 @@ class PlansController extends GetxController {
       
       // Filter to show ONLY manual plans created by the user (not assigned plans)
       // NOTE: Backend (/api/appManualTraining/) now filters out plans with web_plan_id
+      // AND plans matching assignments by date range (two-layer filter)
       // This frontend filtering is a defense-in-depth measure
+      // 
+      // BACKEND FIX: The backend now uses a two-layer filter:
+      // 1. Primary: whereNull('web_plan_id') - excludes plans with web_plan_id set
+      // 2. Secondary: Date range matching - excludes plans whose start_date and end_date
+      //    exactly match any assignment (catches edge cases where web_plan_id might be NULL)
       final uniquePlans = <Map<String, dynamic>>[];
       final seenIds = <int>{};
+      
+      // Try to get assignments to cross-reference for date range matching
+      // This helps catch assigned plans that might have web_plan_id = NULL
+      // BACKEND FIX: Some assigned plans may have web_plan_id = NULL but match assignments by date range
+      // This cross-reference ensures we catch those edge cases
+      List<Map<String, dynamic>> assignments = [];
+      try {
+        if (Get.isRegistered<SchedulesController>()) {
+          final schedulesController = Get.find<SchedulesController>();
+          // Ensure assignments are loaded if not already
+          if (schedulesController.assignments.isEmpty) {
+            print('🔍 Plans - Assignments not loaded, loading now for cross-reference in refreshManualPlans...');
+            await schedulesController.loadSchedulesData();
+          }
+          assignments = List<Map<String, dynamic>>.from(schedulesController.assignments);
+          print('🔍 Plans - Found ${assignments.length} assignments for cross-reference in refreshManualPlans');
+          
+          // Log all assignment IDs for debugging
+          if (assignments.isNotEmpty) {
+            final assignmentIds = assignments.map((a) => a['id']?.toString() ?? 'N/A').toList();
+            final webPlanIds = assignments.map((a) => a['web_plan_id']?.toString() ?? 'N/A').toList();
+            print('🔍 Plans - Assignment IDs (refresh): $assignmentIds');
+            print('🔍 Plans - Assignment web_plan_ids (refresh): $webPlanIds');
+          }
+        }
+      } catch (e) {
+        print('⚠️ Plans - Could not access SchedulesController for assignments: $e');
+        print('⚠️ Plans - Will rely on other assignment indicators (web_plan_id, assigned_by, etc.)');
+      }
+      
+      // CRITICAL: Create a set of all assignment-related IDs for quick lookup
+      // This includes assignment IDs, web_plan_ids, and plan_ids from assignments
+      final Set<int> assignmentRelatedIds = {};
+      for (final assignment in assignments) {
+        final assignId = int.tryParse(assignment['id']?.toString() ?? '');
+        final assignWebPlanId = int.tryParse(assignment['web_plan_id']?.toString() ?? '');
+        final assignPlanId = int.tryParse(assignment['plan_id']?.toString() ?? '');
+        
+        if (assignId != null) assignmentRelatedIds.add(assignId);
+        if (assignWebPlanId != null) assignmentRelatedIds.add(assignWebPlanId);
+        if (assignPlanId != null) assignmentRelatedIds.add(assignPlanId);
+      }
+      print('🔍 Plans - Assignment-related IDs set (refresh): $assignmentRelatedIds');
       
       for (final plan in manualRes) {
         final planMap = Map<String, dynamic>.from(plan);
@@ -3342,19 +3569,98 @@ class PlansController extends GetxController {
         final assignedBy = planMap['assigned_by'];
         final assignmentId = planMap['assignment_id'];
         final webPlanId = planMap['web_plan_id'];
+        final startDate = planMap['start_date'];
+        final endDate = planMap['end_date'];
         
         // Check if this is an assigned plan (exclude these)
         // CRITICAL: web_assigned plans belong in Schedules tab, not Plans tab
         // ANY indicator of assignment means this plan belongs in Schedules tab
         // Backend should have filtered these out, but we check again as a safety measure
-        final isAssignedPlan = planType == 'assigned' || 
+        final trainerId = planMap['trainer_id'];
+        final assignedAt = planMap['assigned_at'];
+        final status = planMap['status']?.toString().toUpperCase();
+        
+        bool isAssignedPlan = planType == 'assigned' || 
                               planType == 'web_assigned' ||
                               assignedBy != null || 
                               assignmentId != null ||
                               webPlanId != null ||
+                              trainerId != null || // Has trainer_id (assigned by trainer)
+                              assignedAt != null || // Has assigned_at timestamp
+                              status == 'PLANNED' || // Status indicates assigned plan
+                              status == 'ACTIVE' ||
                               planType == 'ai_generated' ||
                               planType == 'daily' ||
                               planType == 'schedule';
+        
+        // CRITICAL: Check if this plan ID is in the assignment-related IDs set
+        // This is the fastest way to check if a plan is linked to any assignment
+        if (!isAssignedPlan && planId != null && assignmentRelatedIds.contains(planId)) {
+          isAssignedPlan = true;
+          print('⚠️ Plans - Plan $planId is in assignment-related IDs set - excluding from manual plans (refreshManualPlans)');
+        }
+        
+        // CRITICAL: Also check if this plan ID matches any assignment's web_plan_id or plan ID
+        // This catches cases where the plan is linked to an assignment (redundant but thorough)
+        if (!isAssignedPlan && assignments.isNotEmpty) {
+          for (final assignment in assignments) {
+            final assignWebPlanId = assignment['web_plan_id'];
+            final assignPlanId = assignment['plan_id'];
+            final assignId = assignment['id'];
+            
+            // If plan ID matches assignment's web_plan_id, plan_id, or assignment id, it's assigned
+            if (planId != null && (
+                (assignWebPlanId != null && planId == int.tryParse(assignWebPlanId.toString())) ||
+                (assignPlanId != null && planId == int.tryParse(assignPlanId.toString())) ||
+                (assignId != null && planId == int.tryParse(assignId.toString()))
+              )) {
+              isAssignedPlan = true;
+              print('⚠️ Plans - Plan $planId matches assignment ${assignment['id']} by ID - excluding from manual plans (refreshManualPlans)');
+              break;
+            }
+          }
+        }
+        
+        // CRITICAL: Additional check for edge cases where web_plan_id might be NULL
+        // but the plan matches an assignment by date range (backend fix scenario)
+        // Check if plan's date range matches any assignment's date range
+        if (!isAssignedPlan && startDate != null && endDate != null && assignments.isNotEmpty) {
+          try {
+            final planStartDate = DateTime.tryParse(startDate.toString());
+            final planEndDate = DateTime.tryParse(endDate.toString());
+            
+            if (planStartDate != null && planEndDate != null) {
+              // Normalize dates to compare only date part (ignore time)
+              final planStartNormalized = DateTime(planStartDate.year, planStartDate.month, planStartDate.day);
+              final planEndNormalized = DateTime(planEndDate.year, planEndDate.month, planEndDate.day);
+              
+              for (final assignment in assignments) {
+                final assignmentStartDate = assignment['start_date'];
+                final assignmentEndDate = assignment['end_date'];
+                
+                if (assignmentStartDate != null && assignmentEndDate != null) {
+                  final assignStart = DateTime.tryParse(assignmentStartDate.toString());
+                  final assignEnd = DateTime.tryParse(assignmentEndDate.toString());
+                  
+                  if (assignStart != null && assignEnd != null) {
+                    final assignStartNormalized = DateTime(assignStart.year, assignStart.month, assignStart.day);
+                    final assignEndNormalized = DateTime(assignEnd.year, assignEnd.month, assignEnd.day);
+                    
+                    // If dates exactly match, this is likely an assigned plan
+                    if (planStartNormalized == assignStartNormalized && 
+                        planEndNormalized == assignEndNormalized) {
+                      isAssignedPlan = true;
+                      print('⚠️ Plans - Plan $planId matches assignment ${assignment['id']} by date range - excluding from manual plans (refreshManualPlans)');
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            print('⚠️ Plans - Error checking date range match in refreshManualPlans: $e');
+          }
+        }
         
         // Include ONLY manual plans created by the user
         // CRITICAL: If plan has ANY assignment indicators, it's NOT a manual plan
@@ -3406,27 +3712,81 @@ class PlansController extends GetxController {
       
       print('🔍 Plans - Filtered unique plans: ${uniquePlans.length} items');
       
-      // Check if any previously visible plans were filtered out and restore them
-      final filteredPlanIds = uniquePlans.map((p) => p['id']).toSet();
+      // FINAL SAFETY CHECK: Remove any plans that might have slipped through
+      // Double-check all plans against assignment-related IDs
+      final finalFilteredPlans = uniquePlans.where((plan) {
+        final planId = int.tryParse(plan['id']?.toString() ?? '');
+        if (planId == null) return false;
+        
+        // If plan ID is in assignment-related IDs, exclude it
+        if (assignmentRelatedIds.contains(planId)) {
+          print('⚠️ Plans - FINAL CHECK (refresh): Removing plan $planId (found in assignment-related IDs)');
+          return false;
+        }
+        
+        // Double-check assignment indicators
+        final hasWebPlanId = plan['web_plan_id'] != null;
+        final hasAssignedBy = plan['assigned_by'] != null;
+        final hasAssignmentId = plan['assignment_id'] != null;
+        final hasTrainerId = plan['trainer_id'] != null;
+        
+        if (hasWebPlanId || hasAssignedBy || hasAssignmentId || hasTrainerId) {
+          print('⚠️ Plans - FINAL CHECK (refresh): Removing plan $planId (has assignment indicators)');
+          return false;
+        }
+        
+        return true;
+      }).toList();
+      
+      print('🔍 Plans - Final filtered plans (refresh): ${finalFilteredPlans.length} (removed ${uniquePlans.length - finalFilteredPlans.length} in final check)');
+      
+      // Check if any previously visible plans were filtered out
+      // CRITICAL: Do NOT restore plans that are assigned - they belong in Schedules tab
+      final filteredPlanIds = finalFilteredPlans.map((p) => p['id']).toSet();
       final missingPlanIds = currentPlanIds.difference(filteredPlanIds);
       
       if (missingPlanIds.isNotEmpty) {
         print('⚠️ Plans - Some plans were filtered out: $missingPlanIds');
+        print('⚠️ Plans - Checking if filtered plans are assigned plans (should NOT restore assigned plans)');
         
         // Try to restore missing plans from the original API response
+        // BUT ONLY if they are NOT assigned plans
         for (final missingId in missingPlanIds) {
           final originalPlan = manualRes.firstWhereOrNull((p) => p['id'] == missingId);
           if (originalPlan != null) {
             final planMap = Map<String, dynamic>.from(originalPlan);
             final planId = int.tryParse(planMap['id']?.toString() ?? '');
             
+            // CRITICAL: Check if this plan is an assigned plan before restoring
+            final hasWebPlanId = planMap['web_plan_id'] != null;
+            final hasAssignedBy = planMap['assigned_by'] != null;
+            final hasAssignmentId = planMap['assignment_id'] != null;
+            final hasTrainerId = planMap['trainer_id'] != null;
+            final isInAssignmentIds = planId != null && assignmentRelatedIds.contains(planId);
+            
+            if (hasWebPlanId || hasAssignedBy || hasAssignmentId || hasTrainerId || isInAssignmentIds) {
+              print('⚠️ Plans - NOT restoring plan $planId - it is an assigned plan (belongs in Schedules tab)');
+              continue; // Skip restoring assigned plans
+            }
+            
             if (planId != null && !seenIds.contains(planId)) {
               // Check if it's created by the current user or has null createdBy (basic check)
               final createdBy = planMap['created_by'];
               if (createdBy == null || createdBy == userId) {
+                // Double-check it's not an assigned plan before restoring
+                final hasWebPlanId = planMap['web_plan_id'] != null;
+                final hasAssignedBy = planMap['assigned_by'] != null;
+                final hasAssignmentId = planMap['assignment_id'] != null;
+                final hasTrainerId = planMap['trainer_id'] != null;
+                final isInAssignmentIds = assignmentRelatedIds.contains(planId);
+                
+                if (!hasWebPlanId && !hasAssignedBy && !hasAssignmentId && !hasTrainerId && !isInAssignmentIds) {
                 seenIds.add(planId);
-                uniquePlans.add(planMap);
-                print('✅ Plans - Restored filtered plan $planId');
+                  finalFilteredPlans.add(planMap);
+                  print('✅ Plans - Restored filtered plan $planId (verified not assigned)');
+                } else {
+                  print('⚠️ Plans - NOT restoring plan $planId - it is an assigned plan');
+                }
               }
             }
           }
@@ -3434,15 +3794,15 @@ class PlansController extends GetxController {
       }
       
       // Normalize items to ensure minutes field is properly set
-      for (final plan in uniquePlans) {
+      for (final plan in finalFilteredPlans) {
         _normalizePlanItemsForMinutes(plan);
       }
       
       if (!isClosed) {
-        manualPlans.assignAll(uniquePlans);
+        manualPlans.assignAll(finalFilteredPlans);
         update(); // Force UI refresh
       }
-      print('✅ Plans - Refreshed manual plans: ${manualPlans.length} unique manual items');
+      print('✅ Plans - Refreshed manual plans: ${manualPlans.length} unique manual items (after final filtering)');
     } catch (e) {
       print('❌ Plans - Error refreshing manual plans: $e');
     }
