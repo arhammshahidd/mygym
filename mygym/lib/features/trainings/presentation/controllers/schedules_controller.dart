@@ -2938,6 +2938,19 @@ class SchedulesController extends GetxController {
       final planId = int.tryParse(activeSchedule['id']?.toString() ?? '') ?? 0;
       print('🚀🚀🚀 SchedulesController - Plan ID: $planId');
       
+      // Align currentDay with backend truth before submitting to avoid out-of-order errors (400 INVALID_COMPLETION_ORDER)
+      final lastCompletedDay = await _getLastCompletedDayFromDatabase(planId);
+      final expectedDay = (lastCompletedDay ?? 0) + 1; // next sequential day
+      print('🔍 SchedulesController - lastCompletedDay=$lastCompletedDay, expectedDay=$expectedDay, currentDay=$currentDay');
+      if (expectedDay > 0 && currentDay != expectedDay) {
+        print('⚠️ SchedulesController - Day mismatch detected before submit. Aborting to resync: currentDay=$currentDay, expectedDay=$expectedDay');
+        // Resync local day and UI so the next attempt targets the correct (next) day
+        _currentDay[planId.toString()] = expectedDay;
+        _persistCurrentDayToCache(planId, expectedDay);
+        refreshUI();
+        return false;
+      }
+      
       // CRITICAL: Validate that we're submitting for the correct day
       // Double-check that the current day hasn't changed during async operations
       final actualCurrentDay = getCurrentDay(planId);
@@ -2978,6 +2991,13 @@ class SchedulesController extends GetxController {
         if (assignmentDetails.containsKey('success') && assignmentDetails.containsKey('data')) {
           actualPlan = assignmentDetails['data'] ?? {};
         }
+        
+        // Normalize start_date for day-number calculations
+        final startDateStr = actualPlan['start_date']?.toString();
+        final startDate = startDateStr != null ? DateTime.tryParse(startDateStr) : null;
+        final startDateNormalized = startDate != null
+            ? DateTime.utc(startDate.year, startDate.month, startDate.day)
+            : null;
 
         // 2) Load ALL daily_training_plans for this planId and plan_type='web_assigned'
       final allDailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: 'web_assigned');
@@ -2997,6 +3017,25 @@ class SchedulesController extends GetxController {
       }).toList();
 
         print('📅 SchedulesController - Found ${assignmentDailyPlans.length} daily_training_plans rows for plan $planId (web_assigned)');
+        
+        // Filter out any plans that belong to days already completed (guard against re-submitting prior days)
+        if (startDateNormalized != null && lastCompletedDay != null && lastCompletedDay > 0) {
+          final filteredPlans = assignmentDailyPlans.where((dp) {
+            final planDateStr = dp['plan_date']?.toString();
+            if (planDateStr == null) return true; // keep if unknown
+            final planDate = DateTime.tryParse(planDateStr);
+            if (planDate == null) return true;
+            final planDateNorm = DateTime.utc(planDate.year, planDate.month, planDate.day);
+            final dayNumber = planDateNorm.difference(startDateNormalized).inDays + 1; // 1-based
+            return dayNumber > lastCompletedDay;
+          }).toList();
+          if (filteredPlans.length != assignmentDailyPlans.length) {
+            print('⚠️ SchedulesController - Excluding ${assignmentDailyPlans.length - filteredPlans.length} plans already completed (day <= $lastCompletedDay)');
+          }
+          assignmentDailyPlans
+            ..clear()
+            ..addAll(filteredPlans);
+        }
         
         // CRITICAL: Filter out stats records before sorting and mapping
         final realDailyPlans = assignmentDailyPlans.where((dp) {
@@ -4133,50 +4172,9 @@ class SchedulesController extends GetxController {
       if (dayPlan != null && dayPlan['date'] != null) {
         final dateFromArray = dayPlan['date'].toString();
         
-        // CRITICAL: Validate that the date from daily_plans array matches what it should be based on start_date
-        // This handles the case where old assignments (created before backend fix) have incorrect dates
-        final DateTime? startDate = actualPlan['start_date'] != null 
-            ? DateTime.tryParse(actualPlan['start_date'].toString())
-            : null;
-        
-        if (startDate != null) {
-          // Calculate what the date SHOULD be based on start_date (backend fix: Day 1 = start_date exactly)
-          final localDate = DateTime(startDate.year, startDate.month, startDate.day);
-          final dayOffset = dayIndex - 1;
-          final expectedDate = localDate.add(Duration(days: dayOffset));
-          final expectedDateStr = '${expectedDate.year}-${expectedDate.month.toString().padLeft(2, '0')}-${expectedDate.day.toString().padLeft(2, '0')}';
-          
-          // Parse dates for comparison (normalize to date only, ignore time)
-          final dateFromArrayParsed = DateTime.tryParse(dateFromArray);
-          final expectedDateParsed = DateTime.tryParse(expectedDateStr);
-          
-          if (dateFromArrayParsed != null && expectedDateParsed != null) {
-            final dateFromArrayNormalized = DateTime(dateFromArrayParsed.year, dateFromArrayParsed.month, dateFromArrayParsed.day);
-            final expectedDateNormalized = DateTime(expectedDateParsed.year, expectedDateParsed.month, expectedDateParsed.day);
-            
-            if (dateFromArrayNormalized != expectedDateNormalized) {
-              // Date mismatch detected - use calculated date instead (backend fix behavior)
-              print('⚠️ SchedulesController - Date mismatch detected for Day $dayIndex!');
-              print('⚠️ SchedulesController - Date from daily_plans array: $dateFromArray');
-              print('⚠️ SchedulesController - Expected date (from start_date): $expectedDateStr');
-              print('⚠️ SchedulesController - This assignment may have been created before backend fix');
-              print('⚠️ SchedulesController - Using calculated date ($expectedDateStr) to match backend fix behavior');
-              planDate = expectedDateStr;
-            } else {
-              // Dates match - use date from array
-              planDate = dateFromArray;
-              print('📅 SchedulesController - Using date from daily_plans array for Day $dayIndex: $planDate (validated against start_date)');
-            }
-          } else {
-            // Could not parse dates - use date from array as-is
-            planDate = dateFromArray;
-            print('📅 SchedulesController - Using date from daily_plans array for Day $dayIndex: $planDate (could not validate)');
-          }
-        } else {
-          // No start_date available - use date from array as-is
-          planDate = dateFromArray;
-          print('📅 SchedulesController - Using date from daily_plans array for Day $dayIndex: $planDate (no start_date to validate)');
-        }
+        // Use date from daily_plans array as the source of truth; do not override with start_date calculations
+        planDate = dateFromArray;
+        print('📅 SchedulesController - Using date from daily_plans array for Day $dayIndex: $planDate');
       } else {
         // Fallback: Calculate from start_date if daily_plans array doesn't have this day
         final DateTime? startDate = actualPlan['start_date'] != null 
