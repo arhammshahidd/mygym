@@ -94,7 +94,8 @@ class DailyTrainingService {
       if (completionNotes != null) 'completion_notes': completionNotes,
     };
     print('📤 DailyTrainingService - POST /daily-plans/complete payload: $payload');
-    final res = await dio.post('/daily-plans/complete', data: payload);
+    // Use /api prefix to match backend routing
+    final res = await dio.post('/api/daily-plans/complete', data: payload);
     if (res.statusCode != 200 && res.statusCode != 201) {
       throw Exception('Failed to update daily plan completion: ${res.statusMessage}');
     }
@@ -103,7 +104,8 @@ class DailyTrainingService {
   /// Fetch today's plans (next incomplete day per source) for a user via new API
   Future<Map<String, dynamic>> getTodaysPlansForUser(String userId) async {
     final dio = await _authedDio();
-    final res = await dio.get('/daily-plans/$userId/today');
+    // Use /api prefix to match backend routing
+    final res = await dio.get('/api/daily-plans/$userId/today');
     if (res.statusCode == 200) {
       final data = res.data;
       if (data is Map<String, dynamic>) {

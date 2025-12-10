@@ -5,18 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="1a05894d-f57a-4ce0-9a19-f66cc54613be" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mygym/fix_orphaned_quotes.ps1" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/mygym/fix_quotes.ps1" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/mygym/lib/features/stats/presentation/controllers/stats_controller.dart" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/lib/features/stats/presentation/controllers/stats_controller.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mygym/lib/features/stats/presentation/pages/stats_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/lib/features/stats/presentation/pages/stats_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/mygym/lib/features/trainings/data/services/daily_training_service.dart" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/lib/features/trainings/data/services/daily_training_service.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mygym/lib/features/trainings/domain/models/daily_training_plan.dart" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/lib/features/trainings/domain/models/daily_training_plan.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mygym/lib/features/trainings/presentation/controllers/plans_controller.dart" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/lib/features/trainings/presentation/controllers/plans_controller.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/mygym/lib/features/trainings/presentation/controllers/schedules_controller.dart" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/lib/features/trainings/presentation/controllers/schedules_controller.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mygym/pubspec.lock" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/pubspec.lock" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
