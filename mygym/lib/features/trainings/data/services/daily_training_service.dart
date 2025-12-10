@@ -79,84 +79,38 @@ class DailyTrainingService {
     throw Exception('Failed to fetch daily training plan: ${res.statusMessage}');
   }
 
-  /// Submit daily training completion
-  Future<Map<String, dynamic>> submitCompletion({
-    required int dailyPlanId,
-    required List<Map<String, dynamic>> completionData,
+  /// Submit daily plan completion (training or nutrition) using new daily-plans API
+  Future<void> updateDailyPlanCompletion({
+    required String planId,
+    required String planType, // "training" | "nutrition"
+    bool isCompleted = true,
+    String? completionNotes,
   }) async {
-    print('🚀 DailyTrainingService.submitCompletion - START');
-    print('🚀 DailyTrainingService.submitCompletion - Called with:');
-    print('  - daily_plan_id: $dailyPlanId');
-    print('  - completion_data count: ${completionData.length}');
-    print('  - completion_data: $completionData');
-    
     final dio = await _authedDio();
-    
-    final payload = {
-      'daily_plan_id': dailyPlanId,
-      'completion_data': completionData,
+    final payload = <String, dynamic>{
+      'plan_id': planId,
+      'plan_type': planType,
+      'is_completed': isCompleted,
+      if (completionNotes != null) 'completion_notes': completionNotes,
     };
-    
-    print('🔍 DailyTrainingService - Submitting daily training completion:');
-    print('🔍 DailyTrainingService - Endpoint: POST /api/dailyTraining/mobile/complete');
-    print('🔍 DailyTrainingService - Payload: $payload');
-    print('🔍 DailyTrainingService - About to make HTTP POST request...');
-      // Do not print Authorization header
-    
-    try {
-      print('📡 DailyTrainingService - Making HTTP POST request to /api/dailyTraining/mobile/complete');
-      final res = await dio.post('/api/dailyTraining/mobile/complete', data: payload);
-      print('✅ DailyTrainingService - HTTP POST request completed');
-      print('✅ DailyTrainingService - Response status: ${res.statusCode}');
-      print('🔍 Daily Training Completion API Response:');
-      print('Status: ${res.statusCode}');
-      print('Data: ${res.data}');
-      
-      if (res.statusCode == 200 || res.statusCode == 201) {
-        final data = res.data;
-        if (data is Map<String, dynamic>) {
-          return data;
-        }
-      }
-      throw Exception('Failed to submit daily training completion: ${res.statusMessage}');
-    } catch (e) {
-      print('❌ DailyTrainingService - ERROR: API call to /api/dailyTraining/mobile/complete FAILED');
-      print('❌ Daily Training Completion Error Details:');
-      print('Error: $e');
-      print('Error type: ${e.runtimeType}');
-      if (e is DioException) {
-        print('Status Code: ${e.response?.statusCode}');
-        print('Response Data: ${e.response?.data}');
-        print('Request Data: ${e.requestOptions.data}');
-        final redactedHeaders = Map<String, dynamic>.from(e.requestOptions.headers);
-        if (redactedHeaders.containsKey('Authorization')) {
-          redactedHeaders['Authorization'] = 'REDACTED';
-        }
-        print('Request Headers: $redactedHeaders');
-        
-        // Handle specific error cases
-        if (e.response?.statusCode == 403) {
-          print('🚫 403 Forbidden: User does not have permission to access daily training endpoints');
-          print('💡 This is likely a backend permissions issue. Data will be stored locally.');
-        } else if (e.response?.statusCode == 401) {
-          print('🔐 401 Unauthorized: Token may be expired or invalid');
-        } else if (e.response?.statusCode == 500) {
-          print('❌ 500 Internal Server Error: Backend encountered an error');
-          final responseData = e.response?.data;
-          if (responseData is Map) {
-            final errorMsg = responseData['error']?.toString() ?? responseData['message']?.toString();
-            if (errorMsg != null) {
-              print('❌ Backend error message: $errorMsg');
-              if (errorMsg.contains('isSequentialNextDay')) {
-                print('❌ CRITICAL: Backend bug detected - isSequentialNextDay is not defined');
-                print('❌ This needs to be fixed in the backend code');
-              }
-            }
-          }
-        }
-      }
-      rethrow;
+    print('📤 DailyTrainingService - POST /daily-plans/complete payload: $payload');
+    final res = await dio.post('/daily-plans/complete', data: payload);
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      throw Exception('Failed to update daily plan completion: ${res.statusMessage}');
     }
+  }
+
+  /// Fetch today's plans (next incomplete day per source) for a user via new API
+  Future<Map<String, dynamic>> getTodaysPlansForUser(String userId) async {
+    final dio = await _authedDio();
+    final res = await dio.get('/daily-plans/$userId/today');
+    if (res.statusCode == 200) {
+      final data = res.data;
+      if (data is Map<String, dynamic>) {
+        return data['data'] as Map<String, dynamic>;
+      }
+    }
+    throw Exception('Failed to fetch today plans: ${res.statusMessage}');
   }
 
   /// Get training statistics (legacy endpoint - kept for backward compatibility)
@@ -553,12 +507,16 @@ class DailyTrainingService {
         }
 
         final String dayName = (day['workout_name']?.toString()) ?? 'Day ${day['day'] ?? (i + 1)}';
-        final String planDate = (day['date'] ?? day['plan_date'])?.toString() ?? baseDate.add(Duration(days: i)).toIso8601String().split('T').first;
+        // Use day_number as primary identifier (1-based: Day 1, Day 2, etc.)
+        final int dayNumber = int.tryParse(day['day_number']?.toString() ?? day['day']?.toString() ?? '') ?? (i + 1);
+        // Keep date for backward compatibility/display if available
+        final String? date = day['date']?.toString();
         final String dayCategory = day['plan_category'] ?? day['exercise_plan_category'] ?? planCategory ?? 'Training Plan';
         final String dayUserLevel = day['user_level'] ?? userLevel ?? 'Beginner';
         
         normalizedDays.add({
-          'plan_date': planDate,
+          'day_number': dayNumber, // Primary identifier for day-based system
+          if (date != null && date.isNotEmpty) 'date': date, // Keep date for display if available
           'workout_name': dayName,
           'plan_category': dayCategory,
           'user_level': dayUserLevel,
@@ -598,7 +556,7 @@ class DailyTrainingService {
   Future<Map<String, dynamic>> createDailyPlanFromApproval({
     int? approvalId,
     int? assignmentId,
-    String? planDate,
+    int? dayNumber,
     int? webPlanId,
   }) async {
     try {
@@ -620,9 +578,9 @@ class DailyTrainingService {
         payload['web_plan_id'] = webPlanId;
       }
       
-      // Add plan_date if provided, otherwise backend will default to today
-      if (planDate != null) {
-        payload['plan_date'] = planDate;
+      // Add day_number if provided
+      if (dayNumber != null) {
+        payload['day_number'] = dayNumber;
       }
       
       // Validate that at least one ID is provided
@@ -677,7 +635,7 @@ class DailyTrainingService {
       if (e.response?.statusCode == 400) {
         print('⚠️ DailyTrainingService - 400 Bad Request Error: Invalid request format or parameters.');
         print('⚠️ DailyTrainingService - This usually means:');
-        print('⚠️   1. Request payload format is incorrect (check approval_id, web_plan_id, plan_date)');
+        print('⚠️   1. Request payload format is incorrect (check approval_id, web_plan_id, day_number)');
         print('⚠️   2. Backend validation failed (check backend error message above)');
         print('⚠️   3. Missing required fields or invalid field values');
         
@@ -713,7 +671,7 @@ class DailyTrainingService {
     int? approvalId,
     int? webPlanId,
     int? sourcePlanId,
-    String? planDate,
+    int? dayNumber,
   }) async {
     try {
       final dio = await _authedDio();
@@ -731,8 +689,8 @@ class DailyTrainingService {
       if (sourcePlanId != null) {
         queryParams['source_plan_id'] = sourcePlanId;
       }
-      if (planDate != null) {
-        queryParams['plan_date'] = planDate;
+      if (dayNumber != null) {
+        queryParams['day_number'] = dayNumber;
       }
 
       // Validate that at least one ID is provided
@@ -769,6 +727,67 @@ class DailyTrainingService {
       print('❌ DailyTrainingService - Unexpected error finding daily plan by source: $e');
       return null;
     }
+  }
+
+  /// Sync a manual training plan into daily_training_plans (day_number-based)
+  Future<Map<String, dynamic>> syncManualTrainingPlanToDaily({
+    required String planId,
+    required String userId,
+  }) async {
+    final dio = await _authedDio();
+    final res = await dio.post(
+      '/app/manual/training-plans/$planId/sync-to-daily',
+      data: {'user_id': userId},
+    );
+    if (res.statusCode == 200 || res.statusCode == 201) {
+      return res.data is Map<String, dynamic>
+          ? Map<String, dynamic>.from(res.data)
+          : {'data': res.data};
+    }
+    throw Exception('Failed to sync manual training plan: ${res.statusMessage}');
+  }
+
+  /// Sync a manual nutrition plan into daily_nutrition_plans (day_number-based)
+  Future<Map<String, dynamic>> syncManualNutritionPlanToDaily({
+    required String planId,
+    required String userId,
+  }) async {
+    final dio = await _authedDio();
+    final res = await dio.post(
+      '/app/manual/meal-plans/$planId/sync-to-daily',
+      data: {'user_id': userId},
+    );
+    if (res.statusCode == 200 || res.statusCode == 201) {
+      return res.data is Map<String, dynamic>
+          ? Map<String, dynamic>.from(res.data)
+          : {'data': res.data};
+    }
+    throw Exception('Failed to sync manual nutrition plan: ${res.statusMessage}');
+  }
+
+  /// Get all daily plans for a user, optionally filtered by source_plan_id and plan_type
+  Future<List<Map<String, dynamic>>> getUserDailyPlans({
+    required String userId,
+    String? sourcePlanId,
+    String? planType, // "training" | "nutrition" | other backend-supported types
+  }) async {
+    final dio = await _authedDio();
+    final query = <String, dynamic>{'user_id': userId};
+    if (sourcePlanId != null && sourcePlanId.isNotEmpty) {
+      query['source_plan_id'] = sourcePlanId;
+    }
+    if (planType != null && planType.isNotEmpty) {
+      query['plan_type'] = planType;
+    }
+    final res = await dio.get('/daily-plans', queryParameters: query);
+    if (res.statusCode == 200) {
+      final data = res.data;
+      if (data is Map<String, dynamic> && data['data'] is List) {
+        return (data['data'] as List).cast<Map<String, dynamic>>();
+      }
+      if (data is List) return data.cast<Map<String, dynamic>>();
+    }
+    throw Exception('Failed to fetch user daily plans: ${res.statusMessage}');
   }
 
   /// Delete daily training plans by source (approval_id, assignment_id, etc.)

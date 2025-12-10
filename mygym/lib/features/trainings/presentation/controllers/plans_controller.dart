@@ -254,8 +254,6 @@ class PlansController extends GetxController {
                                 webPlanId != null ||
                                 trainerId != null || // Has trainer_id (assigned by trainer)
                                 assignedAt != null || // Has assigned_at timestamp
-                                status == 'PLANNED' || // Status indicates assigned plan
-                                status == 'ACTIVE' ||
                                 planType == 'ai_generated' ||
                                 planType == 'daily' ||
                                 planType == 'schedule';
@@ -332,9 +330,13 @@ class PlansController extends GetxController {
           // Include ONLY manual plans created by the user
           // CRITICAL: If plan has ANY assignment indicators, it's NOT a manual plan
           // Even if plan_type is null/empty, if it has assignedBy/assignmentId/webPlanId, exclude it
-          final isManualPlan = !isAssignedPlan && // Must NOT be an assigned plan
-                              (planType == 'manual' || planType == null || planType == '') && 
-                              (createdBy == null || createdBy == userId); // Allow null createdBy or match userId
+      final matchesCreator = (createdBy != null && createdBy == userId) ||
+                            (createdBy == null && plan['user_id'] == userId);
+      final matchesUserId = plan['user_id'] == null || plan['user_id'] == userId;
+      final isManualPlan = !isAssignedPlan &&
+                          (planType == 'manual' || planType == null || planType == '') && 
+                          matchesCreator &&
+                          matchesUserId;
           
           print('🔍 Plans - Checking plan $planId:');
           print('🔍   - plan_type: $planType');
@@ -1198,20 +1200,20 @@ class PlansController extends GetxController {
             print('📤 PlansController - User level: $userLevel');
             
             // BACKEND BEHAVIOR (syncDailyPlansFromManualPlanHelper / syncDailyPlansFromAIPlanHelper):
-            // - Finds the last completed daily plan by plan_date (not completed_at)
-            // - Skips days with plan_date <= lastCompletedDate
-            // - Creates/updates only days after the last completed date
+            // - Finds the last completed daily plan by day_number (not completed_at)
+            // - Skips days with day_number <= lastCompletedDay
+            // - Creates/updates only days after the last completed day_number
             // - This preserves completed days and continues from the next day
             // - Handles duplicate key errors using the new unique constraint:
-            //   (user_id, plan_date, plan_type, source_plan_id)
+            //   (user_id, day_number, plan_type, source_plan_id)
             // 
             // CRITICAL: Multiple Plans Support (Backend Schema Change)
-            // The backend now supports multiple plans of the same type on the same date by including
-            // source_plan_id in the unique constraint: (user_id, plan_date, plan_type, source_plan_id)
+            // The backend now supports multiple plans of the same type by including
+            // source_plan_id in the unique constraint: (user_id, day_number, plan_type, source_plan_id)
             // This means multiple manual plans (e.g., "Home Workout" + "Gym Workout") or multiple
-            // AI plans (e.g., "Beginner Plan" + "Advanced Plan") can have daily plans on the same
-            // date, distinguished by their source_plan_id (approval_id or plan_id).
-            // Each plan tracks completion independently.
+            // AI plans (e.g., "Beginner Plan" + "Advanced Plan") can have daily plans with the same
+            // day_number, distinguished by their source_plan_id (approval_id or plan_id).
+            // Each plan tracks completion independently by day_number.
             // 
             // FRONTEND BEHAVIOR:
             // - Stores all daily plans when plan is started
@@ -1589,19 +1591,9 @@ class PlansController extends GetxController {
                       (activePlan.containsKey('exercise_plan_category') && activePlan.containsKey('user_level') && activePlan.containsKey('total_days'));
       final planType = isAiPlan ? 'ai_generated' : 'manual';
       
-      // Get plan's start_date to calculate plan_date
-      DateTime? planStartDate;
-      if (activePlan['start_date'] != null) {
-        planStartDate = DateTime.tryParse(activePlan['start_date'].toString());
-      }
-      planStartDate ??= DateTime.now();
-      
-      // Calculate plan_date for this day (day is 0-based in Plans controller)
-      final utcDate = DateTime.utc(planStartDate.year, planStartDate.month, planStartDate.day);
-      final dayOffset = day; // day is 0-based, so Day 1 = 0, Day 2 = 1, etc.
-      final planDate = utcDate.add(Duration(days: dayOffset)).toIso8601String().split('T').first;
-      
-      print('🔍 PlansController - Checking if day ${day + 1} (plan_date: $planDate) is completed...');
+      // day is 0-based in this controller; convert to 1-based day_number
+      final dayNumber = day + 1;
+      print('🔍 PlansController - Checking if day $dayNumber (by day_number) is completed...');
       
       // Get approval_id for manual/AI plans
       int? approvalId = planToApprovalId[planId];
@@ -1613,15 +1605,18 @@ class PlansController extends GetxController {
       final dailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: planType);
       
       final matchingDay = dailyPlans.firstWhereOrNull((dp) {
-        final dpDate = dp['plan_date']?.toString().split('T').first;
+        final dpDayNumber = int.tryParse(dp['day_number']?.toString() ?? dp['day']?.toString() ?? '');
         final dpPlanType = dp['plan_type']?.toString() ?? '';
+        final isStats = dp['is_stats_record'] as bool? ?? false;
+        if (isStats) return false;
+        if (dpPlanType != planType) return false;
+        if (dpDayNumber != dayNumber) return false;
         
         // For manual/AI plans, source_plan_id can be either approval_id OR plan_id (if approval_id is null)
         if (dpPlanType == 'manual' || dpPlanType == 'ai_generated') {
           final dpSourcePlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
-          // Match by approval_id if available, otherwise match by plan_id (source_plan_id)
-          return (approvalId != null && dpSourcePlanId == approvalId && dpDate == planDate) ||
-                 (approvalId == null && dpSourcePlanId == planId && dpDate == planDate);
+          return (approvalId != null && dpSourcePlanId == approvalId) ||
+                 (approvalId == null && dpSourcePlanId == planId);
         }
         return false;
       });
@@ -1629,12 +1624,12 @@ class PlansController extends GetxController {
       if (matchingDay != null) {
         final isCompleted = matchingDay['is_completed'] as bool? ?? false;
         final completedAt = matchingDay['completed_at'] as String?;
-        print('🔍 PlansController - Day ${day + 1} completion status: is_completed=$isCompleted, completed_at=$completedAt');
+        print('🔍 PlansController - Day $dayNumber completion status: is_completed=$isCompleted, completed_at=$completedAt');
         
         if (isCompleted) {
           // Day is completed, mark all workouts for this day as completed
           final dayWorkouts = _getDayWorkouts(activePlan, day);
-          print('✅ PlansController - Day ${day + 1} is completed, marking ${dayWorkouts.length} workouts as completed');
+          print('✅ PlansController - Day $dayNumber is completed, marking ${dayWorkouts.length} workouts as completed');
           
           for (final workout in dayWorkouts) {
             final workoutName = workout['name']?.toString() ?? workout['workout_name']?.toString() ?? '';
@@ -1651,7 +1646,7 @@ class PlansController extends GetxController {
           refreshUI();
         }
       } else {
-        print('⚠️ PlansController - Could not find daily plan for day ${day + 1} (plan_date: $planDate, planId: $planId, approvalId: $approvalId)');
+        print('⚠️ PlansController - Could not find daily plan for day $dayNumber (by day_number, planId: $planId, approvalId: $approvalId)');
         print('⚠️ PlansController - Searched in ${dailyPlans.length} daily plans for planType: $planType');
       }
     } catch (e) {
@@ -2023,7 +2018,7 @@ class PlansController extends GetxController {
     try {
       print('✅ Workout completed: Plan $planId, Day ${day + 1}, Workout $workoutName');
       
-      // Get plan's start_date to calculate correct plan_date (not DateTime.now())
+      
       final activePlan = _activePlan.value;
       
       // Get approval_id for manual/AI plans (needed for lookup and creation)
@@ -2047,16 +2042,8 @@ class PlansController extends GetxController {
           print('✅ PlansController - Retrieved approval_id $approvalId from controller cache');
         }
       }
-      print('🔍 PlansController - Looking up daily_plan_id for plan $planId, approval_id: $approvalId, day ${day + 1}');
-      DateTime? planStartDate;
-      if (activePlan != null && activePlan['id']?.toString() == planId.toString()) {
-        if (activePlan['start_date'] != null) {
-          planStartDate = DateTime.tryParse(activePlan['start_date'].toString());
-          print('🔍 PlansController - Found plan start_date: $planStartDate');
-        }
-      }
-      // Fallback to current date if start_date not found
-      planStartDate ??= DateTime.now();
+      final dayNumber = day + 1;
+      print('🔍 PlansController - Looking up daily_plan_id for plan $planId, approval_id: $approvalId, day $dayNumber');
       
       // First, try to get the daily_plan_id from stored daily plans
       int? dailyPlanId;
@@ -2073,39 +2060,36 @@ class PlansController extends GetxController {
         );
         final planTypeForLookup = isAiPlanForLookup ? 'ai_generated' : 'manual';
         final dailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: planTypeForLookup);
-        // Calculate plan_date using plan's start_date + day offset (not DateTime.now())
-        final planDate = planStartDate.add(Duration(days: day)).toIso8601String().split('T').first;
-        print('🔍 PlansController - Searching for daily plan with date: $planDate (calculated from start_date: $planStartDate + $day days)');
+        print('🔍 PlansController - Searching for daily plan with day_number: $dayNumber');
         print('🔍 PlansController - Total daily plans fetched: ${dailyPlans.length}');
         
         final matchingDay = dailyPlans.firstWhereOrNull((dp) {
-          final dpDate = dp['plan_date']?.toString().split('T').first;
+          final dpDayNumber = int.tryParse(dp['day_number']?.toString() ?? dp['day']?.toString() ?? '');
           final dpPlanType = dp['plan_type']?.toString() ?? '';
           
           // For manual/AI plans, source_plan_id can be either approval_id OR plan_id (if approval_id is null)
           if (dpPlanType == 'manual' || dpPlanType == 'ai_generated') {
             final dpSourcePlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
-            // Match by approval_id if available, otherwise match by plan_id (source_plan_id)
-            final matches = (approvalId != null && dpSourcePlanId == approvalId && dpDate == planDate) ||
-                          (approvalId == null && dpSourcePlanId == planId && dpDate == planDate);
+            final matches = (approvalId != null && dpSourcePlanId == approvalId && dpDayNumber == dayNumber) ||
+                          (approvalId == null && dpSourcePlanId == planId && dpDayNumber == dayNumber);
             if (matches) {
-              print('🔍 PlansController - Found match: source_plan_id=$dpSourcePlanId (${approvalId != null ? "approval_id" : "plan_id"}), date=$dpDate');
+              print('🔍 PlansController - Found match: source_plan_id=$dpSourcePlanId (${approvalId != null ? "approval_id" : "plan_id"}), day_number=${dpDayNumber}');
             }
             return matches;
           } else {
             // For assigned plans, source_plan_id is the assignment_id
             final dpSourcePlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
-            return dpSourcePlanId == planId && dpDate == planDate;
+            return dpSourcePlanId == planId && dpDayNumber == dayNumber;
           }
         });
         
         if (matchingDay != null) {
           dailyPlanId = int.tryParse(matchingDay['id']?.toString() ?? matchingDay['daily_plan_id']?.toString() ?? '');
-          print('🔍 PlansController - Found daily_plan_id: $dailyPlanId for day ${day + 1}');
+          print('🔍 PlansController - Found daily_plan_id: $dailyPlanId for day $dayNumber');
           // Store the matching daily plan for later use in item_id calculation
           activePlan?['_found_daily_plan'] = matchingDay;
         } else {
-          print('⚠️ PlansController - No matching daily plan found for plan $planId, approval_id: $approvalId, date: $planDate');
+          print('⚠️ PlansController - No matching daily plan found for plan $planId, approval_id: $approvalId, day_number: $dayNumber');
         }
       } catch (e) {
         print('⚠️ PlansController - Could not fetch daily plan ID: $e');
@@ -2115,25 +2099,23 @@ class PlansController extends GetxController {
       // Backend now supports source_plan_id (plan_id) even when approval_id is null
       if (dailyPlanId == null) {
         try {
-          print('📤 PlansController - No daily_plan_id found, trying to find/create using findDailyPlanBySource for day ${day + 1}');
-          
-          // Calculate plan_date using plan's start_date + day offset (not DateTime.now())
-          final planDate = planStartDate.add(Duration(days: day)).toIso8601String().split('T').first;
+          final dayNumber = day + 1; // day is 0-based here
+          print('📤 PlansController - No daily_plan_id found, trying to find/create using findDailyPlanBySource for day $dayNumber');
           
           // Try to find daily plan using findDailyPlanBySource (backend will auto-sync if needed)
           Map<String, dynamic>? foundPlan;
           if (approvalId != null) {
-            print('📤 PlansController - Finding daily plan with approval_id: $approvalId, plan_date: $planDate');
+            print('📤 PlansController - Finding daily plan with approval_id: $approvalId, day_number: $dayNumber');
             foundPlan = await _dailyTrainingService.findDailyPlanBySource(
               approvalId: approvalId,
-              planDate: planDate,
+              dayNumber: dayNumber,
             );
           } else {
             // Use source_plan_id (plan_id) when approval_id is null (backend supports this now)
-            print('📤 PlansController - Finding daily plan with source_plan_id (plan_id): $planId, plan_date: $planDate');
+            print('📤 PlansController - Finding daily plan with source_plan_id (plan_id): $planId, day_number: $dayNumber');
             foundPlan = await _dailyTrainingService.findDailyPlanBySource(
               sourcePlanId: planId,
-              planDate: planDate,
+              dayNumber: dayNumber,
             );
           }
           
@@ -2152,7 +2134,7 @@ class PlansController extends GetxController {
             if (approvalId != null) {
               final createdPlan = await _dailyTrainingService.createDailyPlanFromApproval(
                 approvalId: approvalId,
-                planDate: planDate,
+                dayNumber: dayNumber,
               );
               
               if (createdPlan.isNotEmpty) {
@@ -2282,13 +2264,13 @@ class PlansController extends GetxController {
             
             final isCompleted = updatedDailyPlan['is_completed'] as bool? ?? false;
             final completedAt = updatedDailyPlan['completed_at'] as String?;
-            final planDate = updatedDailyPlan['plan_date'] as String?;
+            final planDayNumber = updatedDailyPlan['day_number'] ?? updatedDailyPlan['day'];
             final planType = updatedDailyPlan['plan_type'] as String?;
             
             print('📊 PlansController - Verification result:');
             print('  - is_completed: $isCompleted');
             print('  - completed_at: $completedAt');
-            print('  - plan_date: $planDate');
+            print('  - day_number: $planDayNumber');
             print('  - plan_type: $planType');
             
             // Backend requires BOTH is_completed=true AND completed_at timestamp
@@ -2598,10 +2580,13 @@ class PlansController extends GetxController {
           workoutsAdded++;
         }
 
-        final String date = (day['date'] ?? day['plan_date'])?.toString() ?? '';
+        // Use day_number as primary identifier (1-based: Day 1, Day 2, etc.)
+        final int dayNumber = int.tryParse(day['day_number']?.toString() ?? day['day']?.toString() ?? '') ?? (i + 1);
+        final String date = day['date']?.toString() ?? ''; // Keep date for display if available
         final String workoutName = (day['workout_name'] ?? 'Daily Workout').toString();
         result.add({
-          if (date.isNotEmpty) 'date': date,
+          'day_number': dayNumber, // Primary identifier for day-based system
+          if (date.isNotEmpty) 'date': date, // Keep date for backward compatibility/display
           'workouts': workouts,
           'workout_name': workoutName,
           'plan_category': planCategory ?? 'Training Plan',
@@ -3253,24 +3238,14 @@ class PlansController extends GetxController {
           continue;
         }
         
-        // Calculate day number from plan_date
-        final planDate = plan['plan_date'] as String?;
-        if (planDate == null) continue;
+        // Use explicit day_number from backend
+        final dayNumber = int.tryParse(plan['day_number']?.toString() ?? plan['day']?.toString() ?? '');
         
-        final planDateObj = DateTime.tryParse(planDate);
-        if (planDateObj == null) continue;
-        
-        final planDateNormalized = DateTime(planDateObj.year, planDateObj.month, planDateObj.day);
-        final daysDiff = planDateNormalized.difference(startDateNormalized).inDays;
-        
-        // Day number is 1-based (Day 1 = daysDiff 0)
-        final dayNumber = daysDiff + 1;
-        
-        if (dayNumber > 0) {
+        if (dayNumber != null && dayNumber > 0) {
           completedPlans.add(plan);
           if (lastCompletedDay == null || dayNumber > lastCompletedDay) {
             lastCompletedDay = dayNumber;
-            print('📅 PlansController - Updated lastCompletedDay to $lastCompletedDay (plan_date: $planDateNormalized)');
+            print('📅 PlansController - Updated lastCompletedDay to $lastCompletedDay (by day_number)');
           }
         }
       }
@@ -3665,9 +3640,19 @@ class PlansController extends GetxController {
         // Include ONLY manual plans created by the user
         // CRITICAL: If plan has ANY assignment indicators, it's NOT a manual plan
         // Even if plan_type is null/empty, if it has assignedBy/assignmentId/webPlanId, exclude it
-        final isManualPlan = !isAssignedPlan && // Must NOT be an assigned plan
-                            (planType == 'manual' || planType == null || planType == '') && 
-                            (createdBy == null || createdBy == userId); // Allow null createdBy or match userId
+        // Treat as manual only when:
+        // - Not an assigned plan
+        // - plan_type is manual/empty
+        // - created_by matches current user (strict, no null pass-through)
+        // - If user_id present, must match current user
+        // Allow if created_by matches user OR (created_by is null and user_id matches user)
+        final matchesCreator = (createdBy != null && createdBy == userId) ||
+                              (createdBy == null && plan['user_id'] == userId);
+        final matchesUserId = plan['user_id'] == null || plan['user_id'] == userId;
+        final isManualPlan = !isAssignedPlan &&
+                            (planType == 'manual' || planType == null || planType == '') &&
+                            matchesCreator &&
+                            matchesUserId;
         
         if (planId != null && !seenIds.contains(planId) && isManualPlan && !isAssignedPlan) {
           seenIds.add(planId);

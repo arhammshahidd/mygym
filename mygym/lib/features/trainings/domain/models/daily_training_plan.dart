@@ -1,7 +1,7 @@
 class DailyTrainingPlan {
   final int id;
   final int userId;
-  final String planDate;
+  final int? dayNumber; // Primary identifier for day-based system (replaces planDate)
   final String planCategory;
   final String workoutName;
   final bool isCompleted;
@@ -10,7 +10,7 @@ class DailyTrainingPlan {
   DailyTrainingPlan({
     required this.id,
     required this.userId,
-    required this.planDate,
+    this.dayNumber, // Optional for backward compatibility
     required this.planCategory,
     required this.workoutName,
     required this.isCompleted,
@@ -29,10 +29,15 @@ class DailyTrainingPlan {
                       0;
     final int planUserId = json['user_id'] as int? ?? 0;
     
+    // Parse day_number (primary) with fallback to 'day' field
+    final int? dayNumber = json['day_number'] != null 
+        ? int.tryParse(json['day_number'].toString())
+        : (json['day'] != null ? int.tryParse(json['day'].toString()) : null);
+    
     return DailyTrainingPlan(
       id: planId,
       userId: planUserId,
-      planDate: json['plan_date'] as String? ?? '',
+      dayNumber: dayNumber,
       planCategory: planCategory,
       workoutName: json['workout_name'] as String? ?? 'Daily Workout',
       isCompleted: json['is_completed'] as bool? ?? false,
@@ -46,7 +51,7 @@ class DailyTrainingPlan {
     return {
       'id': id,
       'user_id': userId,
-      'plan_date': planDate,
+      if (dayNumber != null) 'day_number': dayNumber, // Primary identifier
       'plan_category': planCategory,
       'workout_name': workoutName,
       'is_completed': isCompleted,
@@ -57,7 +62,7 @@ class DailyTrainingPlan {
   DailyTrainingPlan copyWith({
     int? id,
     int? userId,
-    String? planDate,
+    int? dayNumber,
     String? planCategory,
     String? workoutName,
     bool? isCompleted,
@@ -66,7 +71,7 @@ class DailyTrainingPlan {
     return DailyTrainingPlan(
       id: id ?? this.id,
       userId: userId ?? this.userId,
-      planDate: planDate ?? this.planDate,
+      dayNumber: dayNumber ?? this.dayNumber,
       planCategory: planCategory ?? this.planCategory,
       workoutName: workoutName ?? this.workoutName,
       isCompleted: isCompleted ?? this.isCompleted,

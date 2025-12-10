@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:mygym/features/stats/presentation/controllers/stats_controller.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../controllers/stats_controller.dart';
 import '../../../trainings/domain/models/daily_training_plan.dart';
@@ -464,7 +465,7 @@ class _StatsPageState extends State<StatsPage> {
                   ),
                 ),
                 Text(
-                  '${workout.planCategory} • ${workout.planDate}',
+                  '${workout.planCategory} • Day ${workout.dayNumber ?? '-'}',
                   style: const TextStyle(
                     fontSize: 12,
                     color: Colors.grey,

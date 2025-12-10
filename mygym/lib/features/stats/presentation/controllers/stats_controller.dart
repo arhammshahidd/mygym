@@ -70,7 +70,7 @@ class StatsController extends GetxController {
         }
       }
     } catch (e) {
-      print('❌ Stats - Error loading cached stats: $e');
+      // print('❌ Stats - Error loading cached stats: $e');
     }
   }
 
@@ -82,22 +82,22 @@ class StatsController extends GetxController {
       await prefs.setString('cached_training_stats_user_$userId', jsonEncode(_cachedStats));
       await prefs.setString('cached_recent_workouts_user_$userId', jsonEncode(_cachedRecentWorkouts));
     } catch (e) {
-      print('❌ Stats - Error persisting cached stats: $e');
+      // print('❌ Stats - Error persisting cached stats: $e');
     }
   }
 
   Future<void> loadStatsData() async {
     try {
-      print('📊 Stats - Starting loadStatsData...');
+      // print('📊 Stats - Starting loadStatsData...');
       isLoading.value = true;
       
       // Ensure profile is loaded
       await _profileController.loadUserProfileIfNeeded();
       final userId = _profileController.user?.id;
-      print('👤 Stats - User ID: $userId');
+      // print('👤 Stats - User ID: $userId');
       
       if (userId == null || userId == 0) {
-        print('❌ Stats - No valid user ID');
+        // print('❌ Stats - No valid user ID');
         return;
       }
 
@@ -107,10 +107,10 @@ class StatsController extends GetxController {
       
       // CRITICAL: Validate planType is set when there's an active plan
       if (activePlanIds != null && (planType == null || planType.isEmpty)) {
-        print('⚠️ Stats - CRITICAL ERROR: Active plan found but planType is null or empty!');
-        print('⚠️ Stats - Active plan IDs: $activePlanIds');
-        print('⚠️ Stats - This will cause backend to return stats for wrong plan type (likely web_assigned)');
-        print('⚠️ Stats - Attempting to infer planType from active plan data...');
+        // print('⚠️ Stats - CRITICAL ERROR: Active plan found but planType is null or empty!');
+        // print('⚠️ Stats - Active plan IDs: $activePlanIds');
+        // print('⚠️ Stats - This will cause backend to return stats for wrong plan type (likely web_assigned)');
+        // print('⚠️ Stats - Attempting to infer planType from active plan data...');
         
         // Try to infer planType from active plan
         if (Get.isRegistered<PlansController>()) {
@@ -120,7 +120,7 @@ class StatsController extends GetxController {
             final planTypeFromField = plan['plan_type']?.toString().toLowerCase();
             if (planTypeFromField == 'ai_generated' || planTypeFromField == 'manual') {
               planType = planTypeFromField;
-              print('✅ Stats - Inferred planType from active plan: $planType');
+              // print('✅ Stats - Inferred planType from active plan: $planType');
             } else {
               // Check AI indicators
               final isAiPlan = plan.containsKey('ai_generated') || 
@@ -129,28 +129,28 @@ class StatsController extends GetxController {
                               plan.containsKey('request_id') ||
                               (plan.containsKey('exercise_plan_category') && plan.containsKey('user_level') && plan.containsKey('total_days'));
               planType = isAiPlan ? 'ai_generated' : 'manual';
-              print('✅ Stats - Inferred planType from AI indicators: $planType');
+              // print('✅ Stats - Inferred planType from AI indicators: $planType');
             }
           }
         } else if (Get.isRegistered<SchedulesController>()) {
           planType = 'web_assigned';
-          print('✅ Stats - Inferred planType as web_assigned (active schedule found)');
+          // print('✅ Stats - Inferred planType as web_assigned (active schedule found)');
         }
       }
       
       if (planType != null && planType.isNotEmpty) {
-        print('📊 Stats - Active plan type detected: $planType');
-        print('📊 Stats - Will fetch stats for plan type: $planType');
-        print('📊 Stats - API call: GET /api/stats/mobile?planType=$planType');
+        // print('📊 Stats - Active plan type detected: $planType');
+        // print('📊 Stats - Will fetch stats for plan type: $planType');
+        // print('📊 Stats - API call: GET /api/stats/mobile?planType=$planType');
       } else {
-        print('📊 Stats - No active plan detected - clearing stats data');
+        // print('📊 Stats - No active plan detected - clearing stats data');
         // No active plan, clear all stats to show empty state
         userStats.value = null;
         trainingStats.value = null;
         dailyPlans.clear();
         dailyPlansRaw.clear();
         isLoading.value = false;
-        print('✅ Stats - Stats cleared (no active plan)');
+        // print('✅ Stats - Stats cleared (no active plan)');
         return;
       }
       
@@ -158,36 +158,36 @@ class StatsController extends GetxController {
       // Backend now creates separate stats records per plan type
       // CRITICAL: planType is guaranteed to be non-null at this point
       try {
-        print('📊 Stats - Fetching user statistics from /api/stats/mobile with planType=$planType...');
+        // print('📊 Stats - Fetching user statistics from /api/stats/mobile with planType=$planType...');
         final statsData = await _dailyTrainingService.getStats(refresh: false, planType: planType!);
-        print('📊 Stats - User stats result: $statsData');
-        print('📊 Stats - User stats type: ${statsData.runtimeType}');
+        // print('📊 Stats - User stats result: $statsData');
+        // print('📊 Stats - User stats type: ${statsData.runtimeType}');
         
         if (statsData is Map<String, dynamic>) {
           // API returns {success: true, data: {...}} or just {...}
           final dataToParse = statsData['data'] as Map<String, dynamic>? ?? statsData;
           userStats.value = UserStats.fromJson(dataToParse);
           _cachedStats.assignAll(dataToParse);
-          print('✅ Stats - User stats updated');
-          print('✅ Stats - Total workouts: ${userStats.value?.totalWorkouts}');
-          print('✅ Stats - Total minutes: ${userStats.value?.totalMinutes}');
-          print('✅ Stats - Longest streak: ${userStats.value?.longestStreak}');
-          print('📊 Stats - Daily workouts dates: ${userStats.value?.dailyWorkouts.keys.toList()}');
-          print('📊 Stats - Daily workouts data: ${userStats.value?.dailyWorkouts}');
+          // print('✅ Stats - User stats updated');
+          // print('✅ Stats - Total workouts: ${userStats.value?.totalWorkouts}');
+          // print('✅ Stats - Total minutes: ${userStats.value?.totalMinutes}');
+          // print('✅ Stats - Longest streak: ${userStats.value?.longestStreak}');
+          // print('📊 Stats - Daily workouts dates: ${userStats.value?.dailyWorkouts.keys.toList()}');
+          // print('📊 Stats - Daily workouts data: ${userStats.value?.dailyWorkouts}');
           
           // Also update legacy TrainingStats for backward compatibility
           trainingStats.value = _convertUserStatsToTrainingStats(userStats.value);
         } else {
-          print('⚠️ Stats - Invalid stats data format: ${statsData.runtimeType}');
+          // print('⚠️ Stats - Invalid stats data format: ${statsData.runtimeType}');
           // Don't create dummy data - just set to null so UI shows empty state
           userStats.value = null;
           trainingStats.value = null;
         }
       } catch (e) {
-        print('⚠️ Stats - Failed to load user stats: $e');
+        // print('⚠️ Stats - Failed to load user stats: $e');
         // Try legacy endpoint as fallback
         try {
-          print('📊 Stats - Trying legacy training stats endpoint...');
+          // print('📊 Stats - Trying legacy training stats endpoint...');
           final legacyStatsData = await _dailyTrainingService.getTrainingStats();
           if (legacyStatsData is Map<String, dynamic>) {
             final dataToParse = legacyStatsData['data'] as Map<String, dynamic>? ?? legacyStatsData;
@@ -200,7 +200,7 @@ class StatsController extends GetxController {
             trainingStats.value = null;
           }
         } catch (legacyError) {
-          print('⚠️ Stats - Legacy endpoint also failed: $legacyError');
+          // print('⚠️ Stats - Legacy endpoint also failed: $legacyError');
           userStats.value = null;
           trainingStats.value = null;
         }
@@ -211,7 +211,7 @@ class StatsController extends GetxController {
             userStats.value = UserStats.fromJson(_cachedStats);
             trainingStats.value = _convertUserStatsToTrainingStats(userStats.value);
           } catch (parseError) {
-            print('❌ Stats - Failed to parse cached stats: $parseError');
+            // print('❌ Stats - Failed to parse cached stats: $parseError');
             // Don't create dummy data - keep null
             userStats.value = null;
             trainingStats.value = null;
@@ -226,9 +226,9 @@ class StatsController extends GetxController {
       // getDailyTrainingPlans() returns all plans (completed and incomplete) which is what we need for stats
       // CRITICAL: Pass planType to ensure we only get plans of the active plan type
       try {
-        print('📊 Stats - Fetching ALL daily plans (including completed) for planType: $planType...');
+        // print('📊 Stats - Fetching ALL daily plans (including completed) for planType: $planType...');
         final plansData = await _dailyTrainingService.getDailyTrainingPlans(planType: planType);
-        print('📊 Stats - Daily plans result: ${plansData.length} items (filtered for $planType, includes completed plans)');
+        // print('📊 Stats - Daily plans result: ${plansData.length} items (filtered for $planType, includes completed plans)');
         
         // Store both parsed models and raw JSON data
         // Filter out any plans that might cause parsing errors
@@ -239,7 +239,7 @@ class StatsController extends GetxController {
             // CRITICAL: Filter out stats records
             final isStatsRecord = plan['is_stats_record'] as bool? ?? false;
             if (isStatsRecord) {
-              print('📊 Stats - Skipping stats record: id=${plan['id']}');
+              // print('📊 Stats - Skipping stats record: id=${plan['id']}');
               continue;
             }
             
@@ -251,23 +251,24 @@ class StatsController extends GetxController {
             final planTypeValue = plan['plan_type']?.toString();
             final sourcePlanIdValue = plan['source_plan_id']?.toString();
             final isCompleted = plan['is_completed'] as bool? ?? false;
-            print('📊 Stats - Daily plan: id=${plan['id']}, plan_type=$planTypeValue, source_plan_id=$sourcePlanIdValue, is_completed=$isCompleted');
+            // print('📊 Stats - Daily plan: id=${plan['id']}, plan_type=$planTypeValue, source_plan_id=$sourcePlanIdValue, is_completed=$isCompleted');
           } catch (e) {
-            print('⚠️ Stats - Skipping invalid plan: $e');
-            print('⚠️ Stats - Plan data: ${plan.keys.toList()}');
+            // print('⚠️ Stats - Skipping invalid plan: $e');
+            // print('⚠️ Stats - Plan data: ${plan.keys.toList()}');
           }
         }
         dailyPlans.assignAll(validPlans.map((plan) => DailyTrainingPlan.fromJson(plan)));
         dailyPlansRaw.assignAll(validPlans);
-        print('✅ Stats - Daily plans updated: ${dailyPlans.length} items (stats records filtered out)');
-        print('📊 Stats - Plan types in daily plans: ${validPlans.map((p) => p['plan_type']?.toString() ?? 'null').toSet().toList()}');
+        // print('✅ Stats - Daily plans updated: ${dailyPlans.length} items (stats records filtered out)');
+        // print('📊 Stats - Plan types in daily plans: ${validPlans.map((p) => p['plan_type']?.toString() ?? 'null').toSet().toList()}');
         
         // CRITICAL: Log completed plans for assigned plans to debug stats issue
         if (planType == 'web_assigned') {
           final completedPlans = validPlans.where((p) => (p['is_completed'] as bool? ?? false) == true).toList();
-          print('📊 Stats - Completed web_assigned plans: ${completedPlans.length}');
+          // print('📊 Stats - Completed web_assigned plans: ${completedPlans.length}');
           for (final p in completedPlans) {
-            print('  - Plan id=${p['id']}, source_plan_id=${p['source_plan_id']}, plan_date=${p['plan_date']}, is_completed=${p['is_completed']}, completed_at=${p['completed_at']}');
+            final dayNumber = p['day_number'] ?? p['day'] ?? 'N/A';
+            // print('  - Plan id=${p['id']}, source_plan_id=${p['source_plan_id']}, day_number=$dayNumber, is_completed=${p['is_completed']}, completed_at=${p['completed_at']}');
           }
           
           // Check if any plans match the active schedule
@@ -279,14 +280,14 @@ class StatsController extends GetxController {
               final sourceAssignmentId = p['source_assignment_id'] as int?;
               return sourcePlanId == activePlanId || sourceAssignmentId == activePlanId;
             }).toList();
-            print('📊 Stats - Plans matching active schedule (planId=$activePlanId): ${matchingPlans.length}');
+            // print('📊 Stats - Plans matching active schedule (planId=$activePlanId): ${matchingPlans.length}');
             for (final p in matchingPlans) {
-              print('  - Matched plan: id=${p['id']}, source_plan_id=${p['source_plan_id']}, is_completed=${p['is_completed']}');
+              // print('  - Matched plan: id=${p['id']}, source_plan_id=${p['source_plan_id']}, is_completed=${p['is_completed']}');
             }
           }
         }
       } catch (e) {
-        print('⚠️ Stats - Failed to load daily plans: $e');
+        // print('⚠️ Stats - Failed to load daily plans: $e');
         dailyPlans.clear();
         dailyPlansRaw.clear();
       }
@@ -295,16 +296,16 @@ class StatsController extends GetxController {
       await _persistCachedStats();
       
     } catch (e) {
-      print('❌ Stats - Error loading data: $e');
+      // print('❌ Stats - Error loading data: $e');
     } finally {
       isLoading.value = false;
       hasLoadedOnce.value = true;
-      print('🏁 Stats - Load completed');
+      // print('🏁 Stats - Load completed');
     }
   }
 
   Future<void> refreshStats({bool forceSync = false}) async {
-    print('🔄 Stats - Refreshing stats data...');
+    // print('🔄 Stats - Refreshing stats data...');
     await _loadLocalCompletions(); // Reload local completions first
     
     // Get active plan type to fetch/sync correct stats record
@@ -313,10 +314,10 @@ class StatsController extends GetxController {
     
     // CRITICAL: Validate planType is set when there's an active plan
     if (activePlanIds != null && (planType == null || planType.isEmpty)) {
-      print('⚠️ Stats - CRITICAL ERROR: Active plan found but planType is null or empty!');
-      print('⚠️ Stats - Active plan IDs: $activePlanIds');
-      print('⚠️ Stats - This will cause backend to sync stats for wrong plan type (likely web_assigned)');
-      print('⚠️ Stats - Attempting to infer planType from active plan data...');
+      // print('⚠️ Stats - CRITICAL ERROR: Active plan found but planType is null or empty!');
+      // print('⚠️ Stats - Active plan IDs: $activePlanIds');
+      // print('⚠️ Stats - This will cause backend to sync stats for wrong plan type (likely web_assigned)');
+      // print('⚠️ Stats - Attempting to infer planType from active plan data...');
       
       // Try to infer planType from active plan
       if (Get.isRegistered<PlansController>()) {
@@ -326,7 +327,7 @@ class StatsController extends GetxController {
           final planTypeFromField = plan['plan_type']?.toString().toLowerCase();
           if (planTypeFromField == 'ai_generated' || planTypeFromField == 'manual') {
             planType = planTypeFromField;
-            print('✅ Stats - Inferred planType from active plan: $planType');
+            // print('✅ Stats - Inferred planType from active plan: $planType');
           } else {
             // Check AI indicators
             final isAiPlan = plan.containsKey('ai_generated') || 
@@ -335,27 +336,27 @@ class StatsController extends GetxController {
                             plan.containsKey('request_id') ||
                             (plan.containsKey('exercise_plan_category') && plan.containsKey('user_level') && plan.containsKey('total_days'));
             planType = isAiPlan ? 'ai_generated' : 'manual';
-            print('✅ Stats - Inferred planType from AI indicators: $planType');
+            // print('✅ Stats - Inferred planType from AI indicators: $planType');
           }
         }
       } else if (Get.isRegistered<SchedulesController>()) {
         planType = 'web_assigned';
-        print('✅ Stats - Inferred planType as web_assigned (active schedule found)');
+        // print('✅ Stats - Inferred planType as web_assigned (active schedule found)');
       }
     }
     
     if (planType != null && planType.isNotEmpty) {
-      print('📊 Stats - Active plan type detected: $planType');
-      print('📊 Stats - Will sync/fetch stats for plan type: $planType');
-      print('📊 Stats - API call: POST /api/stats/mobile/sync with {planType: $planType}');
+      // print('📊 Stats - Active plan type detected: $planType');
+      // print('📊 Stats - Will sync/fetch stats for plan type: $planType');
+      // print('📊 Stats - API call: POST /api/stats/mobile/sync with {planType: $planType}');
     } else {
-      print('📊 Stats - No active plan detected - clearing stats data');
+      // print('📊 Stats - No active plan detected - clearing stats data');
       // No active plan, clear all stats to show empty state
       userStats.value = null;
       trainingStats.value = null;
       dailyPlans.clear();
       dailyPlansRaw.clear();
-      print('✅ Stats - Stats cleared (no active plan)');
+      // print('✅ Stats - Stats cleared (no active plan)');
       return;
     }
     
@@ -364,7 +365,7 @@ class StatsController extends GetxController {
       // Backend now creates separate stats records per plan type
       // CRITICAL: planType is guaranteed to be non-null at this point
       try {
-        print('📊 Stats - Syncing stats (force recalculation) with planType=$planType...');
+        // print('📊 Stats - Syncing stats (force recalculation) with planType=$planType...');
         final statsData = await _dailyTrainingService.syncStats(planType: planType!);
         // CRITICAL: syncStats already extracts data['data'] and returns it directly
         // So statsData IS the data object, not wrapped in {success: true, data: {...}}
@@ -373,23 +374,23 @@ class StatsController extends GetxController {
           trainingStats.value = _convertUserStatsToTrainingStats(userStats.value);
           _cachedStats.assignAll(statsData);
           await _persistCachedStats();
-          print('✅ Stats - Stats synced successfully');
-          print('📊 Stats - Total workouts: ${userStats.value?.totalWorkouts}');
-          print('📊 Stats - Total minutes: ${userStats.value?.totalMinutes}');
-          print('📊 Stats - Longest streak: ${userStats.value?.longestStreak}');
-          print('📊 Stats - Daily workouts dates after sync: ${userStats.value?.dailyWorkouts.keys.toList()}');
-          print('📊 Stats - Daily workouts data after sync: ${userStats.value?.dailyWorkouts}');
+          // print('✅ Stats - Stats synced successfully');
+          // print('📊 Stats - Total workouts: ${userStats.value?.totalWorkouts}');
+          // print('📊 Stats - Total minutes: ${userStats.value?.totalMinutes}');
+          // print('📊 Stats - Longest streak: ${userStats.value?.longestStreak}');
+          // print('📊 Stats - Daily workouts dates after sync: ${userStats.value?.dailyWorkouts.keys.toList()}');
+          // print('📊 Stats - Daily workouts data after sync: ${userStats.value?.dailyWorkouts}');
         } else {
-          print('⚠️ Stats - Sync response has null or empty data (no stats record exists yet for plan type: $planType)');
-          print('⚠️ Stats - This is normal for new plans - stats will be created when workouts are completed');
+          // print('⚠️ Stats - Sync response has null or empty data (no stats record exists yet for plan type: $planType)');
+          // print('⚠️ Stats - This is normal for new plans - stats will be created when workouts are completed');
           // Don't clear existing stats, just log the warning
         }
       } catch (e) {
-        print('⚠️ Stats - Failed to sync stats: $e');
+        // print('⚠️ Stats - Failed to sync stats: $e');
         // If sync fails, try to load stats from cache or use getStats endpoint
         // CRITICAL: planType is guaranteed to be non-null at this point
         try {
-          print('📊 Stats - Attempting to load stats using getStats endpoint as fallback with planType=$planType...');
+          // print('📊 Stats - Attempting to load stats using getStats endpoint as fallback with planType=$planType...');
           final statsData = await _dailyTrainingService.getStats(refresh: true, planType: planType!);
           if (statsData is Map<String, dynamic>) {
             final dataToParse = statsData['data'] as Map<String, dynamic>? ?? statsData;
@@ -397,10 +398,10 @@ class StatsController extends GetxController {
             trainingStats.value = _convertUserStatsToTrainingStats(userStats.value);
             _cachedStats.assignAll(dataToParse);
             await _persistCachedStats();
-            print('✅ Stats - Stats loaded successfully using getStats endpoint');
+            // print('✅ Stats - Stats loaded successfully using getStats endpoint');
           }
         } catch (fallbackError) {
-          print('⚠️ Stats - Fallback getStats also failed: $fallbackError');
+          // print('⚠️ Stats - Fallback getStats also failed: $fallbackError');
           // Don't create dummy data - just keep current state or null
         }
       }
@@ -409,7 +410,7 @@ class StatsController extends GetxController {
       // Backend now creates separate stats records per plan type
       // CRITICAL: planType is guaranteed to be non-null at this point
       try {
-        print('📊 Stats - Loading stats with refresh flag and planType=$planType...');
+        // print('📊 Stats - Loading stats with refresh flag and planType=$planType...');
         final statsData = await _dailyTrainingService.getStats(refresh: true, planType: planType!);
         if (statsData is Map<String, dynamic>) {
           final dataToParse = statsData['data'] as Map<String, dynamic>? ?? statsData;
@@ -418,12 +419,12 @@ class StatsController extends GetxController {
           _cachedStats.assignAll(dataToParse);
           await _persistCachedStats();
         } else {
-          print('⚠️ Stats - Invalid refresh response format');
+          // print('⚠️ Stats - Invalid refresh response format');
           userStats.value = null;
           trainingStats.value = null;
         }
       } catch (e) {
-        print('⚠️ Stats - Failed to refresh stats: $e');
+        // print('⚠️ Stats - Failed to refresh stats: $e');
         // Don't create dummy data - try to load from cache
         await loadStatsData();
       }
@@ -431,7 +432,6 @@ class StatsController extends GetxController {
     
     // Always reload daily plans after refreshing stats to ensure we have the latest completion status
     // Note: getDailyPlans() filters out past completed plans (is_stats_record: false filter)
-    // So if a plan was completed on a different date than plan_date, it won't be returned
     // Stats sync should provide accurate counts for overall/weekly/monthly stats
     // 
     // Backend automatically syncs daily_plans from training_plan_assignments.daily_plans to daily_training_plans
@@ -442,11 +442,11 @@ class StatsController extends GetxController {
     // CRITICAL: Pass planType to ensure we only get plans of the active plan type
     // Backend now defaults to web_assigned, but being explicit ensures proper isolation
     try {
-      print('📊 Stats - Reloading ALL daily plans (including completed) after stats refresh for planType: $planType...');
+      // print('📊 Stats - Reloading ALL daily plans (including completed) after stats refresh for planType: $planType...');
       final plansData = await _dailyTrainingService.getDailyTrainingPlans(planType: planType);
-      print('📊 Stats - Daily plans result: ${plansData.length} items (filtered for $planType, includes completed plans)');
-      print('💡 Stats - Using getDailyTrainingPlans() to get ALL plans including completed ones for accurate stats');
-      print('💡 Stats - Backend automatically syncs daily_plans from assignments, so all plans should be available');
+      // print('📊 Stats - Daily plans result: ${plansData.length} items (filtered for $planType, includes completed plans)');
+      // print('💡 Stats - Using getDailyTrainingPlans() to get ALL plans including completed ones for accurate stats');
+      // print('💡 Stats - Backend automatically syncs daily_plans from assignments, so all plans should be available');
       
       // Store both parsed models and raw JSON data
       // Filter out any plans that might cause parsing errors
@@ -457,7 +457,7 @@ class StatsController extends GetxController {
           // CRITICAL: Filter out stats records
           final isStatsRecord = plan['is_stats_record'] as bool? ?? false;
           if (isStatsRecord) {
-            print('📊 Stats - Skipping stats record: id=${plan['id']}');
+            // print('📊 Stats - Skipping stats record: id=${plan['id']}');
             continue;
           }
           
@@ -465,48 +465,50 @@ class StatsController extends GetxController {
           DailyTrainingPlan.fromJson(plan);
           validPlans.add(plan);
         } catch (e) {
-          print('⚠️ Stats - Skipping invalid plan: $e');
-          print('⚠️ Stats - Plan data: ${plan.keys.toList()}');
+          // print('⚠️ Stats - Skipping invalid plan: $e');
+          // print('⚠️ Stats - Plan data: ${plan.keys.toList()}');
         }
       }
       dailyPlans.assignAll(validPlans.map((plan) => DailyTrainingPlan.fromJson(plan)));
       dailyPlansRaw.assignAll(validPlans);
-      print('✅ Stats - Daily plans updated: ${dailyPlans.length} items');
-      print('📊 Stats - Sample plan data: ${validPlans.isNotEmpty ? validPlans.first : "No plans"}');
+      // print('✅ Stats - Daily plans updated: ${dailyPlans.length} items');
+      // print('📊 Stats - Sample plan data: ${validPlans.isNotEmpty ? validPlans.first : "No plans"}');
       
       // CRITICAL: Log completed plans for assigned plans to debug stats issue
       if (planType == 'web_assigned') {
         final completedPlans = validPlans.where((p) => (p['is_completed'] as bool? ?? false) == true).toList();
-        print('📊 Stats - Completed web_assigned plans (after refresh): ${completedPlans.length}');
+        // print('📊 Stats - Completed web_assigned plans (after refresh): ${completedPlans.length}');
         for (final p in completedPlans) {
-          print('  - Plan id=${p['id']}, source_plan_id=${p['source_plan_id']}, plan_date=${p['plan_date']}, is_completed=${p['is_completed']}');
+          final dayNumber = p['day_number'] ?? p['day'] ?? 'N/A';
+          print('  - Plan id=${p['id']}, source_plan_id=${p['source_plan_id']}, day_number=$dayNumber, is_completed=${p['is_completed']}');
         }
         
         // Check if any plans match the active schedule
-        final activePlanIds = _getActivePlanSourceIds();
+        final activePlanIds = _getActivePlanSourceIds();        
         if (activePlanIds != null) {
           final activePlanId = activePlanIds['planId'] as int?;
           final matchingPlans = validPlans.where((p) {
             final sourcePlanId = p['source_plan_id'] as int?;
             return sourcePlanId == activePlanId;
           }).toList();
-          print('📊 Stats - Plans matching active schedule (planId=$activePlanId) after refresh: ${matchingPlans.length}');
+          // print('📊 Stats - Plans matching active schedule (planId=$activePlanId) after refresh: ${matchingPlans.length}');
           for (final p in matchingPlans) {
-            print('  - Plan id=${p['id']}, source_plan_id=${p['source_plan_id']}, plan_date=${p['plan_date']}, is_completed=${p['is_completed']}');
+            final dayNumber = p['day_number'] ?? p['day'] ?? 'N/A';
+            // print('  - Plan id=${p['id']}, source_plan_id=${p['source_plan_id']}, day_number=$dayNumber, is_completed=${p['is_completed']}');
           }
         }
       }
     } catch (e) {
-      print('⚠️ Stats - Failed to reload daily plans: $e');
+      // print('⚠️ Stats - Failed to reload daily plans: $e');
       // Don't clear existing data, just log the error
     }
   }
 
   Future<void> loadTodaysPlans() async {
     try {
-      print('📊 Stats - Loading today\'s plans...');
+      // print('📊 Stats - Loading today\'s plans...');
       final todaysPlansData = await _dailyTrainingService.getTodaysPlans();
-      print('📊 Stats - Today\'s plans result: ${todaysPlansData.length} items');
+      // print('📊 Stats - Today\'s plans result: ${todaysPlansData.length} items');
       
       // Update daily plans with today's data
       final todaysPlans = todaysPlansData.map((plan) => DailyTrainingPlan.fromJson(plan)).toList();
@@ -517,13 +519,18 @@ class StatsController extends GetxController {
       
       if (newPlans.isNotEmpty) {
         dailyPlans.addAll(newPlans);
-        print('✅ Stats - Added ${newPlans.length} new daily plans');
+        // print('✅ Stats - Added ${newPlans.length} new daily plans');
       }
 
       // Bring most-recent today plan(s) to the top
-      dailyPlans.sort((a, b) => b.planDate.compareTo(a.planDate));
+      // Sort by day_number (descending)
+      dailyPlans.sort((a, b) {
+        final aDay = a.dayNumber ?? 0;
+        final bDay = b.dayNumber ?? 0;
+        return bDay.compareTo(aDay);
+      });
     } catch (e) {
-      print('⚠️ Stats - Failed to load today\'s plans: $e');
+      // print('⚠️ Stats - Failed to load today\'s plans: $e');
     }
   }
 
@@ -534,7 +541,7 @@ class StatsController extends GetxController {
     // Check for active plan FIRST - if no active plan, return 0 immediately
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning 0 for today\'s workouts');
+      // print('🔍 Stats - No active plan, returning 0 for today\'s workouts');
       return 0;
     }
     
@@ -554,21 +561,21 @@ class StatsController extends GetxController {
       final todayWorkouts = userStats.value!.dailyWorkouts[today] ?? userStats.value!.dailyWorkouts[todayUtc];
       if (todayWorkouts != null && todayWorkouts.isNotEmpty) {
         final todayCount = todayWorkouts.length;
-        print('📊 Stats - Using UserStats today count (from backend sync): $todayCount');
-        print('📊 Stats - Today\'s workouts from UserStats: ${todayWorkouts.join(", ")}');
+        // print('📊 Stats - Using UserStats today count (from backend sync): $todayCount');
+        // print('📊 Stats - Today\'s workouts from UserStats: ${todayWorkouts.join(", ")}');
         return todayCount;
       }
       
       // Also check taskCompletionReport.today.totalWorkouts as fallback
       final todayTotalWorkouts = userStats.value!.taskCompletionReport.today.totalWorkouts;
       if (todayTotalWorkouts != null && todayTotalWorkouts > 0) {
-        print('📊 Stats - Using UserStats taskCompletionReport.today.totalWorkouts: $todayTotalWorkouts');
+        // print('📊 Stats - Using UserStats taskCompletionReport.today.totalWorkouts: $todayTotalWorkouts');
         return todayTotalWorkouts;
       }
     }
     
     // Fallback: Calculate from dailyPlansRaw if UserStats is null or doesn't have today's data
-    print('📊 Stats - UserStats is ${userStats.value == null ? "null" : "missing today\'s data"}, calculating from dailyPlansRaw');
+    // print('📊 Stats - UserStats is ${userStats.value == null ? "null" : "missing today\'s data"}, calculating from dailyPlansRaw');
     
     // Count individual completed workouts for today (not days)
     int totalWorkouts = 0;
@@ -577,40 +584,29 @@ class StatsController extends GetxController {
     final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
     if (filteredPlans.isEmpty) {
       // No matching plans for active plan, return 0
-      print('🔍 Stats - No matching plans for active plan, returning 0 for today\'s workouts');
+      // print('🔍 Stats - No matching plans for active plan, returning 0 for today\'s workouts');
       return 0;
     }
     
     // Check filtered dailyPlansRaw first (more reliable source from API)
-    print('📊 Stats - Checking ${filteredPlans.length} filtered plans for today\'s workouts');
+    // print('📊 Stats - Checking ${filteredPlans.length} filtered plans for today\'s workouts');
     for (final planRaw in filteredPlans) {
-      final planDate = planRaw['plan_date'] as String? ?? '';
-      final completedAt = planRaw['completed_at'] as String?;
       final isCompleted = planRaw['is_completed'] as bool? ?? false;
+      final completedAt = planRaw['completed_at'] as String?;
       final planId = planRaw['id'] ?? 'N/A';
+      final dayNumber = int.tryParse(planRaw['day_number']?.toString() ?? planRaw['day']?.toString() ?? '');
       
-      // Check both plan_date and completed_at for today (handle timezone differences)
-      final planDateStr = planDate.split('T').first;
+      // Heuristic: Treat the first plan in the filtered list (first incomplete by backend ordering) as "today"
+      final isFirstIncomplete = identical(planRaw, filteredPlans.first);
       final completedAtStr = completedAt != null ? completedAt.split('T').first : null;
+      final completedToday = completedAtStr != null && (completedAtStr == today || completedAtStr == todayUtc);
       
-      // IMPORTANT: Use completed_at date if available (when plan was actually completed)
-      // Otherwise use plan_date (when plan was scheduled)
-      // This prevents double-counting if both dates match today
-      String? dateToCheck;
-      if (completedAtStr != null && (completedAtStr == today || completedAtStr == todayUtc)) {
-        // Plan was completed today, use completed_at date
-        dateToCheck = completedAtStr;
-        print('📊 Stats - Plan $planId: Using completed_at date ($completedAtStr) for today\'s count');
-      } else if (planDateStr == today || planDateStr == todayUtc) {
-        // Plan is scheduled for today, use plan_date
-        dateToCheck = planDateStr;
-        print('📊 Stats - Plan $planId: Using plan_date ($planDateStr) for today\'s count');
-      } else {
-        print('📊 Stats - Plan $planId: Not for today (plan_date=$planDateStr, completed_at=$completedAtStr, today=$today)');
-      }
+      // We count workouts if this is the first incomplete day, or if the plan was completed today.
+      final countToday = isFirstIncomplete || completedToday;
       
-      // Only count if the plan is for today (using the appropriate date)
-      if (dateToCheck != null) {
+      // print('📊 Stats - Plan $planId: day_number=$dayNumber, isFirstIncomplete=$isFirstIncomplete, completedToday=$completedToday');
+      
+      if (countToday) {
         // Count individual workouts that are completed (even if plan is not fully completed)
         dynamic exercisesDetails = planRaw['exercises_details'];
         List<Map<String, dynamic>> exercises = [];
@@ -641,13 +637,13 @@ class StatsController extends GetxController {
               }
             }
           } catch (e) {
-            print('⚠️ Stats - Failed to parse exercises_details in getTodaysCompletedWorkouts: $e');
+            // print('⚠️ Stats - Failed to parse exercises_details in getTodaysCompletedWorkouts: $e');
           }
         }
         
         // Count workouts that are completed (ONLY count completed workouts)
         // Only count workouts that are explicitly marked as completed
-        print('📊 Stats - Plan $planId: Found ${exercises.length} exercises in exercises_details');
+        // print('📊 Stats - Plan $planId: Found ${exercises.length} exercises in exercises_details');
         int workoutsInThisPlan = 0;
         for (final exercise in exercises) {
           if (exercise is Map<String, dynamic>) {
@@ -661,18 +657,18 @@ class StatsController extends GetxController {
               // If plan is completed, count all workouts (plan completion means all workouts done)
               totalWorkouts++;
               workoutsInThisPlan++;
-              print('📊 Stats - Plan $planId: Counting workout "$workoutName" (plan completed)');
+              // print('📊 Stats - Plan $planId: Counting workout "$workoutName" (plan completed)');
             } else if (isWorkoutCompleted) {
               // If plan is not completed, only count workouts explicitly marked as completed
               totalWorkouts++;
               workoutsInThisPlan++;
-              print('📊 Stats - Plan $planId: Counting workout "$workoutName" (explicitly completed)');
+              // print('📊 Stats - Plan $planId: Counting workout "$workoutName" (explicitly completed)');
             } else {
-              print('📊 Stats - Plan $planId: Skipping workout "$workoutName" (not completed)');
+              // print('📊 Stats - Plan $planId: Skipping workout "$workoutName" (not completed)');
             }
           }
         }
-        print('📊 Stats - Plan $planId: Contributed $workoutsInThisPlan workouts to today\'s total (total so far: $totalWorkouts)');
+        // print('📊 Stats - Plan $planId: Contributed $workoutsInThisPlan workouts to today\'s total (total so far: $totalWorkouts)');
       }
     }
     
@@ -705,13 +701,13 @@ class StatsController extends GetxController {
     // REMOVED: Local completions counting to avoid double-counting
     // Local completions are only a fallback when API submission fails
     // If workouts are in the database, they're already counted from filteredPlans
-    print('📊 Stats - Total workouts counted from database: $totalWorkouts');
-    print('📊 Stats - Skipping local completions to avoid double-counting (workouts already in database)');
+    // print('📊 Stats - Total workouts counted from database: $totalWorkouts');
+    // print('📊 Stats - Skipping local completions to avoid double-counting (workouts already in database)');
     
     // If calculation from dailyPlansRaw returned a non-zero value, use it
     // This handles cases where UserStats hasn't synced yet but plans are marked as completed
     if (totalWorkouts > 0) {
-      print('📊 Stats - Today\'s completed workouts (calculated from dailyPlansRaw): $totalWorkouts');
+      // print('📊 Stats - Today\'s completed workouts (calculated from dailyPlansRaw): $totalWorkouts');
       return totalWorkouts;
     }
     
@@ -720,21 +716,21 @@ class StatsController extends GetxController {
       final todayWorkouts = userStats.value!.dailyWorkouts[today] ?? userStats.value!.dailyWorkouts[todayUtc];
       if (todayWorkouts != null && todayWorkouts.isNotEmpty) {
         final todayCount = todayWorkouts.length;
-        print('📊 Stats - Today\'s completed workouts (from UserStats final fallback): $todayCount');
+        // print('📊 Stats - Today\'s completed workouts (from UserStats final fallback): $todayCount');
         return todayCount;
       }
       
       final todayTotalWorkouts = userStats.value!.taskCompletionReport.today.totalWorkouts;
       if (todayTotalWorkouts != null && todayTotalWorkouts > 0) {
-        print('📊 Stats - Today\'s completed workouts (from UserStats taskCompletionReport): $todayTotalWorkouts');
+        // print('📊 Stats - Today\'s completed workouts (from UserStats taskCompletionReport): $todayTotalWorkouts');
         return todayTotalWorkouts;
       }
     }
     
     if (totalWorkouts > 0) {
-      print('📊 Stats - Today\'s completed workouts (individual count from dailyPlansRaw): $totalWorkouts');
+      // print('📊 Stats - Today\'s completed workouts (individual count from dailyPlansRaw): $totalWorkouts');
     } else {
-      print('📊 Stats - Today\'s completed workouts (individual count): $totalWorkouts');
+      // print('📊 Stats - Today\'s completed workouts (individual count): $totalWorkouts');
     }
     return totalWorkouts;
   }
@@ -750,9 +746,9 @@ class StatsController extends GetxController {
       final List<dynamic> completions = jsonDecode(existingJson);
       _localCompletions.assignAll(completions.cast<Map<String, dynamic>>());
       
-      print('📊 Stats - Loaded ${_localCompletions.length} local completions');
+      // print('📊 Stats - Loaded ${_localCompletions.length} local completions');
     } catch (e) {
-      print('❌ Stats - Error loading local completions: $e');
+      // print('❌ Stats - Error loading local completions: $e');
     }
   }
 
@@ -760,7 +756,7 @@ class StatsController extends GetxController {
   // This should be called when all plans are unassigned
   Future<void> clearAllStatsData() async {
     try {
-      print('🧹 Stats - Clearing all stats data (no assigned plans)...');
+      // print('🧹 Stats - Clearing all stats data (no assigned plans)...');
       
       final prefs = await SharedPreferences.getInstance();
       final userId = _profileController.user?.id ?? 0;
@@ -768,32 +764,32 @@ class StatsController extends GetxController {
       // 1. Clear all daily plans from memory
       dailyPlans.clear();
       dailyPlansRaw.clear();
-      print('🧹 Stats - Cleared all daily plans from memory');
+      // print('🧹 Stats - Cleared all daily plans from memory');
       
       // 2. Clear all local completions
       _localCompletions.clear();
       final key = 'local_workout_completions_user_$userId';
       await prefs.remove(key);
-      print('🧹 Stats - Cleared all local completions from storage');
+      // print('🧹 Stats - Cleared all local completions from storage');
       
       // 3. Clear cached stats
       _cachedStats.clear();
       _cachedRecentWorkouts.clear();
       await prefs.remove('cached_training_stats_user_$userId');
       await prefs.remove('cached_recent_workouts_user_$userId');
-      print('🧹 Stats - Cleared all cached stats from local storage');
+      // print('🧹 Stats - Cleared all cached stats from local storage');
       
       // 4. Reset userStats to null (will show empty state)
       userStats.value = null;
       trainingStats.value = null;
       
       // 5. Force refresh stats to sync with backend (backend should have deleted all data)
-      print('🔄 Stats - Refreshing stats after clearing all data...');
+      // print('🔄 Stats - Refreshing stats after clearing all data...');
       await refreshStats(forceSync: true);
       
-      print('✅ Stats - All stats data cleared');
+      // print('✅ Stats - All stats data cleared');
     } catch (e) {
-      print('❌ Stats - Error clearing all stats data: $e');
+      // print('❌ Stats - Error clearing all stats data: $e');
     }
   }
 
@@ -813,8 +809,8 @@ class StatsController extends GetxController {
           final webPlanId = schedule['web_plan_id'] as int?;
           final assignmentId = schedule['assignment_id'] as int?;
           
-          print('🔍 Stats - Found active assigned plan: scheduleId=$scheduleId, assignmentId=$assignmentId, webPlanId=$webPlanId');
-          print('🔍 Stats - Active schedule keys: ${schedule.keys.toList()}');
+          // print('🔍 Stats - Found active assigned plan: scheduleId=$scheduleId, assignmentId=$assignmentId, webPlanId=$webPlanId');
+          // print('🔍 Stats - Active schedule keys: ${schedule.keys.toList()}');
           
           if (scheduleId != null) {
             return {
@@ -825,13 +821,13 @@ class StatsController extends GetxController {
               'planType': 'web_assigned',
             };
           } else {
-            print('⚠️ Stats - Active schedule found but scheduleId is null');
+            // print('⚠️ Stats - Active schedule found but scheduleId is null');
           }
         } else {
-          print('🔍 Stats - SchedulesController registered but no activeSchedule');
+          // print('🔍 Stats - SchedulesController registered but no activeSchedule');
         }
       } else {
-        print('🔍 Stats - SchedulesController not registered');
+        // print('🔍 Stats - SchedulesController not registered');
       }
       
       // PRIORITY 2: If no schedule is active, check PlansController for active manual/AI plan
@@ -846,7 +842,7 @@ class StatsController extends GetxController {
             // Backend may set plan_type='ai_generated' or plan_type='manual' directly
             String? planTypeFromField = plan['plan_type']?.toString().toLowerCase();
             if (planTypeFromField == 'ai_generated' || planTypeFromField == 'manual') {
-              print('🔍 Stats - Found plan_type field in plan data: $planTypeFromField');
+              //('🔍 Stats - Found plan_type field in plan data: $planTypeFromField');
             }
             
             // Determine if it's AI or Manual
@@ -863,10 +859,10 @@ class StatsController extends GetxController {
                 ? planTypeFromField! 
                 : (isAiPlan ? 'ai_generated' : 'manual');
             
-            print('🔍 Stats - Active plan detected: planId=$planId, isAiPlan=$isAiPlan, planType=$planType');
-            print('🔍 Stats - Plan keys: ${plan.keys.toList()}');
-            print('🔍 Stats - plan_type field: $planTypeFromField');
-            print('🔍 Stats - AI indicators: ai_generated=${plan.containsKey('ai_generated')}, gemini_generated=${plan.containsKey('gemini_generated')}, ai_plan_id=${plan.containsKey('ai_plan_id')}, request_id=${plan.containsKey('request_id')}');
+            // print('🔍 Stats - Active plan detected: planId=$planId, isAiPlan=$isAiPlan, planType=$planType');
+            // print('🔍 Stats - Plan keys: ${plan.keys.toList()}');
+            // print('🔍 Stats - plan_type field: $planTypeFromField');
+            // print('🔍 Stats - AI indicators: ai_generated=${plan.containsKey('ai_generated')}, gemini_generated=${plan.containsKey('gemini_generated')}, ai_plan_id=${plan.containsKey('ai_plan_id')}, request_id=${plan.containsKey('request_id')}');
             
             // For manual/AI plans, source_plan_id in daily_training_plans is the approval_id, not plan_id
             // Get the approval_id from the plan or from the controller's map
@@ -893,24 +889,19 @@ class StatsController extends GetxController {
           }
         }
       }
-      print('🔍 Stats - No active plan found');
+      // print('🔍 Stats - No active plan found');
       return null;
     } catch (e) {
-      print('⚠️ Stats - Error getting active plan source IDs: $e');
+      // print('⚠️ Stats - Error getting active plan source IDs: $e');
       return null;
     }
   }
 
   // Filter dailyPlansRaw to only include plans from the active plan
   List<Map<String, dynamic>> _filterPlansByActivePlan(List<Map<String, dynamic>> plans) {
-    print('🔍 Stats - _filterPlansByActivePlan called with ${plans.length} plans');
-    
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
       // No active plan, return empty list (no stats should show)
-      print('🔍 Stats - No active plan, filtering out all plans');
-      print('🔍 Stats - This means _getActivePlanSourceIds() returned null');
-      print('🔍 Stats - Check if SchedulesController.activeSchedule is set');
       return [];
     }
     
@@ -920,23 +911,10 @@ class StatsController extends GetxController {
     final webPlanId = activePlanIds['webPlanId'] as int?;
     final planType = activePlanIds['planType'] as String?;
     
-    print('🔍 Stats - Filtering plans with: planId=$planId, assignmentId=$assignmentId, webPlanId=$webPlanId, planType=$planType');
-    print('🔍 Stats - Total plans to filter: ${plans.length}');
-    
-    // Log sample of plans being filtered
-    if (plans.isNotEmpty) {
-      print('🔍 Stats - Sample plan data (first 3):');
-      for (int i = 0; i < plans.length && i < 3; i++) {
-        final p = plans[i];
-        print('  Plan $i: id=${p['id']}, source_plan_id=${p['source_plan_id']}, source_assignment_id=${p['source_assignment_id']}, plan_type=${p['plan_type']}, is_completed=${p['is_completed']}');
-      }
-    }
-    
     final filtered = plans.where((planRaw) {
       // CRITICAL: Filter out stats records - they should never be included in stats calculations
       final isStatsRecord = planRaw['is_stats_record'] as bool? ?? false;
       if (isStatsRecord) {
-        print('🔍 Stats - Filtering out stats record: id=${planRaw['id']}');
         return false;
       }
       
@@ -951,8 +929,6 @@ class StatsController extends GetxController {
       // CRITICAL: Check assignment indicators FIRST before checking approval_id to avoid misclassifying assigned plans as manual
       if (planTypeRaw == null || planTypeRaw.isEmpty || planTypeRaw == 'manual') {
         final sourcePlanType = planRaw['source_plan_type']?.toString();
-        print('🔍 Stats - Plan has null/empty/incorrect plan_type ($planTypeRaw), inferring from fields. sourcePlanType=$sourcePlanType, planRaw keys: ${planRaw.keys.toList()}');
-        print('🔍 Stats - Active plan type: $planType (will use this as fallback if inference fails)');
         
         // PRIORITY 1: Check for assignment indicators FIRST (before approval_id)
         // This ensures assigned plans are correctly identified even if plan_type is incorrectly set to 'manual'
@@ -968,40 +944,25 @@ class StatsController extends GetxController {
             sourcePlanType == 'web_assigned' ||
             sourcePlanIdMatchesAssignment) {
           planTypeRaw = 'web_assigned';
-          if (sourcePlanIdMatchesAssignment) {
-            print('🔍 Stats - Inferred plan_type as web_assigned (active plan is web_assigned and source_plan_id=$sourcePlanId matches assignment ID ${assignmentId ?? planId})');
-          } else {
-            print('🔍 Stats - Inferred plan_type as web_assigned (found assignment indicators or source_plan_type=web_assigned)');
-          }
         } else if (sourcePlanType == 'ai_generated') {
           planTypeRaw = 'ai_generated';
-          print('🔍 Stats - Inferred plan_type as ai_generated (from source_plan_type)');
         } else if (planType == 'ai_generated' && (planId != null && sourcePlanId == planId || approvalId != null && sourcePlanId == approvalId)) {
           // PRIORITY: If active plan is AI and IDs match, infer as ai_generated FIRST (before checking approval_id)
           planTypeRaw = 'ai_generated';
-          print('🔍 Stats - Inferred plan_type as ai_generated (active plan is AI, and IDs match)');
         } else if (planRaw.containsKey('approval_id') ||
                    planRaw.containsKey('source_approval_id') ||
                    sourcePlanType == 'manual') {
           // For plans with approval_id, check if active plan is AI to avoid misclassification
           if (planType == 'ai_generated' && (planId != null && sourcePlanId == planId || approvalId != null && sourcePlanId == approvalId)) {
             planTypeRaw = 'ai_generated';
-            print('🔍 Stats - Inferred plan_type as ai_generated (active plan is AI, and IDs match)');
           } else {
             planTypeRaw = 'manual';
-            print('🔍 Stats - Inferred plan_type as manual');
           }
         } else if (planType != null && planType.isNotEmpty) {
           // Fallback: Use active plan's type if IDs match (for AI plans especially)
           if (planId != null && sourcePlanId == planId || approvalId != null && sourcePlanId == approvalId || assignmentId != null && sourcePlanId == assignmentId) {
             planTypeRaw = planType;
-            print('🔍 Stats - Inferred plan_type as $planType (from active plan type, IDs match)');
-          } else {
-            print('⚠️ Stats - Could not infer plan_type for plan id=${planRaw['id']}, sourcePlanId=$sourcePlanId (IDs don\'t match active plan)');
           }
-        } else {
-          // If we can't infer, log it for debugging
-          print('⚠️ Stats - Could not infer plan_type for plan id=${planRaw['id']}, sourcePlanId=$sourcePlanId');
         }
       }
       
@@ -1020,12 +981,8 @@ class StatsController extends GetxController {
             planRaw.containsKey('source_assignment_id');
         
         if (planType == 'web_assigned' && (hasAssignmentIndicators || sourcePlanIdMatches)) {
-          print('⚠️ Stats - Plan has plan_type=$planTypeRaw but active plan is web_assigned and (has assignment indicators OR source_plan_id matches) - overriding to web_assigned');
-          print('⚠️ Stats - source_plan_id=$sourcePlanId, planId=$planId, assignmentId=$assignmentId, hasAssignmentIndicators=$hasAssignmentIndicators');
           planTypeRaw = 'web_assigned';
         } else {
-          print('❌ Stats - Plan rejected due to plan_type mismatch: plan id=${planRaw['id']}, planTypeRaw=$planTypeRaw != active planType=$planType');
-          print('❌ Stats - source_plan_id=$sourcePlanId, planId=$planId, assignmentId=$assignmentId');
           return false; // Reject any plans with different plan type immediately
         }
       }
@@ -1057,58 +1014,44 @@ class StatsController extends GetxController {
           matches = sourcePlanId == webPlanId;
         }
         
-        if (matches) {
-          // CRITICAL: Do NOT filter by creation timestamp when checking for completed plans
-          // The assignment's updated_at timestamp changes when we stop/restart, which would
-          // incorrectly filter out completed plans that were created before the restart.
-          // Instead, we rely on the ID matching (source_plan_id, source_assignment_id) and
-          // plan_type filtering to ensure we get the right plans.
-          // The backend already handles deleting old plans when reassigning, so we don't
-          // need this extra timestamp check here.
-          // 
-          // NOTE: We keep this commented out to document why we're NOT using timestamp filtering
-          // try {
-          //   if (Get.isRegistered<SchedulesController>()) {
-          //     final schedulesController = Get.find<SchedulesController>();
-          //     final activeSchedule = schedulesController.activeSchedule;
-          //     if (activeSchedule != null) {
-          //       final assignmentCreatedAt = activeSchedule['created_at'] as String?;
-          //       final assignmentUpdatedAt = activeSchedule['updated_at'] as String?;
-          //       final planCreatedAt = planRaw['created_at'] as String?;
-          //       
-          //       if (assignmentCreatedAt != null || assignmentUpdatedAt != null) {
-          //         final assignmentTimestamp = assignmentUpdatedAt != null 
-          //             ? DateTime.tryParse(assignmentUpdatedAt)
-          //             : (assignmentCreatedAt != null ? DateTime.tryParse(assignmentCreatedAt) : null);
-          //         
-          //         if (assignmentTimestamp != null && planCreatedAt != null) {
-          //           final planCreated = DateTime.tryParse(planCreatedAt);
-          //           if (planCreated != null && planCreated.isBefore(assignmentTimestamp)) {
-          //             print('🔍 Stats - ⚠️ Filtering out old plan: id=${planRaw['id']}, plan_created=$planCreatedAt is before assignment timestamp=$assignmentTimestamp');
-          //             return false;
-          //           }
-          //         }
-          //       }
-          //     }
-          //   }
-          // } catch (e) {
-          //   print('⚠️ Stats - Error checking assignment timestamp: $e');
-          //   // Continue with match if timestamp check fails
-          // }
-          
-          print('✅ Stats - Matched assigned plan: sourcePlanId=$sourcePlanId matches planId=$planId');
-        } else {
-          print('🔍 Stats - Assigned plan mismatch: planId=$planId, assignmentId=$assignmentId, webPlanId=$webPlanId');
-          print('🔍 Stats - Plan data: sourcePlanId=$sourcePlanId, sourceAssignmentId=$sourceAssignmentId, planAssignmentId=$planAssignmentId, planType=$planTypeRaw');
-        }
+        // CRITICAL: Do NOT filter by creation timestamp when checking for completed plans
+        // The assignment's updated_at timestamp changes when we stop/restart, which would
+        // incorrectly filter out completed plans that were created before the restart.
+        // Instead, we rely on the ID matching (source_plan_id, source_assignment_id) and
+        // plan_type filtering to ensure we get the right plans.
+        // The backend already handles deleting old plans when reassigning, so we don't
+        // need this extra timestamp check here.
+        // 
+        // NOTE: We keep this commented out to document why we're NOT using timestamp filtering
+        // try {
+        //   if (Get.isRegistered<SchedulesController>()) {
+        //     final schedulesController = Get.find<SchedulesController>();
+        //     final activeSchedule = schedulesController.activeSchedule;
+        //     if (activeSchedule != null) {
+        //       final assignmentCreatedAt = activeSchedule['created_at'] as String?;
+        //       final assignmentUpdatedAt = activeSchedule['updated_at'] as String?;
+        //       final planCreatedAt = planRaw['created_at'] as String?;
+        //       
+        //       if (assignmentCreatedAt != null || assignmentUpdatedAt != null) {
+        //         final assignmentTimestamp = assignmentUpdatedAt != null 
+        //             ? DateTime.tryParse(assignmentUpdatedAt)
+        //             : (assignmentCreatedAt != null ? DateTime.tryParse(assignmentCreatedAt) : null);
+        //         
+        //         if (assignmentTimestamp != null && planCreatedAt != null) {
+        //           final planCreated = DateTime.tryParse(planCreatedAt);
+        //           if (planCreated != null && planCreated.isBefore(assignmentTimestamp)) {
+        //             print('🔍 Stats - ⚠️ Filtering out old plan: id=${planRaw['id']}, plan_created=$planCreatedAt is before assignment timestamp=$assignmentTimestamp');
+        //             return false;
+        //           }
+        //         }
+        //       }
+        //     }
+        //   }
+        // } catch (e) {
+        //   print('⚠️ Stats - Error checking assignment timestamp: $e');
+        //   // Continue with match if timestamp check fails
+        // }
         
-        if (matches) {
-          final isCompleted = planRaw['is_completed'] as bool? ?? false;
-          final completedAt = planRaw['completed_at'] as String?;
-          print('✅ Stats - Plan matched (assigned): id=${planRaw['id']}, sourcePlanId=$sourcePlanId, is_completed=$isCompleted, completed_at=$completedAt');
-        } else {
-          print('❌ Stats - Plan rejected (assigned): id=${planRaw['id']}, sourcePlanId=$sourcePlanId, sourceAssignmentId=$sourceAssignmentId (does not match planId=$planId, assignmentId=$assignmentId, webPlanId=$webPlanId)');
-        }
         return matches;
       }
       
@@ -1121,9 +1064,6 @@ class StatsController extends GetxController {
         if (approvalId != null) {
           // Primary match: source_plan_id should equal approval_id
           matches = sourcePlanId == approvalId;
-          if (matches) {
-            print('✅ Stats - Matched ${planType} plan by approval_id: sourcePlanId=$sourcePlanId == approvalId=$approvalId');
-          }
         }
         
         // Fallback: If approval_id is null or doesn't match, try matching by plan_id
@@ -1131,11 +1071,6 @@ class StatsController extends GetxController {
         // This is because when approval_id is null, source_plan_id = plan_id for all plans
         if (!matches && planId != null && sourcePlanId == planId) {
           matches = true;
-          print('✅ Stats - Matched ${planType} plan by plan_id: sourcePlanId=$sourcePlanId == planId=$planId (approvalId is null)');
-        }
-        
-        if (!matches) {
-          print('🔍 Stats - ${planType} plan mismatch: planId=$planId, approvalId=$approvalId, sourcePlanId=$sourcePlanId, planTypeRaw=$planTypeRaw');
         }
         
         return matches;
@@ -1144,7 +1079,6 @@ class StatsController extends GetxController {
       return false;
     }).toList();
     
-    print('🔍 Stats - Filtered ${plans.length} plans to ${filtered.length} plans for active plan (ID: $planId, approvalId: $approvalId, type: $planType)');
     return filtered;
   }
 
@@ -1187,7 +1121,7 @@ class StatsController extends GetxController {
       // Also remove from dailyPlans model list by matching IDs
       dailyPlans.removeWhere((plan) => idsToRemove.contains(plan.id));
       
-      print('🧹 Stats - Removed $removedPlans daily plans from memory for plan $planId');
+      // print('🧹 Stats - Removed $removedPlans daily plans from memory for plan $planId');
       
       // 2. Remove local completions related to this plan
       int removedCompletions = 0;
@@ -1210,7 +1144,7 @@ class StatsController extends GetxController {
       if (removedCompletions > 0) {
         final key = 'local_workout_completions_user_$userId';
         await prefs.setString(key, jsonEncode(_localCompletions));
-        print('🧹 Stats - Removed $removedCompletions local completions from storage for plan $planId');
+        // print('🧹 Stats - Removed $removedCompletions local completions from storage for plan $planId');
       }
       
       // 3. Delete daily training plans from database (only if deleteFromDatabase is true)
@@ -1218,18 +1152,18 @@ class StatsController extends GetxController {
       // We don't delete from database when just stopping a plan (user might resume it later)
       if (deleteFromDatabase) {
         try {
-          print('🗑️ Stats - Deleting daily training plans from database for plan $planId...');
+          // print('🗑️ Stats - Deleting daily training plans from database for plan $planId...');
           await _dailyTrainingService.deleteDailyPlansBySource(
             assignmentId: assignmentId ?? planId, // For assigned plans, use assignmentId or planId
             sourcePlanId: planId, // Also try sourcePlanId as fallback
           );
-          print('✅ Stats - Daily training plans deleted from database for plan $planId');
+          // print('✅ Stats - Daily training plans deleted from database for plan $planId');
         } catch (e) {
-          print('⚠️ Stats - Error deleting daily training plans from database: $e');
+          // print('⚠️ Stats - Error deleting daily training plans from database: $e');
           // Continue with cleanup even if database deletion fails
         }
       } else {
-        print('ℹ️ Stats - Skipping database deletion (plan stopped, not deleted - user might resume)');
+        // print('ℹ️ Stats - Skipping database deletion (plan stopped, not deleted - user might resume)');
       }
       
       // 4. Clear cached stats (they may contain data from the deleted plan)
@@ -1238,7 +1172,7 @@ class StatsController extends GetxController {
       _cachedRecentWorkouts.clear();
       await prefs.remove('cached_training_stats_user_$userId');
       await prefs.remove('cached_recent_workouts_user_$userId');
-      print('🧹 Stats - Cleared cached stats from local storage for plan $planId');
+      // print('🧹 Stats - Cleared cached stats from local storage for plan $planId');
       
       // 5. Reset userStats to show zero values immediately (don't refresh from backend)
       // This ensures the UI shows cleared stats immediately when plan is stopped
@@ -1249,12 +1183,12 @@ class StatsController extends GetxController {
       
       // Create default zero stats to show in UI immediately
       userStats.value = _createDefaultUserStats();
-      print('🧹 Stats - Reset userStats to zero values for immediate UI update');
-      print('🧹 Stats - Stats will remain zero until a plan is started again');
+      // print('🧹 Stats - Reset userStats to zero values for immediate UI update');
+      // print('🧹 Stats - Stats will remain zero until a plan is started again');
       
-      print('✅ Stats - Cleanup completed for plan $planId');
+      // print('✅ Stats - Cleanup completed for plan $planId');
     } catch (e) {
-      print('❌ Stats - Error cleaning up stats for plan $planId: $e');
+      // print('❌ Stats - Error cleaning up stats for plan $planId: $e');
     }
   }
 
@@ -1281,7 +1215,7 @@ class StatsController extends GetxController {
         return completionDate == date;
       }).cast<Map<String, dynamic>>().toList();
     } catch (e) {
-      print('❌ Error reading local completions: $e');
+      // print('❌ Error reading local completions: $e');
       return [];
     }
   }
@@ -1347,7 +1281,7 @@ class StatsController extends GetxController {
           }
         }
       } catch (e) {
-        print('⚠️ Stats - Failed to parse exercises_details JSON string: $e');
+        // print('⚠️ Stats - Failed to parse exercises_details JSON string: $e');
       }
     }
     
@@ -1367,7 +1301,7 @@ class StatsController extends GetxController {
     // Check for active plan FIRST - if no active plan, return 0 immediately
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning 0 for weekly workouts');
+      // print('🔍 Stats - No active plan, returning 0 for weekly workouts');
       return 0;
     }
     
@@ -1375,7 +1309,7 @@ class StatsController extends GetxController {
     final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
     if (filteredPlans.isEmpty) {
       // No matching plans for active plan, return 0
-      print('🔍 Stats - No matching plans for active plan, returning 0 for weekly workouts');
+      // print('🔍 Stats - No matching plans for active plan, returning 0 for weekly workouts');
       return 0;
     }
     
@@ -1394,23 +1328,19 @@ class StatsController extends GetxController {
     final assignmentId = activePlanIds['assignmentId'] as int?;
     final planType = activePlanIds['planType'] as String?;
     
-    // Check filtered dailyPlansRaw first (more reliable source from API)
+    // Weekly: count completed workouts for plans whose completed_at falls within the week window
     for (final planRaw in filteredPlans) {
-      final planDateStr = planRaw['plan_date'] as String? ?? '';
-      final planDate = DateTime.tryParse(planDateStr);
-      if (planDate == null) continue;
+      final isCompleted = planRaw['is_completed'] as bool? ?? false;
+      final completedAt = planRaw['completed_at'] as String?;
+      final completedAtDate = completedAt != null ? DateTime.tryParse(completedAt) : null;
+      if (!isCompleted || completedAtDate == null) continue;
       
-      // Normalize plan date to midnight for accurate comparison (handles timezone differences)
-      // Normalize to UTC date components to match backend UTC format
-      final planDateNormalized = DateTime.utc(planDate.year, planDate.month, planDate.day);
+      final completedAtNormalized = DateTime.utc(completedAtDate.year, completedAtDate.month, completedAtDate.day);
       final weekStartNormalized = DateTime.utc(weekStart.year, weekStart.month, weekStart.day);
       final weekEndNormalized = DateTime.utc(weekEnd.year, weekEnd.month, weekEnd.day);
       
-      final isCompleted = planRaw['is_completed'] as bool? ?? false;
-      
-      if (isCompleted && 
-          planDateNormalized.isAfter(weekStartNormalized.subtract(const Duration(days: 1))) &&
-          planDateNormalized.isBefore(weekEndNormalized.add(const Duration(days: 1)))) {
+      if (completedAtNormalized.isAfter(weekStartNormalized.subtract(const Duration(days: 1))) &&
+          completedAtNormalized.isBefore(weekEndNormalized.add(const Duration(days: 1)))) {
         // Count individual workouts in this completed plan
         dynamic exercisesDetails = planRaw['exercises_details'];
         List<Map<String, dynamic>> exercises = [];
@@ -1441,7 +1371,7 @@ class StatsController extends GetxController {
               }
             }
           } catch (e) {
-            print('⚠️ Stats - Failed to parse exercises_details in getWeeklyCompletedWorkouts: $e');
+            // print('⚠️ Stats - Failed to parse exercises_details in getWeeklyCompletedWorkouts: $e');
           }
         }
         
@@ -1482,15 +1412,15 @@ class StatsController extends GetxController {
       // Use weeklyProgress.totalWorkouts from backend (most accurate)
       final weeklyTotalWorkouts = userStats.value!.weeklyProgress.totalWorkouts;
       if (weeklyTotalWorkouts > 0) {
-        print('✅ Stats - Using UserStats weeklyProgress.totalWorkouts: $weeklyTotalWorkouts (database calculation: $totalWorkouts)');
+        // print('✅ Stats - Using UserStats weeklyProgress.totalWorkouts: $weeklyTotalWorkouts (database calculation: $totalWorkouts)');
         return weeklyTotalWorkouts;
       }
     }
     
     if (totalWorkouts > 0) {
-      print('📊 Stats - Weekly completed workouts (individual count from dailyPlansRaw): $totalWorkouts');
+      // print('📊 Stats - Weekly completed workouts (individual count from dailyPlansRaw): $totalWorkouts');
     } else {
-      print('📊 Stats - Weekly completed workouts (individual count): $totalWorkouts');
+      // print('📊 Stats - Weekly completed workouts (individual count): $totalWorkouts');
     }
     return totalWorkouts;
   }
@@ -1500,7 +1430,7 @@ class StatsController extends GetxController {
     // Check for active plan FIRST - if no active plan, return 0 immediately
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning 0 for monthly workouts');
+      // print('🔍 Stats - No active plan, returning 0 for monthly workouts');
       return 0;
     }
     
@@ -1515,7 +1445,7 @@ class StatsController extends GetxController {
     final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
     if (filteredPlans.isEmpty) {
       // No matching plans for active plan, return 0
-      print('🔍 Stats - No matching plans for active plan, returning 0 for monthly workouts');
+      // print('🔍 Stats - No matching plans for active plan, returning 0 for monthly workouts');
       return 0;
     }
     
@@ -1523,23 +1453,20 @@ class StatsController extends GetxController {
     final assignmentId = activePlanIds['assignmentId'] as int?;
     final planType = activePlanIds['planType'] as String?;
     
-    // Count individual workouts from filtered dailyPlansRaw
+    // Monthly: count completed workouts for plans whose completed_at falls within the month window
     for (final planRaw in filteredPlans) {
-      final planDateStr = planRaw['plan_date'] as String? ?? '';
-      final planDate = DateTime.tryParse(planDateStr);
-      if (planDate == null) continue;
+      final isCompleted = planRaw['is_completed'] as bool? ?? false;
+      final completedAt = planRaw['completed_at'] as String?;
+      final completedAtDate = completedAt != null ? DateTime.tryParse(completedAt) : null;
+      if (!isCompleted || completedAtDate == null) continue;
       
-      // Normalize plan date to midnight for accurate comparison
-      // Normalize to UTC date components to match backend UTC format
-      final planDateNormalized = DateTime.utc(planDate.year, planDate.month, planDate.day);
+      final completedAtNormalized = DateTime.utc(completedAtDate.year, completedAtDate.month, completedAtDate.day);
       final monthStartNormalized = DateTime.utc(monthStart.year, monthStart.month, monthStart.day);
       final monthEndNormalized = DateTime.utc(monthEnd.year, monthEnd.month, monthEnd.day);
       
-      if (planDateNormalized.isAfter(monthStartNormalized.subtract(const Duration(days: 1))) &&
-          planDateNormalized.isBefore(monthEndNormalized.add(const Duration(days: 1)))) {
-        final isCompleted = planRaw['is_completed'] as bool? ?? false;
-        
-        // Count individual workouts in this plan
+      if (completedAtNormalized.isAfter(monthStartNormalized.subtract(const Duration(days: 1))) &&
+          completedAtNormalized.isBefore(monthEndNormalized.add(const Duration(days: 1)))) {
+        // Count completed workouts (same logic as weekly)
         dynamic exercisesDetails = planRaw['exercises_details'];
         List<Map<String, dynamic>> exercises = [];
         
@@ -1569,27 +1496,15 @@ class StatsController extends GetxController {
               }
             }
           } catch (e) {
-            print('⚠️ Stats - Failed to parse exercises_details in getMonthlyCompletedWorkouts: $e');
+            // print('⚠️ Stats - Failed to parse exercises_details in getMonthlyCompletedWorkouts: $e');
           }
         }
         
-        // Count workouts that are completed (ONLY count completed workouts)
         for (final exercise in exercises) {
           if (exercise is Map<String, dynamic>) {
             final isWorkoutCompleted = exercise['is_completed'] as bool? ?? false;
-            // Only count if:
-            // 1. Workout is explicitly marked as completed (is_completed = true), OR
-            // 2. Plan is fully completed (all workouts in a completed plan are considered completed)
-            // DO NOT count workouts without is_completed flag unless plan is completed
             if (isWorkoutCompleted || isCompleted) {
-              // If plan is completed, count all workouts (plan completion means all workouts done)
-              // If plan is not completed, only count workouts explicitly marked as completed
-              if (isCompleted) {
-                totalWorkouts++;
-              } else if (isWorkoutCompleted) {
-                // Only count if workout is explicitly marked as completed
-                totalWorkouts++;
-              }
+              totalWorkouts++;
             }
           }
         }
@@ -1610,12 +1525,12 @@ class StatsController extends GetxController {
       // Use monthlyProgress.totalWorkouts from backend (most accurate)
       final monthlyTotalWorkouts = userStats.value!.monthlyProgress.totalWorkouts;
       if (monthlyTotalWorkouts > 0) {
-        print('✅ Stats - Using UserStats monthlyProgress.totalWorkouts: $monthlyTotalWorkouts (database calculation: $totalWorkouts)');
+        // print('✅ Stats - Using UserStats monthlyProgress.totalWorkouts: $monthlyTotalWorkouts (database calculation: $totalWorkouts)');
         return monthlyTotalWorkouts;
       }
     }
     
-    print('📊 Stats - Monthly completed workouts (individual count from dailyPlansRaw): $totalWorkouts');
+    // print('📊 Stats - Monthly completed workouts (individual count from dailyPlansRaw): $totalWorkouts');
     return totalWorkouts;
   }
 
@@ -1631,14 +1546,14 @@ class StatsController extends GetxController {
   // Batch sizes: 30, 60, 90, 120, ...
   int _getMonthlyBatchSize(int batchNumber) {
     return 30 * (batchNumber + 1); // 30, 60, 90, 120, ...
-  }
+   }
 
-  // Get weekly progress with batching (6 days per batch, batch sizes: 12, 24, 34, 44, 54, ...)
-  Map<String, dynamic> getWeeklyProgress() {
+   // Get weekly progress with batching (6 days per batch, batch sizes: 12, 24, 34, 44, 54, ...)
+   Map<String, dynamic> getWeeklyProgress() {
     // Check for active plan FIRST - if no active plan, return zero progress immediately
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning zero weekly progress');
+      // print('🔍 Stats - No active plan, returning zero weekly progress');
       return {
         'completed': 0,
         'remaining': 0,
@@ -1780,14 +1695,13 @@ class StatsController extends GetxController {
       'total_planned_workouts': total,
       'completion_rate': completionRate,
     };
-  }
+   }
 
-  // Get monthly progress with batching (30 days per batch, batch sizes: 30, 60, 90, 120, ...)
+  // Get monthly progress with batching (30-day buckets)
   Map<String, dynamic> getMonthlyProgress() {
-    // Check for active plan FIRST - if no active plan, return zero progress immediately
+    // If no active plan, short-circuit to zeros
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning zero monthly progress');
       return {
         'completed': 0,
         'remaining': 0,
@@ -1804,152 +1718,81 @@ class StatsController extends GetxController {
         'total_planned_workouts': 0,
       };
     }
-    
-    // Declare date variables at the beginning
+
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month, 1);
     final monthEnd = DateTime(now.year, now.month + 1, 0);
-    
-    // Get plan's start_date to calculate day numbers
-    DateTime? planStartDate;
-    if (Get.isRegistered<PlansController>()) {
-      final plansController = Get.find<PlansController>();
-      if (plansController.activePlan != null) {
-        final activePlan = plansController.activePlan!;
-        final startDateStr = activePlan['start_date']?.toString();
-        if (startDateStr != null) {
-          planStartDate = DateTime.tryParse(startDateStr);
-        }
-      }
-    }
-    
-    // Count unique plan day numbers (not calendar dates) with completed workouts
+
     final completedDayNumbers = <int>{};
     int totalWorkouts = 0;
     int totalMinutes = 0;
-    
-    // Filter dailyPlansRaw to only include active plan's data
+
+    // Filter to the active plan only
     final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
-    
-    // Count unique completed plan days and total workouts from filtered dailyPlansRaw
-    // Filter by current month for accurate monthly progress
+
     for (final planRaw in filteredPlans) {
       final isCompleted = planRaw['is_completed'] as bool? ?? false;
       final completedAt = planRaw['completed_at'] as String?;
-      
-      if (isCompleted && completedAt != null && completedAt.isNotEmpty) {
-        // Calculate day number from plan_date relative to start_date
-        final planDateStr = planRaw['plan_date'] as String? ?? '';
-        if (planDateStr.isNotEmpty && planStartDate != null) {
-          final planDateObj = DateTime.tryParse(planDateStr);
-          if (planDateObj != null) {
-            final daysDiff = planDateObj.difference(planStartDate).inDays;
-            final dayNumber = daysDiff + 1; // Day 1 = start_date, Day 2 = start_date + 1, etc.
-            
-            if (dayNumber >= 1) {
-              // Check if completion date is within current month
-              final completedAtDate = DateTime.tryParse(completedAt);
-              if (completedAtDate != null) {
-                // Normalize to UTC date components to match backend UTC format
-                final dateNormalized = DateTime.utc(completedAtDate.year, completedAtDate.month, completedAtDate.day);
-                final monthStartNormalized = DateTime.utc(monthStart.year, monthStart.month, monthStart.day);
-                final monthEndNormalized = DateTime.utc(monthEnd.year, monthEnd.month, monthEnd.day);
-                
-                // Only count days within the current month
-                if (dateNormalized.isAfter(monthStartNormalized.subtract(const Duration(days: 1))) &&
-                    dateNormalized.isBefore(monthEndNormalized.add(const Duration(days: 1)))) {
-                  completedDayNumbers.add(dayNumber);
-                  
-                  // Count individual workouts for this completed plan
-                  dynamic exercisesDetails = planRaw['exercises_details'];
-                  List<Map<String, dynamic>> exercises = [];
-                  
-                  if (exercisesDetails is List) {
-                    exercises = exercisesDetails.cast<Map<String, dynamic>>();
-                  } else if (exercisesDetails is Map<String, dynamic>) {
-                    if (exercisesDetails['workouts'] is List) {
-                      exercises = (exercisesDetails['workouts'] as List).cast<Map<String, dynamic>>();
-                    } else if (exercisesDetails['exercises'] is List) {
-                      exercises = (exercisesDetails['exercises'] as List).cast<Map<String, dynamic>>();
-                    } else if (exercisesDetails['items'] is List) {
-                      exercises = (exercisesDetails['items'] as List).cast<Map<String, dynamic>>();
-                    }
-                  }
-                  
-                  // Count all workouts in completed plan
-                  totalWorkouts += exercises.length;
-                  totalMinutes += _extractMinutesFromPlanRaw(planRaw);
-                }
-              }
-            }
-          }
+      if (!isCompleted || completedAt == null || completedAt.isEmpty) continue;
+
+      final dayNumber =
+          int.tryParse(planRaw['day_number']?.toString() ?? planRaw['day']?.toString() ?? '');
+      if (dayNumber == null || dayNumber < 1) continue;
+
+      final completedAtDate = DateTime.tryParse(completedAt);
+      if (completedAtDate == null) continue;
+
+      final completedDate = DateTime.utc(completedAtDate.year, completedAtDate.month, completedAtDate.day);
+      final monthStartUtc = DateTime.utc(monthStart.year, monthStart.month, monthStart.day);
+      final monthEndUtc = DateTime.utc(monthEnd.year, monthEnd.month, monthEnd.day);
+
+      if (completedDate.isBefore(monthStartUtc.subtract(const Duration(days: 1))) ||
+          completedDate.isAfter(monthEndUtc.add(const Duration(days: 1)))) {
+        continue;
+      }
+
+      completedDayNumbers.add(dayNumber);
+
+      // Count workouts for this plan
+      dynamic exercisesDetails = planRaw['exercises_details'];
+      List<Map<String, dynamic>> exercises = [];
+      if (exercisesDetails is List) {
+        exercises = exercisesDetails.cast<Map<String, dynamic>>();
+      } else if (exercisesDetails is Map<String, dynamic>) {
+        if (exercisesDetails['workouts'] is List) {
+          exercises = (exercisesDetails['workouts'] as List).cast<Map<String, dynamic>>();
+        } else if (exercisesDetails['exercises'] is List) {
+          exercises = (exercisesDetails['exercises'] as List).cast<Map<String, dynamic>>();
+        } else if (exercisesDetails['items'] is List) {
+          exercises = (exercisesDetails['items'] as List).cast<Map<String, dynamic>>();
         }
       }
+      totalWorkouts += exercises.length;
+      totalMinutes += _extractMinutesFromPlanRaw(planRaw);
     }
-    
-    // REMOVED: UserStats.dailyWorkouts fallback
-    // UserStats.dailyWorkouts contains data from ALL plans of the same type (e.g., all manual plans)
-    // It's not filtered by specific plan (approval_id or plan_id), so it would count workouts from other plans
-    // We should only use filteredPlans to ensure accurate counts for the active plan
-    
+
     final uniqueCompletedDays = completedDayNumbers.length;
-    
-    print('📊 Stats - Monthly Progress Calculation:');
-    print('📊 Stats - uniqueCompletedDays: $uniqueCompletedDays');
-    print('📊 Stats - totalWorkouts: $totalWorkouts');
-    
-    // Calculate batch number: Every 30 days = 1 batch
-    // Batch 0 = Days 1-30, Batch 1 = Days 31-60, Batch 2 = Days 61-90, etc.
     final batchNumber = uniqueCompletedDays ~/ 30;
-    
-    // Get batch size
     final batchSize = _getMonthlyBatchSize(batchNumber);
     final nextBatchSize = _getMonthlyBatchSize(batchNumber + 1);
-    
-    // Determine total for display:
-    // If current batch not completed: Shows completed/batchSize
-    // If current batch completed: Shows completed/nextBatchSize
     final isCurrentBatchCompleted = uniqueCompletedDays >= (batchNumber + 1) * 30;
     final total = isCurrentBatchCompleted ? nextBatchSize : batchSize;
-    
-    // IMPORTANT: Monthly progress shows completed DAYS, not completed workouts
-    // Calculate remaining: total - completed (using days, not workouts)
     final remaining = total > uniqueCompletedDays ? total - uniqueCompletedDays : 0;
-    
-    // Calculate completion rate: based on completed days, not individual workouts
-    // For monthly progress, completion rate should be: (uniqueCompletedDays / batchSize) * 100
     final completionRate = batchSize > 0 ? (uniqueCompletedDays / batchSize) * 100 : 0.0;
-    
-    print('📊 Stats - batchSize: $batchSize');
-    print('📊 Stats - completionRate: ${completionRate.toStringAsFixed(1)}%');
-    
-    // Calculate days passed: count unique days with completed workouts (not current day of month)
-    final daysPassed = uniqueCompletedDays; // Use unique completed days, not current day of month
-    print('📊 Stats - daysPassed: $daysPassed');
+    final daysPassed = uniqueCompletedDays;
     final dailyAverage = daysPassed > 0 ? uniqueCompletedDays / daysPassed : 0.0;
-    
-    // Use UserStats if available (from new API) - prioritize backend data
-    // But only if we have an active plan (otherwise we already returned zero progress)
-    if (userStats.value != null && activePlanIds != null) {
+
+    // Prefer backend monthly progress when available
+    if (userStats.value != null) {
       final mp = userStats.value!.monthlyProgress;
-      
-      // IMPORTANT: Monthly progress shows completed DAYS, not completed workouts
-      // Use uniqueCompletedDays from backend if available, otherwise use frontend calculation
       final completedDays = mp.daysPassed > 0 ? mp.daysPassed : uniqueCompletedDays;
       final totalCount = mp.total > 0 ? mp.total : total;
       final remainingDays = totalCount > completedDays ? totalCount - completedDays : 0;
-      
-      // ALWAYS calculate completion rate from uniqueCompletedDays (ignore backend value)
-      // Completion rate should be: (uniqueCompletedDays / batchSize) * 100
       final finalCompletionRate = batchSize > 0 ? (uniqueCompletedDays / batchSize) * 100 : 0.0;
-      
-      // ALWAYS use uniqueCompletedDays for days_passed (ignore backend value)
-      // Days passed should be the count of unique days with completed workouts
       final finalDaysPassed = uniqueCompletedDays;
 
-    return {
-        // New keys
-        'completed': completedDays, // Show completed DAYS, not workouts
+      return {
+        'completed': completedDays,
         'remaining': remainingDays,
         'total': totalCount,
         'completion_rate': finalCompletionRate,
@@ -1962,19 +1805,15 @@ class StatsController extends GetxController {
         'days_in_month': monthEnd.day,
         'month_start': monthStart.toIso8601String().split('T').first,
         'month_end': monthEnd.toIso8601String().split('T').first,
-        // Backward-compat keys used by UI
-        'completed_workouts': completedDays, // Show days, not workouts
+        'completed_workouts': completedDays,
         'incomplete_workouts': remainingDays,
         'total_planned_workouts': totalCount,
       };
     }
-    
-    // Calculate from frontend data (fallback)
-    // Reuse 'now', 'monthStart', and 'monthEnd' variables declared at the beginning
 
+    // Frontend fallback
     return {
-      // New keys
-      'completed': uniqueCompletedDays, // Show completed DAYS, not workouts
+      'completed': uniqueCompletedDays,
       'remaining': remaining,
       'total': total,
       'completion_rate': completionRate,
@@ -1987,8 +1826,7 @@ class StatsController extends GetxController {
       'days_in_month': monthEnd.day,
       'month_start': monthStart.toIso8601String().split('T').first,
       'month_end': monthEnd.toIso8601String().split('T').first,
-      // Backward-compat keys used by UI
-      'completed_workouts': uniqueCompletedDays, // Show days, not workouts
+      'completed_workouts': uniqueCompletedDays,
       'incomplete_workouts': remaining,
       'total_planned_workouts': total,
     };
@@ -2012,7 +1850,7 @@ class StatsController extends GetxController {
     // Check for active plan FIRST - if no active plan, return empty list immediately
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning empty list for recent workouts');
+      // print('🔍 Stats - No active plan, returning empty list for recent workouts');
       return [];
     }
     
@@ -2024,8 +1862,8 @@ class StatsController extends GetxController {
     // BUT: We must validate that dates in dailyWorkouts actually have completed plans
     // activePlanIds is already checked, so it's not null here
     if (userStats.value != null && userStats.value!.dailyWorkouts.isNotEmpty) {
-      print('📊 Stats - Using UserStats.dailyWorkouts as primary source (from stats_daily_workouts column)');
-      print('📊 Stats - Found ${userStats.value!.dailyWorkouts.length} days in dailyWorkouts');
+      // print('📊 Stats - Using UserStats.dailyWorkouts as primary source (from stats_daily_workouts column)');
+      // print('📊 Stats - Found ${userStats.value!.dailyWorkouts.length} days in dailyWorkouts');
       
       final result = <Map<String, dynamic>>[];
       
@@ -2051,27 +1889,19 @@ class StatsController extends GetxController {
               validCompletedDates.add(completedDateStr);
             }
             
-            // Also check plan_date as fallback (in case backend groups by plan_date)
-            final planDate = planRaw['plan_date'] as String?;
-            if (planDate != null) {
-              final planDateObj = DateTime.tryParse(planDate);
-              if (planDateObj != null) {
-                final planDateStr = planDateObj.toIso8601String().split('T').first;
-                validCompletedDates.add(planDateStr);
-              }
-            }
+            // Note: day_number is now the primary identifier, completed_at is used for date filtering
           }
         }
-        print('📊 Stats - Validated ${validCompletedDates.length} completed dates from filtered dailyPlansRaw (active plan only)');
-        print('📊 Stats - Valid completed dates: ${validCompletedDates.toList()}');
+        // print('📊 Stats - Validated ${validCompletedDates.length} completed dates from filtered dailyPlansRaw (active plan only)');
+        // print('📊 Stats - Valid completed dates: ${validCompletedDates.toList()}');
       } else if (dailyPlansRaw.isEmpty) {
-        print('📊 Stats - dailyPlansRaw is empty, trusting dailyWorkouts from backend stats sync');
+        // print('📊 Stats - dailyPlansRaw is empty, trusting dailyWorkouts from backend stats sync');
       } else {
-        print('📊 Stats - No active plan, filtering out all dates from dailyWorkouts');
+        // print('📊 Stats - No active plan, filtering out all dates from dailyWorkouts');
       }
       
       // Filter statsDates to only include dates that have completed plans (if validation data available)
-      // IMPORTANT: Don't filter by date being "future" - backend groups by plan_date which can be in the future
+      // IMPORTANT: Don't filter by date being "future" - backend uses day_number and completed_at for grouping
       // Instead, check if there are actually completed plans for that date
       // CRITICAL: Trust dailyWorkouts from backend stats sync as primary source of truth
       // The backend validates these dates during stats sync, so we should trust them even if
@@ -2088,13 +1918,13 @@ class StatsController extends GetxController {
           final dateNormalized = DateTime.utc(date.year, date.month, date.day);
           final dateStrNormalized = dateNormalized.toIso8601String().split('T').first;
           
-          // Check if this date has a completed plan (either by plan_date or completed_at)
+          // Check if this date has a completed plan (by completed_at)
           // Log warning if not found, but still trust backend's dailyWorkouts
           if (!validCompletedDates.contains(dateStrNormalized) && !validCompletedDates.contains(dateStr)) {
-            print('⚠️ Stats - Date $dateStr in dailyWorkouts but not in validCompletedDates - trusting backend (backend groups by plan_date, frontend may check completed_at)');
+            // print('⚠️ Stats - Date $dateStr in dailyWorkouts but not in validCompletedDates - trusting backend (backend uses day_number, frontend checks completed_at)');
             // Don't filter out - trust backend's dailyWorkouts as it's validated during stats sync
           } else {
-            print('✅ Stats - Date $dateStr validated: found in validCompletedDates');
+            // print('✅ Stats - Date $dateStr validated: found in validCompletedDates');
           }
         }
         
@@ -2109,7 +1939,7 @@ class StatsController extends GetxController {
           return aDate.compareTo(bDate); // Oldest first (for sequential day numbering)
         });
       
-      print('📊 Stats - Found ${statsDates.length} validated completed dates in dailyWorkouts (after filtering)');
+      // print('📊 Stats - Found ${statsDates.length} validated completed dates in dailyWorkouts (after filtering)');
       
       // Assign sequential day numbers and determine window
       final Map<String, int> dateToDayNumber = {};
@@ -2126,7 +1956,7 @@ class StatsController extends GetxController {
         final windowStartDay = (windowNumber - 1) * days + 1;
         final windowEndDay = windowNumber * days;
         
-        print('📊 Stats - Highest completed day: $highestDayNumber, Window: $windowNumber (Day $windowStartDay-$windowEndDay)');
+        // print('📊 Stats - Highest completed day: $highestDayNumber, Window: $windowNumber (Day $windowStartDay-$windowEndDay)');
         
         // Filter dates to only show days in the current window
         final datesInWindow = dateToDayNumber.entries
@@ -2134,7 +1964,7 @@ class StatsController extends GetxController {
             .toList()
           ..sort((a, b) => a.value.compareTo(b.value)); // Sort by day number (ascending)
         
-        print('📊 Stats - Filtered to ${datesInWindow.length} days in window $windowNumber');
+        // print('📊 Stats - Filtered to ${datesInWindow.length} days in window $windowNumber');
         
         // Build result with days from current window
         for (final entry in datesInWindow) {
@@ -2159,12 +1989,12 @@ class StatsController extends GetxController {
           }
         }
         
-        print('📊 Stats - Showing ${result.length} days from window $windowNumber (Day $windowStartDay-$windowEndDay) from dailyWorkouts');
+        // print('📊 Stats - Showing ${result.length} days from window $windowNumber (Day $windowStartDay-$windowEndDay) from dailyWorkouts');
       }
       
       // If we got results from dailyWorkouts, return early (don't use dailyPlansRaw)
       if (result.isNotEmpty) {
-        print('📊 Stats - Using dailyWorkouts data (${result.length} days)');
+        // print('📊 Stats - Using dailyWorkouts data (${result.length} days)');
         return result;
       }
     }
@@ -2173,7 +2003,7 @@ class StatsController extends GetxController {
     // IMPORTANT: Filter by active plan FIRST to avoid counting workouts from other plans
     final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
     if (filteredPlans.isEmpty) {
-      print('🔍 Stats - No matching plans for active plan in getRecentWorkouts, returning empty list');
+      // print('🔍 Stats - No matching plans for active plan in getRecentWorkouts, returning empty list');
       return [];
     }
     
@@ -2183,40 +2013,40 @@ class StatsController extends GetxController {
       final isCompleted = planRaw['is_completed'] as bool? ?? false;
       final completedAt = planRaw['completed_at'] as String?;
       final planId = planRaw['id'] ?? 'N/A';
-      final planDate = planRaw['plan_date'] ?? 'N/A';
+      final dayNumber = planRaw['day_number'] ?? planRaw['day'] ?? 'N/A';
       final planType = planRaw['plan_type'] ?? 'N/A';
       final sourcePlanId = planRaw['source_plan_id'] ?? 'N/A';
       
       // Validate: must have BOTH is_completed: true AND completed_at timestamp
       if (isCompleted && completedAt != null && completedAt.isNotEmpty) {
-        print('✅ Stats - Found completed plan: id=$planId, date=$planDate, type=$planType, sourcePlanId=$sourcePlanId, completedAt=$completedAt');
+        // print('✅ Stats - Found completed plan: id=$planId, day_number=$dayNumber, type=$planType, sourcePlanId=$sourcePlanId, completedAt=$completedAt');
         return true;
       }
       
       // Log warning if plan has is_completed: true but no completed_at (incomplete plan)
       if (isCompleted && (completedAt == null || completedAt.isEmpty)) {
-        print('⚠️ Stats - WARNING: Plan $planId (date=$planDate, type=$planType) has is_completed=true but no completed_at timestamp! Filtering out.');
+        // print('⚠️ Stats - WARNING: Plan $planId (day_number=$dayNumber, type=$planType) has is_completed=true but no completed_at timestamp! Filtering out.');
       }
       
       return false;
     }).toList();
     
-    print('📊 Stats - Found ${allCompletedPlans.length} completed plans with both is_completed=true and completed_at timestamp');
+    // print('📊 Stats - Found ${allCompletedPlans.length} completed plans with both is_completed=true and completed_at timestamp');
     
     // Debug: Log all plans to see why they're not being counted
     if (allCompletedPlans.isEmpty && filteredPlans.isNotEmpty) {
-      print('⚠️ Stats - DEBUG: No completed plans found, but ${filteredPlans.length} filtered plans exist');
-      print('⚠️ Stats - DEBUG: Checking each plan for completion status...');
+      // print('⚠️ Stats - DEBUG: No completed plans found, but ${filteredPlans.length} filtered plans exist');
+      // print('⚠️ Stats - DEBUG: Checking each plan for completion status...');
       for (final planRaw in filteredPlans.take(10)) { // Log first 10 plans
         final isCompleted = planRaw['is_completed'] as bool? ?? false;
         final completedAt = planRaw['completed_at'] as String?;
         final planId = planRaw['id'] ?? 'N/A';
-        final planDate = planRaw['plan_date'] as String? ?? 'N/A';
-        print('⚠️ Stats - DEBUG: Plan $planId: is_completed=$isCompleted, completed_at=$completedAt, plan_date=$planDate');
+        final dayNumber = planRaw['day_number'] ?? planRaw['day'] ?? 'N/A';
+        // print('⚠️ Stats - DEBUG: Plan $planId: is_completed=$isCompleted, completed_at=$completedAt, day_number=$dayNumber');
       }
     }
     
-    // Sort by completed_at date (most recent first), fallback to plan_date
+    // Sort by completed_at date (most recent first), fallback to day_number (descending)
     allCompletedPlans.sort((a, b) {
       final aCompletedAt = a['completed_at'] as String?;
       final bCompletedAt = b['completed_at'] as String?;
@@ -2229,72 +2059,30 @@ class StatsController extends GetxController {
         bDate = DateTime.tryParse(bCompletedAt);
       }
       
-      // Fallback to plan_date if completed_at is not available
-      if (aDate == null) {
-        final aPlanDate = a['plan_date'] as String?;
-        aDate = aPlanDate != null ? DateTime.tryParse(aPlanDate) : null;
-      }
-      if (bDate == null) {
-        final bPlanDate = b['plan_date'] as String?;
-        bDate = bPlanDate != null ? DateTime.tryParse(bPlanDate) : null;
+      // If both have completed_at, sort by date (most recent first)
+      if (aDate != null && bDate != null) {
+        return bDate.compareTo(aDate);
       }
       
-      if (aDate == null || bDate == null) return 0;
-      return bDate.compareTo(aDate); // Most recent first
+      // If only one has completed_at, prioritize it
+      if (aDate != null && bDate == null) return -1;
+      if (aDate == null && bDate != null) return 1;
+      
+      // Fallback to day_number (higher day_number = more recent)
+      final aDayNumber = int.tryParse(a['day_number']?.toString() ?? a['day']?.toString() ?? '') ?? 0;
+      final bDayNumber = int.tryParse(b['day_number']?.toString() ?? b['day']?.toString() ?? '') ?? 0;
+      return bDayNumber.compareTo(aDayNumber); // Higher day_number first
     });
     
-    // Get plan's start_date to calculate day numbers
-    DateTime? planStartDate;
-    if (Get.isRegistered<PlansController>()) {
-      final plansController = Get.find<PlansController>();
-      if (plansController.activePlan != null) {
-        final activePlan = plansController.activePlan!;
-        final startDateStr = activePlan['start_date']?.toString();
-        if (startDateStr != null) {
-          planStartDate = DateTime.tryParse(startDateStr);
-        }
-      }
-    }
-    
-    // If start_date not found, try to get it from SchedulesController (for assigned plans)
-    if (planStartDate == null && Get.isRegistered<SchedulesController>()) {
-      final schedulesController = Get.find<SchedulesController>();
-      if (schedulesController.activeSchedule != null) {
-        final activeSchedule = schedulesController.activeSchedule!;
-        // For assigned plans, get start_date from assignment
-        final startDateStr = activeSchedule['start_date']?.toString();
-        if (startDateStr != null) {
-          planStartDate = DateTime.tryParse(startDateStr);
-          print('📊 Stats - Got start_date from activeSchedule: $startDateStr');
-        }
-      }
-    }
-    
-    // Group by plan day number (calculated from plan_date relative to start_date)
+    // Group by plan day number (using day_number directly from backend)
+    // Note: day_number is used directly from backend, no need to calculate from start_date
     // This ensures Day 1 and Day 2 are separate even if completed on same calendar date
     final Map<int, List<String>> workoutsByDayNumber = {};
     
     for (final planRaw in allCompletedPlans) {
-      // Get plan_date (this is the scheduled date for this day of the plan)
-      final planDateStr = planRaw['plan_date'] as String? ?? '';
-      if (planDateStr.isEmpty) continue;
-      
-      final planDateObj = DateTime.tryParse(planDateStr);
-      if (planDateObj == null) continue;
-      
-      // Calculate day number from plan_date relative to start_date
-      int dayNumber = 1; // Default to day 1 if start_date not available
-      if (planStartDate != null) {
-        final daysDiff = planDateObj.difference(planStartDate).inDays;
-        dayNumber = daysDiff + 1; // Day 1 = start_date, Day 2 = start_date + 1, etc.
-        if (dayNumber < 1) dayNumber = 1; // Ensure positive day number
-      } else {
-        // If start_date not available, use plan_date as fallback (group by calendar date)
-        // But this is not ideal - we should have start_date
-        final planDate = planDateObj.toIso8601String().split('T').first;
-        // Try to infer day number from order of completion dates
-        // This is a fallback - ideally we should always have start_date
-      }
+      // Use day_number directly from backend (primary identifier)
+      final dayNumber = int.tryParse(planRaw['day_number']?.toString() ?? planRaw['day']?.toString() ?? '');
+      if (dayNumber == null || dayNumber < 1) continue; // Skip if day_number is invalid
       
       // Extract workout names from exercises_details
       final workouts = <String>[];
@@ -2331,7 +2119,7 @@ class StatsController extends GetxController {
             }
           }
         } catch (e) {
-          print('⚠️ Stats - Failed to parse exercises_details JSON string in getRecentWorkouts: $e');
+          // print('⚠️ Stats - Failed to parse exercises_details JSON string in getRecentWorkouts: $e');
         }
       }
       
@@ -2370,13 +2158,13 @@ class StatsController extends GetxController {
           // Remove duplicates (in case same workout appears in multiple plans)
           workoutsByDayNumber[dayNumber] = workoutsByDayNumber[dayNumber]!.toSet().toList();
           final afterCount = workoutsByDayNumber[dayNumber]!.length;
-          print('📊 Stats - Combined workouts for Day $dayNumber: $beforeCount → $afterCount unique workouts (added ${workouts.length} from plan ${planRaw['id']}, workouts: ${workouts.join(", ")})');
+          // print('📊 Stats - Combined workouts for Day $dayNumber: $beforeCount → $afterCount unique workouts (added ${workouts.length} from plan ${planRaw['id']}, workouts: ${workouts.join(", ")})');
         } else {
           workoutsByDayNumber[dayNumber] = workouts;
-          print('📊 Stats - Added workouts for Day $dayNumber: ${workouts.length} workouts from plan ${planRaw['id']} (workouts: ${workouts.join(", ")})');
+          // print('📊 Stats - Added workouts for Day $dayNumber: ${workouts.length} workouts from plan ${planRaw['id']} (workouts: ${workouts.join(", ")})');
         }
       } else {
-        print('⚠️ Stats - Plan ${planRaw['id']} for Day $dayNumber has no workouts in exercises_details');
+        // print('⚠️ Stats - Plan ${planRaw['id']} for Day $dayNumber has no workouts in exercises_details');
       }
     }
     
@@ -2387,10 +2175,10 @@ class StatsController extends GetxController {
     // Step 1: Get all day numbers and sort them
     final sortedDayNumbers = workoutsByDayNumber.keys.toList()..sort();
     
-    print('📊 Stats - Found ${sortedDayNumbers.length} completed days: ${sortedDayNumbers.join(", ")}');
-    print('📊 Stats - Workouts by day breakdown:');
+    // print('📊 Stats - Found ${sortedDayNumbers.length} completed days: ${sortedDayNumbers.join(", ")}');
+    // print('📊 Stats - Workouts by day breakdown:');
     for (final entry in workoutsByDayNumber.entries) {
-      print('  - Day ${entry.key}: ${entry.value.join(", ")} (${entry.value.length} total)');
+      // print('  - Day ${entry.key}: ${entry.value.join(", ")} (${entry.value.length} total)');
     }
     
     // Step 2: Use day numbers directly (no need to reassign - they're already correct)
@@ -2401,7 +2189,7 @@ class StatsController extends GetxController {
     
     // Step 3: Determine which 6-day window to show based on the highest completed day
     if (dayNumberToDisplayNumber.isEmpty) {
-      print('📊 Stats - No completed days found, returning empty result');
+      // print('📊 Stats - No completed days found, returning empty result');
       return result; // No completed plans
     }
     
@@ -2412,7 +2200,7 @@ class StatsController extends GetxController {
     final windowStartDay = (windowNumber - 1) * days + 1;
     final windowEndDay = windowNumber * days;
     
-    print('📊 Stats - Highest completed day: $highestDayNumber, Window: $windowNumber (Day $windowStartDay-$windowEndDay)');
+    // print('📊 Stats - Highest completed day: $highestDayNumber, Window: $windowNumber (Day $windowStartDay-$windowEndDay)');
     
     // Step 4: Filter day numbers to only show days in the current window
     final daysInWindow = sortedDayNumbers
@@ -2420,7 +2208,7 @@ class StatsController extends GetxController {
         .toList()
       ..sort(); // Sort by day number (ascending)
     
-    print('📊 Stats - Filtered to ${daysInWindow.length} days in window $windowNumber');
+    // print('📊 Stats - Filtered to ${daysInWindow.length} days in window $windowNumber');
     
     // Step 5: Build result with days from current window
     for (final dayNumber in daysInWindow) {
@@ -2443,12 +2231,12 @@ class StatsController extends GetxController {
       }
     }
     
-    print('📊 Stats - Showing ${result.length} days from window $windowNumber (Day $windowStartDay-$windowEndDay)');
+    // print('📊 Stats - Showing ${result.length} days from window $windowNumber (Day $windowStartDay-$windowEndDay)');
     
     // If still no results, try UserStats.recentWorkouts as last fallback (flat list from stats_recent_workouts)
     if (result.isEmpty && userStats.value != null && userStats.value!.recentWorkouts.isNotEmpty) {
-      print('📊 Stats - dailyPlansRaw and dailyWorkouts are empty, using UserStats.recentWorkouts as fallback');
-      print('📊 Stats - Found ${userStats.value!.recentWorkouts.length} workouts in recentWorkouts');
+      // print('📊 Stats - dailyPlansRaw and dailyWorkouts are empty, using UserStats.recentWorkouts as fallback');
+      // print('📊 Stats - Found ${userStats.value!.recentWorkouts.length} workouts in recentWorkouts');
       
       // recentWorkouts is a flat list, so we'll group them by day based on order
       // Since we don't have dates, we'll just show them as Day 1, Day 2, etc.
@@ -2485,7 +2273,7 @@ class StatsController extends GetxController {
         }
       }
       
-      print('📊 Stats - Converted ${result.length} days from UserStats.recentWorkouts');
+      // print('📊 Stats - Converted ${result.length} days from UserStats.recentWorkouts');
     }
     
     return result;
@@ -2497,7 +2285,7 @@ class StatsController extends GetxController {
     // Check for active plan FIRST - if no active plan, return 0 immediately
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning 0 for current streak');
+      // print('🔍 Stats - No active plan, returning 0 for current streak');
       return 0;
     }
     
@@ -2508,24 +2296,12 @@ class StatsController extends GetxController {
     final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
     if (filteredPlans.isEmpty) {
       // No matching plans for active plan, return 0
-      print('🔍 Stats - No matching plans for active plan, returning 0 for current streak');
+      // print('🔍 Stats - No matching plans for active plan, returning 0 for current streak');
       return 0;
     }
     
-    // Get plan's start_date to calculate day numbers
-    DateTime? planStartDate;
-    if (Get.isRegistered<PlansController>()) {
-      final plansController = Get.find<PlansController>();
-      if (plansController.activePlan != null) {
-        final activePlan = plansController.activePlan!;
-        final startDateStr = activePlan['start_date']?.toString();
-        if (startDateStr != null) {
-          planStartDate = DateTime.tryParse(startDateStr);
-        }
-      }
-    }
-    
     // Get unique completed plan day numbers (not calendar dates)
+    // Note: day_number is used directly from backend, no need to calculate from start_date
     final completedDayNumbers = <int>{};
     
     // Check filtered dailyPlansRaw first (more reliable source from API)
@@ -2533,23 +2309,16 @@ class StatsController extends GetxController {
       final isCompleted = planRaw['is_completed'] as bool? ?? false;
       
       if (isCompleted) {
-        // Calculate day number from plan_date relative to start_date
-        final planDateStr = planRaw['plan_date'] as String? ?? '';
-        if (planDateStr.isNotEmpty && planStartDate != null) {
-          final planDateObj = DateTime.tryParse(planDateStr);
-          if (planDateObj != null) {
-            final daysDiff = planDateObj.difference(planStartDate).inDays;
-            final dayNumber = daysDiff + 1; // Day 1 = start_date, Day 2 = start_date + 1, etc.
-            if (dayNumber >= 1) {
-              completedDayNumbers.add(dayNumber);
-            }
-          }
+        // Use day_number directly from backend (primary identifier)
+        final dayNumber = int.tryParse(planRaw['day_number']?.toString() ?? planRaw['day']?.toString() ?? '');
+        if (dayNumber != null && dayNumber >= 1) {
+          completedDayNumbers.add(dayNumber);
         }
       }
     }
     
     if (completedDayNumbers.isEmpty) {
-      print('📊 Stats - Current streak: 0 (no completed plan days)');
+      // print('📊 Stats - Current streak: 0 (no completed plan days)');
       return 0;
     }
     
@@ -2572,72 +2341,34 @@ class StatsController extends GetxController {
       }
     }
     
-    print('📊 Stats - Current streak: $streak days (completed days: ${sortedDayNumbers.join(", ")})');
+    // print('📊 Stats - Current streak: $streak days (completed days: ${sortedDayNumbers.join(", ")})');
     return streak;
   }
 
   // Get remaining tasks for today
   List<DailyTrainingPlan> getTodaysRemainingTasks() {
     final today = DateTime.now().toIso8601String().split('T').first;
-    return dailyPlans.where((plan) => 
-      plan.planDate == today && !plan.isCompleted
-    ).toList();
+    return dailyPlans.where((plan) => !plan.isCompleted).toList();
   }
 
   // Get remaining tasks for this week (6 days, not 7)
   List<DailyTrainingPlan> getWeeklyRemainingTasks() {
-    final now = DateTime.now();
-    final weekStart = now.subtract(Duration(days: now.weekday - 1));
-    final weekEnd = weekStart.add(const Duration(days: 5)); // 6 days total
-    
-    return dailyPlans.where((plan) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) return false;
-      return !plan.isCompleted && 
-             planDate.isAfter(weekStart.subtract(const Duration(days: 1))) &&
-             planDate.isBefore(weekEnd.add(const Duration(days: 1)));
-    }).toList();
+    return dailyPlans.where((plan) => !plan.isCompleted).toList();
   }
 
   // Get remaining tasks for this month
   List<DailyTrainingPlan> getMonthlyRemainingTasks() {
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month, 1);
-    final monthEnd = DateTime(now.year, now.month + 1, 0);
-    
-    return dailyPlans.where((plan) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) return false;
-      return !plan.isCompleted && 
-             planDate.isAfter(monthStart.subtract(const Duration(days: 1))) &&
-             planDate.isBefore(monthEnd.add(const Duration(days: 1)));
-    }).toList();
+    return dailyPlans.where((plan) => !plan.isCompleted).toList();
   }
 
   // Get overdue tasks (past due date and not completed)
   List<DailyTrainingPlan> getOverdueTasks() {
-    final today = DateTime.now();
-    return dailyPlans.where((plan) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) return false;
-      return !plan.isCompleted && planDate.isBefore(today);
-    }).toList()
-    ..sort((a, b) => a.planDate.compareTo(b.planDate));
+    return dailyPlans.where((plan) => !plan.isCompleted).toList();
   }
 
   // Get upcoming tasks (future dates)
   List<DailyTrainingPlan> getUpcomingTasks({int days = 7}) {
-    final now = DateTime.now();
-    final futureDate = now.add(Duration(days: days));
-    
-    return dailyPlans.where((plan) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) return false;
-      return !plan.isCompleted && 
-             planDate.isAfter(now) && 
-             planDate.isBefore(futureDate);
-    }).toList()
-    ..sort((a, b) => a.planDate.compareTo(b.planDate));
+    return dailyPlans.where((plan) => !plan.isCompleted).toList();
   }
 
   // Get remaining tasks: use backend data from UserStats.remainingTasks
@@ -2662,49 +2393,16 @@ class StatsController extends GetxController {
     final monthEnd = DateTime(today.year, today.month + 1, 0);
     
     // Today's remaining tasks (incomplete plans for today)
-    final todaysRemaining = dailyPlans.where((plan) {
-      final planDateStr = plan.planDate.split('T').first;
-      return !plan.isCompleted && planDateStr == todayStr;
-    }).length;
+    final todaysRemaining = dailyPlans.where((plan) => !plan.isCompleted).length;
     
     // Weekly remaining tasks (incomplete plans in the week, including today)
-    final weeklyRemaining = dailyPlans.where((plan) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) return false;
-      final planDateStr = plan.planDate.split('T').first;
-      final planDateNormalized = DateTime.tryParse(planDateStr);
-      final todayNormalized = DateTime.tryParse(todayStr);
-      if (planDateNormalized == null || todayNormalized == null) return false;
-      return !plan.isCompleted && 
-             (planDateNormalized.isAfter(todayNormalized) || planDateNormalized.isAtSameMomentAs(todayNormalized)) && // Changed from > to >= to include today
-             planDate.isAfter(weekStart.subtract(const Duration(days: 1))) &&
-             planDate.isBefore(weekEnd.add(const Duration(days: 1)));
-    }).length;
+    final weeklyRemaining = dailyPlans.where((plan) => !plan.isCompleted).length;
     
     // Monthly remaining tasks (incomplete plans in the month, including today)
-    final monthlyRemaining = dailyPlans.where((plan) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) return false;
-      final planDateStr = plan.planDate.split('T').first;
-      final planDateNormalized = DateTime.tryParse(planDateStr);
-      final todayNormalized = DateTime.tryParse(todayStr);
-      if (planDateNormalized == null || todayNormalized == null) return false;
-      return !plan.isCompleted && 
-             (planDateNormalized.isAfter(todayNormalized) || planDateNormalized.isAtSameMomentAs(todayNormalized)) && // Changed from > to >= to include today
-             planDate.isAfter(monthStart.subtract(const Duration(days: 1))) &&
-             planDate.isBefore(monthEnd.add(const Duration(days: 1)));
-    }).length;
+    final monthlyRemaining = dailyPlans.where((plan) => !plan.isCompleted).length;
     
     // Upcoming remaining tasks (only incomplete future plans)
-    final upcomingRemaining = dailyPlans.where((plan) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) return false;
-      final planDateStr = plan.planDate.split('T').first;
-      final planDateNormalized = DateTime.tryParse(planDateStr);
-      final todayNormalized = DateTime.tryParse(todayStr);
-      if (planDateNormalized == null || todayNormalized == null) return false;
-      return !plan.isCompleted && planDateNormalized.isAfter(todayNormalized); // Only incomplete future plans
-    }).length;
+    final upcomingRemaining = dailyPlans.where((plan) => !plan.isCompleted).length;
     
     return {
       'today': todaysRemaining,
@@ -2756,70 +2454,87 @@ class StatsController extends GetxController {
     final monthStart = DateTime(today.year, today.month, 1);
     final monthEnd = DateTime(today.year, today.month + 1, 0);
     
-    // Today's tasks
-    final todaysTasks = dailyPlans.where((plan) {
-      final planDateStr = plan.planDate.split('T').first;
-      return planDateStr == todayStr;
-    }).toList();
-    final todaysCompleted = todaysTasks.where((p) => p.isCompleted).length;
-    final todaysIncomplete = todaysTasks.where((p) => !p.isCompleted).length;
-    final todaysTotal = todaysCompleted + todaysIncomplete; // Fixed: total = completed + incomplete
+    // Use dailyPlansRaw for date-based filtering (since DailyTrainingPlan no longer has planDate)
+    // Filter by active plan first
+    final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
     
-    // Weekly tasks (6 days) - includes today's incomplete plans (>= todayStr)
+    // Today's tasks - use completed_at for date filtering
+    final todaysTasks = filteredPlans.where((planRaw) {
+      final completedAt = planRaw['completed_at'] as String?;
+      if (completedAt == null) return false;
+      final completedAtStr = completedAt.split('T').first;
+      return completedAtStr == todayStr;
+    }).toList();
+    final todaysCompleted = todaysTasks.where((p) => p['is_completed'] as bool? ?? false).length;
+    final todaysIncomplete = todaysTasks.length - todaysCompleted;
+    final todaysTotal = todaysCompleted + todaysIncomplete;
+    
+    // Weekly tasks (6 days) - use completed_at for date filtering
     final weeklyCompletedPlans = <String>{};
     final weeklyIncompletePlans = <String>{};
     final todayNormalized = DateTime.tryParse(todayStr);
-    for (final plan in dailyPlans) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) continue;
-      final planDateStr = plan.planDate.split('T').first;
-      final planDateNormalized = DateTime.tryParse(planDateStr);
-      if (planDateNormalized == null || todayNormalized == null) continue;
-      // Changed from > to >= to include today's plans
-      if ((planDateNormalized.isAfter(todayNormalized) || planDateNormalized.isAtSameMomentAs(todayNormalized)) &&
-          planDate.isAfter(weekStart.subtract(const Duration(days: 1))) &&
-          planDate.isBefore(weekEnd.add(const Duration(days: 1)))) {
-        if (plan.isCompleted) {
-          weeklyCompletedPlans.add(plan.planDate);
+    for (final planRaw in filteredPlans) {
+      final completedAt = planRaw['completed_at'] as String?;
+      if (completedAt == null) continue;
+      final completedAtDate = DateTime.tryParse(completedAt);
+      if (completedAtDate == null) continue;
+      final completedAtStr = completedAt.split('T').first;
+      final completedAtNormalized = DateTime.tryParse(completedAtStr);
+      if (completedAtNormalized == null || todayNormalized == null) continue;
+      
+      // Check if within week range
+      if (completedAtDate.isAfter(weekStart.subtract(const Duration(days: 1))) &&
+          completedAtDate.isBefore(weekEnd.add(const Duration(days: 1)))) {
+        final isCompleted = planRaw['is_completed'] as bool? ?? false;
+        if (isCompleted) {
+          weeklyCompletedPlans.add(completedAtStr);
         } else {
-          weeklyIncompletePlans.add(plan.planDate);
+          weeklyIncompletePlans.add(completedAtStr);
         }
       }
     }
-    final weeklyTotal = weeklyCompletedPlans.length + weeklyIncompletePlans.length; // Fixed: total = completed + incomplete
+    final weeklyTotal = weeklyCompletedPlans.length + weeklyIncompletePlans.length;
     final weeklyCompleted = weeklyCompletedPlans.length;
     
-    // Monthly tasks - includes today's incomplete plans (>= todayStr)
+    // Monthly tasks - use completed_at for date filtering
     final monthlyCompletedPlans = <String>{};
     final monthlyIncompletePlans = <String>{};
-    for (final plan in dailyPlans) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) continue;
-      final planDateStr = plan.planDate.split('T').first;
-      final planDateNormalized = DateTime.tryParse(planDateStr);
-      if (planDateNormalized == null || todayNormalized == null) continue;
-      // Changed from > to >= to include today's plans
-      if ((planDateNormalized.isAfter(todayNormalized) || planDateNormalized.isAtSameMomentAs(todayNormalized)) &&
-          planDate.isAfter(monthStart.subtract(const Duration(days: 1))) &&
-          planDate.isBefore(monthEnd.add(const Duration(days: 1)))) {
-        if (plan.isCompleted) {
-          monthlyCompletedPlans.add(plan.planDate);
+    for (final planRaw in filteredPlans) {
+      final completedAt = planRaw['completed_at'] as String?;
+      if (completedAt == null) continue;
+      final completedAtDate = DateTime.tryParse(completedAt);
+      if (completedAtDate == null) continue;
+      final completedAtStr = completedAt.split('T').first;
+      final completedAtNormalized = DateTime.tryParse(completedAtStr);
+      if (completedAtNormalized == null || todayNormalized == null) continue;
+      
+      // Check if within month range
+      if (completedAtDate.isAfter(monthStart.subtract(const Duration(days: 1))) &&
+          completedAtDate.isBefore(monthEnd.add(const Duration(days: 1)))) {
+        final isCompleted = planRaw['is_completed'] as bool? ?? false;
+        if (isCompleted) {
+          monthlyCompletedPlans.add(completedAtStr);
         } else {
-          monthlyIncompletePlans.add(plan.planDate);
+          monthlyIncompletePlans.add(completedAtStr);
         }
       }
     }
-    final monthlyTotal = monthlyCompletedPlans.length + monthlyIncompletePlans.length; // Fixed: total = completed + incomplete
+    final monthlyTotal = monthlyCompletedPlans.length + monthlyIncompletePlans.length;
     final monthlyCompleted = monthlyCompletedPlans.length;
     
-    // Upcoming tasks - only incomplete future plans (!plan.is_completed && planDateStr > todayStr)
-    final upcomingIncompletePlans = dailyPlans.where((plan) {
-      final planDate = DateTime.tryParse(plan.planDate);
-      if (planDate == null) return false;
-      final planDateStr = plan.planDate.split('T').first;
-      final planDateNormalized = DateTime.tryParse(planDateStr);
-      if (planDateNormalized == null || todayNormalized == null) return false;
-      return !plan.isCompleted && planDateNormalized.isAfter(todayNormalized); // Only incomplete future plans
+    // Upcoming tasks - only incomplete future plans (use day_number for ordering)
+    final upcomingIncompletePlans = filteredPlans.where((planRaw) {
+      final isCompleted = planRaw['is_completed'] as bool? ?? false;
+      if (isCompleted) return false;
+      // For upcoming, we check if day_number is greater than current day
+      // Since we don't have a "current day" concept here, we'll use completed_at if available
+      // or skip if no date info
+      final completedAt = planRaw['completed_at'] as String?;
+      if (completedAt == null) return false;
+      final completedAtStr = completedAt.split('T').first;
+      final completedAtNormalized = DateTime.tryParse(completedAtStr);
+      if (completedAtNormalized == null || todayNormalized == null) return false;
+      return completedAtNormalized.isAfter(todayNormalized);
     }).length;
 
     return {
@@ -2858,30 +2573,30 @@ class StatsController extends GetxController {
     // Backend sync calculates stats correctly from daily_training_plans
     // This is especially important when dailyPlansRaw shows is_completed=false but stats exist
     if (userStats.value != null && userStats.value!.totalWorkouts > 0) {
-      print('📊 Stats - Using UserStats.totalWorkouts (from backend sync): ${userStats.value!.totalWorkouts}');
+      // print('📊 Stats - Using UserStats.totalWorkouts (from backend sync): ${userStats.value!.totalWorkouts}');
       return userStats.value!.totalWorkouts;
     }
     
     // Fallback: Calculate from dailyPlansRaw if UserStats is null or zero
-    print('📊 Stats - UserStats is ${userStats.value == null ? "null" : "zero"}, calculating from dailyPlansRaw');
+    // print('📊 Stats - UserStats is ${userStats.value == null ? "null" : "zero"}, calculating from dailyPlansRaw');
     
     // Count individual completed workouts from all days (not days)
     int totalWorkouts = 0;
     
     // Filter dailyPlansRaw to only include active plan's data
     final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
-    print('📊 Stats - getTotalWorkouts: filtered ${filteredPlans.length} plans from ${dailyPlansRaw.length} total plans');
+    // print('📊 Stats - getTotalWorkouts: filtered ${filteredPlans.length} plans from ${dailyPlansRaw.length} total plans');
     if (filteredPlans.isEmpty) {
       // No matching plans for active plan, return 0
-      print('🔍 Stats - No matching plans for active plan, returning 0 for total workouts');
-      print('🔍 Stats - This means _filterPlansByActivePlan returned empty list');
-      print('🔍 Stats - Check if active plan IDs are correct and plans match the filter criteria');
+      // print('🔍 Stats - No matching plans for active plan, returning 0 for total workouts');
+      // print('🔍 Stats - This means _filterPlansByActivePlan returned empty list');
+      // print('🔍 Stats - Check if active plan IDs are correct and plans match the filter criteria');
       return 0;
     }
     
     // Log completed plans for debugging
     final completedPlans = filteredPlans.where((p) => (p['is_completed'] as bool? ?? false) == true).toList();
-    print('📊 Stats - Found ${completedPlans.length} completed plans out of ${filteredPlans.length} filtered plans');
+    // print('📊 Stats - Found ${completedPlans.length} completed plans out of ${filteredPlans.length} filtered plans');
     
     // Count individual workouts from filtered dailyPlansRaw
     for (final planRaw in filteredPlans) {
@@ -2917,7 +2632,7 @@ class StatsController extends GetxController {
             }
           }
         } catch (e) {
-          print('⚠️ Stats - Failed to parse exercises_details in getTotalWorkouts: $e');
+          // print('⚠️ Stats - Failed to parse exercises_details in getTotalWorkouts: $e');
         }
       }
       
@@ -2934,10 +2649,10 @@ class StatsController extends GetxController {
           if (isCompleted || isWorkoutCompleted || (!exercise.containsKey('is_completed') && isCompleted)) {
             totalWorkouts++;
             final workoutName = exercise['workout_name'] ?? exercise['name'] ?? 'Unknown';
-            print('📊 Stats - Counting workout "$workoutName" (plan completed: $isCompleted, workout completed: $isWorkoutCompleted)');
+            // print('📊 Stats - Counting workout "$workoutName" (plan completed: $isCompleted, workout completed: $isWorkoutCompleted)');
           } else {
             final workoutName = exercise['workout_name'] ?? exercise['name'] ?? 'Unknown';
-            print('📊 Stats - Skipping workout "$workoutName" (plan not completed and workout not completed)');
+            // print('📊 Stats - Skipping workout "$workoutName" (plan not completed and workout not completed)');
           }
         }
       }
@@ -2946,7 +2661,7 @@ class StatsController extends GetxController {
     // Also check parsed dailyPlans (fallback) - count workouts from items
     for (final plan in dailyPlans) {
       if (plan.isCompleted) {
-        totalWorkouts += plan.items.length;
+        totalWorkouts += plan.items.length as int;
       }
     }
     
@@ -2956,13 +2671,13 @@ class StatsController extends GetxController {
     // If calculation from dailyPlansRaw returned a non-zero value, use it
     // This handles cases where UserStats hasn't synced yet but plans are marked as completed
     if (totalWorkouts > 0) {
-      print('📊 Stats - Total workouts (calculated from dailyPlansRaw): $totalWorkouts');
+      // print('📊 Stats - Total workouts (calculated from dailyPlansRaw): $totalWorkouts');
       return totalWorkouts;
     }
     
     // Final fallback: Try UserStats again (in case it was null/zero before but is now loaded)
     if (userStats.value != null && userStats.value!.totalWorkouts > 0) {
-      print('📊 Stats - Total workouts (from UserStats final fallback): ${userStats.value!.totalWorkouts}');
+      // print('📊 Stats - Total workouts (from UserStats final fallback): ${userStats.value!.totalWorkouts}');
       return userStats.value!.totalWorkouts;
     }
     
@@ -2971,12 +2686,12 @@ class StatsController extends GetxController {
       final monthlyProgress = userStats.value!.monthlyProgress;
       if (monthlyProgress.completed > 0) {
         final estimated = monthlyProgress.completed * 2;
-        print('📊 Stats - Total workouts (estimated from monthly progress: ${monthlyProgress.completed} days × 2 workouts): $estimated');
+        // print('📊 Stats - Total workouts (estimated from monthly progress: ${monthlyProgress.completed} days × 2 workouts): $estimated');
         return estimated;
       }
     }
     
-    print('📊 Stats - Total workouts (individual count): $totalWorkouts');
+    // print('📊 Stats - Total workouts (individual count): $totalWorkouts');
     return totalWorkouts;
   }
 
@@ -2985,14 +2700,14 @@ class StatsController extends GetxController {
     // Check for active plan FIRST - if no active plan, return 0 immediately
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning 0 for total minutes');
+      // print('🔍 Stats - No active plan, returning 0 for total minutes');
       return 0;
     }
     
     // Filter dailyPlansRaw to only include active plan's data FIRST
     // This ensures we always have the most up-to-date data from the database
     final filteredPlans = _filterPlansByActivePlan(dailyPlansRaw);
-    print('📊 Stats - getTotalMinutes: filtered ${filteredPlans.length} plans from ${dailyPlansRaw.length} total plans');
+    // print('📊 Stats - getTotalMinutes: filtered ${filteredPlans.length} plans from ${dailyPlansRaw.length} total plans');
     
     // Sum minutes from filtered completed plans
     int totalMinutes = 0;
@@ -3008,23 +2723,23 @@ class StatsController extends GetxController {
     // CRITICAL: If we calculated a non-zero value from dailyPlansRaw, use it even if userStats exists
     // This handles cases where userStats is loaded but has zero values (API might not have synced yet)
     if (totalMinutes > 0) {
-      print('📊 Stats - Total minutes (calculated from dailyPlansRaw): $totalMinutes');
+      // print('📊 Stats - Total minutes (calculated from dailyPlansRaw): $totalMinutes');
       return totalMinutes;
     }
     
     // Fallback: Use UserStats if calculation from dailyPlansRaw returned 0
     if (userStats.value != null && userStats.value!.totalMinutes > 0) {
-      print('📊 Stats - Using UserStats.totalMinutes (fallback): ${userStats.value!.totalMinutes}');
+      // print('📊 Stats - Using UserStats.totalMinutes (fallback): ${userStats.value!.totalMinutes}');
       return userStats.value!.totalMinutes;
     }
     
     if (filteredPlans.isEmpty) {
       // No matching plans for active plan, return 0
-      print('🔍 Stats - No matching plans for active plan, returning 0 for total minutes');
+      // print('🔍 Stats - No matching plans for active plan, returning 0 for total minutes');
       return 0;
     }
     
-    print('📊 Stats - Total minutes (calculated): $totalMinutes');
+    // print('📊 Stats - Total minutes (calculated): $totalMinutes');
     return totalMinutes;
   }
 
@@ -3033,7 +2748,7 @@ class StatsController extends GetxController {
     // Check for active plan FIRST - if no active plan, return 0 immediately
     final activePlanIds = _getActivePlanSourceIds();
     if (activePlanIds == null) {
-      print('🔍 Stats - No active plan, returning 0 for longest streak');
+      // print('🔍 Stats - No active plan, returning 0 for longest streak');
       return 0;
     }
     
@@ -3043,39 +2758,30 @@ class StatsController extends GetxController {
     if (filteredPlans.isEmpty) {
       // No matching plans for active plan, try UserStats as fallback
       if (userStats.value != null && userStats.value!.longestStreak > 0) {
-        print('📊 Stats - Using UserStats.longestStreak (fallback, no filtered plans): ${userStats.value!.longestStreak}');
+        // print('📊 Stats - Using UserStats.longestStreak (fallback, no filtered plans): ${userStats.value!.longestStreak}');
         return userStats.value!.longestStreak;
       }
-      print('🔍 Stats - No matching plans for active plan, returning 0 for longest streak');
+      // print('🔍 Stats - No matching plans for active plan, returning 0 for longest streak');
       return 0;
     }
     
     // Get unique completed dates (days) from filtered plans
     final completedDates = <String>{};
     
-    // Use filtered dailyPlansRaw to get completed dates
+    // Use filtered dailyPlansRaw to get completed dates (use completed_at for date filtering)
     for (final planRaw in filteredPlans) {
       final isCompleted = planRaw['is_completed'] as bool? ?? false;
       final completedAt = planRaw['completed_at'] as String?;
-      final planDate = planRaw['plan_date'] as String?;
       
+      // Use completed_at date for date-based filtering (day_number is used for day identification)
       if (isCompleted && completedAt != null && completedAt.isNotEmpty) {
-        // Use completed_at date if available, otherwise use plan_date
         final dateStr = completedAt.split('T').first;
-        completedDates.add(dateStr);
-      } else if (isCompleted && planDate != null) {
-        // Fallback to plan_date if completed_at is not available
-        final dateStr = planDate.split('T').first;
         completedDates.add(dateStr);
       }
     }
     
-    // Also check dailyPlans (fallback)
-    for (final plan in dailyPlans) {
-      if (plan.isCompleted) {
-        completedDates.add(plan.planDate);
-      }
-    }
+    // Note: dailyPlans (DailyTrainingPlan model) no longer has planDate field
+    // All date filtering now uses completed_at from dailyPlansRaw
     
     // Also add local completions
     for (final completion in _localCompletions) {
@@ -3088,7 +2794,7 @@ class StatsController extends GetxController {
     if (completedDates.isEmpty) {
       // No completed dates found, try UserStats as fallback
       if (userStats.value != null && userStats.value!.longestStreak > 0) {
-        print('📊 Stats - Using UserStats.longestStreak (fallback, no completed dates): ${userStats.value!.longestStreak}');
+        // print('📊 Stats - Using UserStats.longestStreak (fallback, no completed dates): ${userStats.value!.longestStreak}');
         return userStats.value!.longestStreak;
       }
       return 0;
@@ -3133,13 +2839,16 @@ class StatsController extends GetxController {
     // CRITICAL: If calculated streak is 0, try UserStats as fallback
     // This handles cases where userStats is loaded but calculation from dailyPlansRaw returned 0
     if (longestStreak == 0 && userStats.value != null && userStats.value!.longestStreak > 0) {
-      print('📊 Stats - Using UserStats.longestStreak (fallback, calculated streak is 0): ${userStats.value!.longestStreak}');
+      // print('📊 Stats - Using UserStats.longestStreak (fallback, calculated streak is 0): ${userStats.value!.longestStreak}');
       return userStats.value!.longestStreak;
     }
     
-    print('📊 Stats - Longest streak (calculated): $longestStreak');
+    // print('📊 Stats - Longest streak (calculated): $longestStreak');
     return longestStreak;
   }
+
+  // Get weekly completed workouts count
+  // (definitions moved earlier in file)
 
   // Get goal progress (assuming weekly goal of 5 workouts and monthly goal of 20 workouts)
   Map<String, dynamic> getGoalProgress() {
@@ -3188,9 +2897,9 @@ class StatsController extends GetxController {
       _cachedStats.clear();
       _cachedRecentWorkouts.clear();
       
-      print('✅ Stats - Cache cleared');
+      // print('✅ Stats - Cache cleared');
     } catch (e) {
-      print('❌ Stats - Error clearing cache: $e');
+      // print('❌ Stats - Error clearing cache: $e');
     }
   }
 
@@ -3318,5 +3027,7 @@ class StatsController extends GetxController {
       items: [],
     );
   }
+
 }
+
 
