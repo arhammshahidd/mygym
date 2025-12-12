@@ -5,8 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="1a05894d-f57a-4ce0-9a19-f66cc54613be" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/mygym/lib/features/trainings/data/services/daily_training_service.dart" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/lib/features/trainings/data/services/daily_training_service.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/mygym/lib/features/trainings/presentation/controllers/schedules_controller.dart" beforeDir="false" afterPath="$PROJECT_DIR$/mygym/lib/features/trainings/presentation/controllers/schedules_controller.dart" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />

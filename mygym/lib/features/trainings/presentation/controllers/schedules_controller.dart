@@ -541,10 +541,23 @@ class SchedulesController extends GetxController {
     _startedSchedules[scheduleId] = true;
     _activeSchedule.value = schedule;
     
-    // ALWAYS check database first (database is source of truth), then fall back to cache
+    // Try to use backend's first-incomplete-day ordering (no include_completed)
+    int? cachedDay;
+    try {
+      final backendDay = await _getCurrentDayFromBackendPlans(scheduleId);
+      if (backendDay != null) {
+        _currentDay[scheduleId.toString()] = backendDay;
+        _persistCurrentDayToCache(scheduleId, backendDay);
+        cachedDay = backendDay;
+        print('📅 SchedulesController - Using backend first incomplete day: Day $backendDay');
+      }
+    } catch (e) {
+      print('⚠️ SchedulesController - Could not get current day from backend ordered plans: $e');
+    }
+    
+    // ALWAYS check database next (source of truth), then fall back to cache
     // This ensures we resume correctly even if cache is cleared on app restart
     // This matches the exact pattern used in manual plans (plans_controller.dart)
-    int? cachedDay;
     try {
       print('📅 SchedulesController - Checking database for completed days (database is source of truth)...');
       final completedDay = await _getLastCompletedDayFromDatabase(scheduleId);
@@ -670,6 +683,26 @@ class SchedulesController extends GetxController {
     return _currentDay[scheduleId.toString()] ?? 1;
   }
 
+  // Resync local current day with backend completed days to avoid UI getting stuck
+  Future<void> _resyncCurrentDayFromDatabase(int scheduleId) async {
+    try {
+      final completedDay = await _getLastCompletedDayFromDatabase(scheduleId);
+      if (completedDay == null) return;
+
+      final nextDay = completedDay + 1;
+      final currentLocal = _currentDay[scheduleId.toString()] ?? 1;
+
+      if (nextDay > currentLocal) {
+        _currentDay[scheduleId.toString()] = nextDay;
+        _persistCurrentDayToCache(scheduleId, nextDay);
+        refreshUI();
+        print('🔄 SchedulesController - Resynced day from DB: completed=$completedDay, setting currentDay=$nextDay');
+      }
+    } catch (e) {
+      print('⚠️ SchedulesController - Failed to resync current day from database: $e');
+    }
+  }
+
   // Workout tracking methods
   void startWorkout(String workoutKey, int totalMinutes) {
     print('🚀 SchedulesController - startWorkout() CALLED');
@@ -758,14 +791,16 @@ class SchedulesController extends GetxController {
     }
     
     // CRITICAL: Check if this day is already completed in the database BEFORE checking workout completion
-    // This prevents submitting Day 2 when only Day 1 should be submitted
+    // If backend is already ahead, advance local day and refresh UI so it doesn’t stay stuck.
     try {
       final completedDay = await _getLastCompletedDayFromDatabase(planId);
       if (completedDay != null && completedDay >= currentDay) {
-        print('⚠️ SchedulesController - Day $currentDay is already completed in database (last completed: Day $completedDay)');
-        print('⚠️ SchedulesController - Skipping completion check to prevent duplicate submission');
-        print('⚠️ SchedulesController - This prevents submitting Day 2 when only Day 1 should be submitted');
-        return; // Exit early - day is already completed
+        final nextDay = completedDay + 1;
+        print('ℹ️ SchedulesController - Backend shows Day $completedDay completed (currentDay=$currentDay). Advancing to Day $nextDay and skipping duplicate submission.');
+        _currentDay[planId.toString()] = nextDay;
+        _persistCurrentDayToCache(planId, nextDay);
+        refreshUI();
+        return; // Exit early - already completed
       }
     } catch (e) {
       print('⚠️ SchedulesController - Error checking database for completed day: $e');
@@ -889,6 +924,7 @@ class SchedulesController extends GetxController {
           print('🔄 SchedulesController - Refreshing stats after completing day $currentDay...');
           await statsController.refreshStats(forceSync: true);
           print('✅ SchedulesController - Stats refreshed after completing day $currentDay');
+          await _resyncCurrentDayFromDatabase(planId);
         } catch (e) {
           print('⚠️ SchedulesController - Error refreshing stats after completion: $e');
         }
@@ -1631,10 +1667,14 @@ class SchedulesController extends GetxController {
       final dailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: 'web_assigned');
       final matchingDay = dailyPlans.firstWhereOrNull((dp) {
         final dpPlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+        final dpAssignmentId = int.tryParse(dp['source_assignment_id']?.toString() ?? '');
         final dpDayNumber = int.tryParse(dp['day_number']?.toString() ?? dp['day']?.toString() ?? '');
         final dpPlanType = dp['plan_type']?.toString();
         final isStats = dp['is_stats_record'] as bool? ?? false;
-        return dpPlanId == scheduleId && dpPlanType == 'web_assigned' && !isStats && dpDayNumber == day;
+        return (dpPlanId == scheduleId || dpAssignmentId == scheduleId) &&
+               dpPlanType == 'web_assigned' &&
+               !isStats &&
+               dpDayNumber == day;
       });
       
       if (matchingDay != null) {
@@ -1660,6 +1700,15 @@ class SchedulesController extends GetxController {
             _workoutStarted[workoutKey] = false;
             _workoutRemainingMinutes[workoutKey] = 0;
             print('✅ SchedulesController - Marked workout "$workoutName" as completed (key: $workoutKey)');
+          }
+          
+          // If backend shows this day completed but UI is behind, advance to next day
+          final currentLocalDay = getCurrentDay(scheduleId);
+          if (currentLocalDay <= day) {
+            final nextDay = day + 1;
+            _currentDay[scheduleId.toString()] = nextDay;
+            _persistCurrentDayToCache(scheduleId, nextDay);
+            print('🔄 SchedulesController - Auto-advanced to day $nextDay based on backend completion');
           }
           
           // Force UI refresh to show completed workouts
@@ -1993,6 +2042,17 @@ class SchedulesController extends GetxController {
       final lastCompletedDay = await _getLastCompletedDayFromDatabase(planId);
       final expectedDay = (lastCompletedDay ?? 0) + 1; // next sequential day
       print('🔍 SchedulesController - lastCompletedDay=$lastCompletedDay, expectedDay=$expectedDay, currentDay=$currentDay');
+
+      // If backend already shows this day completed, advance locally so UI moves forward
+      if (lastCompletedDay != null && lastCompletedDay >= currentDay) {
+        final nextDay = lastCompletedDay + 1;
+        print('ℹ️ SchedulesController - Backend shows day $currentDay already completed. Advancing to day $nextDay.');
+        _currentDay[planId.toString()] = nextDay;
+        _persistCurrentDayToCache(planId, nextDay);
+        refreshUI();
+        return false;
+      }
+
       if (expectedDay > 0 && currentDay != expectedDay) {
         print('⚠️ SchedulesController - Day mismatch detected before submit. Aborting to resync: currentDay=$currentDay, expectedDay=$expectedDay');
         // Resync local day and UI so the next attempt targets the correct (next) day
@@ -2035,12 +2095,15 @@ class SchedulesController extends GetxController {
         final allDailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: 'web_assigned');
         final assignmentDailyPlans = allDailyPlans.where((dp) {
           final dpPlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+          final dpAssignmentId = int.tryParse(dp['source_assignment_id']?.toString() ?? '');
           final dpPlanType = dp['plan_type']?.toString();
           final isStatsRecord = dp['is_stats_record'] as bool? ?? false;
 
           // Ignore stats rows when resolving daily_plan_id for a given day
           if (isStatsRecord) return false;
-          return dpPlanId == planId && dpPlanType == 'web_assigned';
+
+          // Some backends populate source_assignment_id instead of source_plan_id for schedules
+          return (dpPlanId == planId || dpAssignmentId == planId) && dpPlanType == 'web_assigned';
         }).toList();
 
         print('📅 SchedulesController - Found ${assignmentDailyPlans.length} daily_training_plans rows for plan $planId (web_assigned)');
@@ -2755,9 +2818,12 @@ class SchedulesController extends GetxController {
           final allDailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: 'web_assigned');
           final assignmentDailyPlans = allDailyPlans.where((dp) {
             final dpPlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+            final dpAssignmentId = int.tryParse(dp['source_assignment_id']?.toString() ?? '');
             final dpPlanType = dp['plan_type']?.toString();
             final isStatsRecord = dp['is_stats_record'] as bool? ?? false;
-            return dpPlanId == planId && dpPlanType == 'web_assigned' && !isStatsRecord;
+            return (dpPlanId == planId || dpAssignmentId == planId) &&
+                   dpPlanType == 'web_assigned' &&
+                   !isStatsRecord;
           }).toList();
           
           // Sort by day_number (fallback to id)
@@ -2902,11 +2968,12 @@ class SchedulesController extends GetxController {
       final allDailyPlans = await _dailyTrainingService.getDailyTrainingPlans(planType: 'web_assigned');
       final matchingPlan = allDailyPlans.firstWhereOrNull((dp) {
         final dpPlanId = int.tryParse(dp['source_plan_id']?.toString() ?? '');
+        final dpAssignmentId = int.tryParse(dp['source_assignment_id']?.toString() ?? '');
         final dpPlanType = dp['plan_type']?.toString();
         final isStatsRecord = dp['is_stats_record'] as bool? ?? false;
         final dpDayNumber = int.tryParse(dp['day_number']?.toString() ?? dp['day']?.toString() ?? '');
         
-        return dpPlanId == planId && 
+        return (dpPlanId == planId || dpAssignmentId == planId) && 
                dpPlanType == 'web_assigned' && 
                !isStatsRecord &&
                dpDayNumber == dayIndex;
